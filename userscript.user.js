@@ -5132,29 +5132,57 @@
     };
 
     const extractMFIBTemplate = () => {
-        // Robust selector for FIB / MFIB inputs
+        // Base selector for inputs, ignoring ace text area and ensuring we target potential blanks
         const inputSelector = 'input.blankcode, input[id^="blank"], input[name^="blank"], input.ui-inputtext, input[type="text"]:not(.ace_text-input)';
         
+        // Helper to filter out helper panels, settings panel, captcha, etc.
+        const isActualCodingBlank = (el) => {
+            if (!el) return false;
+            // Ignore settings panel inputs
+            if (el.closest('#bypass-settings-panel')) return false;
+            // Ignore captcha inputs
+            if (el.id === 'capval' || el.closest('#captcha-container') || el.closest('[id*="captcha"]')) return false;
+            // Ignore auto solver status panels
+            if (el.closest('#auto-solver-status')) return false;
+            // Ignore inputs inside standard buttons or other UI elements that aren't code blanks
+            if (el.closest('.ui-button') || el.closest('button')) return false;
+            // Must be visible
+            return el.offsetParent !== null;
+        };
+
         let container = null;
-        const candidates = ['multifibpanel', 'codeeditorpanel', 'codediv'];
-        for (const id of candidates) {
-            const el = document.getElementById(id);
-            if (el && el.querySelectorAll(inputSelector).length > 0) {
-                container = el;
-                break;
+        
+        // On SkillRack, MFIB blanks are always contained in multifibpanel.
+        // We look for multifibpanel first.
+        const mfibPanel = document.getElementById('multifibpanel');
+        if (mfibPanel) {
+            const inputs = Array.from(mfibPanel.querySelectorAll(inputSelector)).filter(isActualCodingBlank);
+            if (inputs.length > 0) {
+                container = mfibPanel;
             }
         }
-        
-        // Fallback to form/body if inputs exist on page but not inside candidate containers
+
+        // Fallbacks for other possible panel variations (codeeditorpanel, codediv, codeform)
         if (!container) {
-            if (document.querySelectorAll(inputSelector).length > 0) {
-                container = document.getElementById('codeform') || document.body;
+            const candidates = ['codeeditorpanel', 'codediv', 'codeform'];
+            for (const id of candidates) {
+                const el = document.getElementById(id);
+                if (el) {
+                    const inputs = Array.from(el.querySelectorAll(inputSelector)).filter(isActualCodingBlank);
+                    if (inputs.length > 0) {
+                        container = el;
+                        break;
+                    }
+                }
             }
         }
 
         if (!container) return { template: '', inputs: [] };
 
-        const rawInputs = Array.from(container.querySelectorAll(inputSelector));
+        // Gather and filter candidate inputs
+        const rawInputs = Array.from(container.querySelectorAll(inputSelector)).filter(isActualCodingBlank);
+        if (rawInputs.length === 0) return { template: '', inputs: [] };
+
         let template = '';
         let blankCount = 0;
         const blankInputs = [];
@@ -5164,7 +5192,7 @@
             if (node.nodeType === Node.ELEMENT_NODE) {
                 const tag = node.tagName.toUpperCase();
 
-                // Blank input — mark position and record element if it matches our selector list
+                // Blank input — mark position and record element
                 if (tag === 'INPUT' && rawInputs.includes(node)) {
                     template += `[BLANK_${blankCount}]`;
                     blankInputs.push(node);
@@ -5181,6 +5209,9 @@
 
                 // Skip script/style subtrees
                 if (tag === 'SCRIPT' || tag === 'STYLE') return;
+
+                // Skip settings panel or auto-solver status indicator subtrees
+                if (node.id === 'bypass-settings-panel' || node.id === 'auto-solver-status') return;
 
                 for (const child of node.childNodes) {
                     traverse(child);
@@ -5685,59 +5716,84 @@
             return { ok: false, status: response.status, errMsg, response };
         };
 
-        // Retry up to 3x for the primary model on 429/503 (rate limit / overload)
-        const FALLBACK_DELAYS = [6000, 12000, 24000]; // Used when no Retry-After header
-        let lastResult;
-        for (let i = 0; i <= 2; i++) {
-            if (i > 0) {
-                const waitMs = getRetryAfterMs(lastResult.response, FALLBACK_DELAYS[i - 1]);
-                console.log(`[OpenRouter] Rate limited — waiting ${waitMs / 1000}s (Retry ${i}/2)...`);
-                await countdownWait(waitMs, 'Rate limited');
-            }
-            lastResult = await attempt(primaryModel);
-            if (lastResult.ok) return lastResult.content;
-            if (lastResult.status !== 429 && lastResult.status !== 503) break;
-        }
+        // Unified request executor that retries a model on transient errors (429, 503, provider issues, etc.)
+        const requestModelWithRetry = async (model, maxRetries = 3) => {
+            const delays = [5000, 10000, 20000, 40000];
+            let lastRes;
 
-        // Primary model exhausted — try fallback free models
-        const rateLimited = lastResult.status === 429 || lastResult.status === 503
-            || lastResult.status === 0
-            || /rate.limit|provider.returned.error/i.test(lastResult.errMsg || '');
+            for (let i = 0; i <= maxRetries; i++) {
+                if (i > 0) {
+                    const waitMs = getRetryAfterMs(lastRes?.response, delays[i - 1] || 10000);
+                    console.log(`[OpenRouter] Retrying model "${model}" in ${waitMs / 1000}s (Retry ${i}/${maxRetries})...`);
+                    await countdownWait(waitMs, `Rate limit (${model.split('/')[1] || model})`);
+                }
 
-        let lastFallbackResult = null;
-
-        if (rateLimited) {
-            for (const fb of FREE_FALLBACKS) {
-                console.log(`[OpenRouter] Primary rate-limited. Trying fallback: "${fb}"`);
-                updateBtnStatus(`Trying fallback (${fb.split('/')[1] || fb})...`);
-                
-                // Add a mandatory delay to stay under the 1 request/second global free tier rate limit
+                // Global rate limit safety buffer: never request faster than 1 req / 1.5s
                 await new Promise(r => setTimeout(r, 1500));
 
-                const res = await attempt(fb);
+                lastRes = await attempt(model);
+                if (lastRes.ok) {
+                    return lastRes;
+                }
+
+                const isTransient = lastRes.status === 429
+                    || lastRes.status === 424
+                    || lastRes.status === 502
+                    || lastRes.status === 503
+                    || lastRes.status === 504
+                    || lastRes.status === 0
+                    || /rate.limit|overload|busy|provider.returned.error|too.many.requests/i.test(lastRes.errMsg || '');
+
+                if (!isTransient) {
+                    console.log(`[OpenRouter] Non-transient error for "${model}": ${lastRes.errMsg}`);
+                    break; // break early on API auth errors, 400 bad request, etc.
+                }
+            }
+            return lastRes;
+        };
+
+        // 1. Try primary model first with retries
+        console.log(`[OpenRouter] Trying primary model: "${primaryModel}"`);
+        let lastResult = await requestModelWithRetry(primaryModel, 3);
+        if (lastResult.ok) {
+            return lastResult.content;
+        }
+
+        // 2. Primary failed. If it was transient, start trying free fallback models
+        const primaryErr = lastResult.errMsg || 'Unknown error';
+        const isPrimaryTransient = lastResult.status === 429
+            || lastResult.status === 424
+            || lastResult.status === 502
+            || lastResult.status === 503
+            || lastResult.status === 504
+            || lastResult.status === 0
+            || /rate.limit|overload|busy|provider.returned.error|too.many.requests/i.test(primaryErr);
+
+        if (isPrimaryTransient) {
+            console.log(`[OpenRouter] Primary model rate-limited or overloaded. Checking free fallbacks...`);
+            let lastFallbackResult = null;
+
+            for (const fb of FREE_FALLBACKS) {
+                console.log(`[OpenRouter] Trying fallback model: "${fb}"`);
+                updateBtnStatus(`Trying fallback (${fb.split('/')[1] || fb})...`);
+
+                // Give each fallback model up to 2 retries on rate limits before moving to the next
+                const res = await requestModelWithRetry(fb, 2);
                 lastFallbackResult = res;
+
                 if (res.ok) {
                     console.log(`[OpenRouter] ✅ Fallback "${fb}" succeeded`);
                     return res.content;
                 }
-                const fbTransient = res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504 || res.status === 424 || res.status === 0 || /rate.limit|provider|overload|busy/i.test(res.errMsg || '');
-                if (fbTransient) {
-                    const waitMs = getRetryAfterMs(res.response, 3000);
-                    console.log(`[OpenRouter] Fallback also rate-limited, waiting ${waitMs/1000}s...`);
-                    await countdownWait(waitMs, 'Fallback rate limited');
-                } else {
-                    console.warn(`[OpenRouter] Fallback "${fb}" returned non-transient error (${res.status}): ${res.errMsg}. Skipping...`);
-                }
+                console.warn(`[OpenRouter] Fallback "${fb}" failed: ${res.errMsg}`);
             }
+
+            const fallbackErr = lastFallbackResult?.errMsg || 'No fallback succeeded';
+            throw new Error(`OpenRouter (${primaryModel}) rate-limited. Fallback failed: ${fallbackErr}`);
         }
 
-        // All attempts failed — construct the most descriptive error message available
-        const primaryErr = lastResult?.errMsg || 'Unknown error';
-        const fallbackErr = lastFallbackResult?.errMsg;
-        const finalErr = fallbackErr
-            ? `primary: ${primaryErr}; last fallback: ${fallbackErr}`
-            : primaryErr;
-        throw new Error(`OpenRouter (${primaryModel}): ${finalErr}`);
+        // 3. If primary failed with a non-transient error, throw immediately
+        throw new Error(`OpenRouter (${primaryModel}): ${primaryErr}`);
     };
 
     const generateWithPuter = async (prompt) => {
@@ -6902,10 +6958,8 @@ SOLVING APPROACH:
         function hasCodeEditor() {
             if (document.getElementById('txtCode') !== null) return true;
             if (document.querySelector('.ace_editor') !== null) return true;
-            // MFIB: blanks live in #multifibpanel (primary) or legacy panels
-            const mfibSel = '#multifibpanel input[type="text"], #multifibpanel input.ui-inputtext,' +
-                            ' #codeeditorpanel input[type="text"], #codediv input[type="text"]';
-            return document.querySelectorAll(mfibSel).length > 0;
+            // MFIB check: verify if we have any actual coding blanks
+            return extractMFIBTemplate().inputs.length > 0;
         }
 
         // Main auto-solve function
