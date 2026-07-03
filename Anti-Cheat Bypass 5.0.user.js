@@ -103,30 +103,31 @@
                 left: 0;
                 width: 100%;
                 height: 100%;
-                background: rgba(0, 0, 0, 0.9);
+                background: rgba(0,0,0,0.85);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
                 z-index: 999999;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: 'VT323', monospace;
             `;
 
             overlay.innerHTML = `
                 <div style="
-                    background: #1e1e1e;
-                    border-radius: 16px;
-                    padding: 32px;
+                    background: rgba(15,15,15,0.97);
+                    border-radius: 20px;
+                    padding: 36px 32px;
                     max-width: 450px;
                     text-align: center;
-                    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-                    border: 2px solid #f44336;
+                    box-shadow: 0 32px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05) inset;
+                    border: 1px solid rgba(239,68,68,0.3);
+                    animation: bypassSlideIn 0.3s cubic-bezier(.34,1.56,.64,1) forwards;
                 ">
                     <div style="margin-bottom: 16px;">
                         <svg viewBox="0 0 24 24" width="48" height="48" fill="#f44336">
                             <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"></path>
                         </svg>
                     </div>
-                    <h2 style="color: #f44336; margin: 0 0 16px 0; font-size: 24px;">Update Required</h2>
+                    <h2 style="margin:0 0 14px;font-size:22px;font-weight:800;font-family:'VT323',monospace;background:linear-gradient(90deg,#ef4444,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Update Required</h2>
                     <p style="color: #fff; margin: 0 0 8px 0; font-size: 14px;">
                         A new version of SkillRack Bypass is available!
                     </p>
@@ -139,25 +140,30 @@
                     </p>
                     <div style="display: flex; gap: 12px; justify-content: center;">
                         <button id="bypass-update-btn" style="
-                            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                            background: linear-gradient(135deg,#22c55e,#16a34a);
                             color: white;
                             border: none;
-                            padding: 12px 32px;
-                            border-radius: 8px;
-                            font-size: 14px;
-                            font-weight: bold;
+                            padding: 11px 28px;
+                            border-radius: 10px;
+                            font-size: 13px;
+                            font-weight: 700;
                             cursor: pointer;
-                            transition: transform 0.2s;
-                        ">Update Now</button>
+                            font-family: 'VT323', monospace;
+                            letter-spacing: 0.3px;
+                            transition: transform 0.2s, box-shadow 0.2s;
+                            box-shadow: 0 4px 16px rgba(34,197,94,0.3);
+" onmouseover="this.style.transform='scale(1.04)'" onmouseout="this.style.transform='scale(1)'">Update Now</button>
                         <button id="bypass-update-close" style="
-                            background: #333;
-                            color: #888;
-                            border: 1px solid #444;
-                            padding: 12px 24px;
-                            border-radius: 8px;
-                            font-size: 14px;
+                            background: rgba(255,255,255,0.06);
+                            color: #71717a;
+                            border: 1px solid rgba(255,255,255,0.1);
+                            padding: 11px 20px;
+                            border-radius: 10px;
+                            font-size: 13px;
+                            font-family: 'VT323', monospace;
                             cursor: pointer;
-                        ">Close (Disable Script)</button>
+                            transition: background 0.2s;
+" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='rgba(255,255,255,0.06)'">Close (Disable Script)</button>
                     </div>
                 </div>
             `;
@@ -195,30 +201,31 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.9);
+            background: rgba(0,0,0,0.85);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
             z-index: 999999;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'VT323', monospace;
         `;
 
         overlay.innerHTML = `
             <div style="
-                background: #1e1e1e;
-                border-radius: 16px;
-                padding: 32px;
+                background: rgba(15,15,15,0.97);
+                border-radius: 20px;
+                padding: 36px 32px;
                 max-width: 400px;
                 text-align: center;
-                box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-                border: 2px solid #f44336;
+                box-shadow: 0 32px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05) inset;
+                border: 1px solid rgba(239,68,68,0.3);
+                animation: bypassSlideIn 0.3s cubic-bezier(.34,1.56,.64,1) forwards;
             ">
                 <div style="margin-bottom: 16px;">
                     <svg viewBox="0 0 24 24" width="48" height="48" fill="#f44336">
                         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm5.31-3.1L6.69 6.29C8.04 5.23 9.74 4.6 11.4 4.6c4.42 0 8 3.58 8 8 0 1.85-.63 3.55-1.69 4.9z"></path>
                     </svg>
                 </div>
-                <h2 style="color: #f44336; margin: 0 0 16px 0; font-size: 24px;">Script Disabled</h2>
+                <h2 style="margin:0 0 14px;font-size:22px;font-weight:800;font-family:'VT323',monospace;background:linear-gradient(90deg,#ef4444,#dc2626);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Script Disabled</h2>
                 <p style="color: #fff; margin: 0 0 16px 0; font-size: 14px;">
                     This script has been temporarily disabled by the author.
                 </p>
@@ -256,41 +263,44 @@
                 left: 0;
                 width: 100%;
                 height: 100%;
-                background: rgba(0, 0, 0, 0.95);
+                background: rgba(0,0,0,0.88);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
                 z-index: 999999;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: 'VT323', monospace;
             `;
 
             overlay.innerHTML = `
                 <div style="
-                    background: #1e1e1e;
-                    border-radius: 16px;
-                    padding: 32px;
+                    background: rgba(15,15,15,0.97);
+                    border-radius: 20px;
+                    padding: 36px 32px;
                     max-width: 500px;
                     text-align: center;
-                    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-                    border: 2px solid #ff9800;
+                    box-shadow: 0 32px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05) inset;
+                    border: 1px solid rgba(249,115,22,0.35);
+                    animation: bypassSlideIn 0.3s cubic-bezier(.34,1.56,.64,1) forwards;
                 ">
                     <div style="margin-bottom: 16px;">
                         <svg viewBox="0 0 24 24" width="48" height="48" fill="#ff9800">
                             <path d="M12 2L1 21h22L12 2zm0 3.45L20.14 19H3.86L12 5.45zM13 17h-2v-2h2v2zm0-4h-2v-4h2v4z"></path>
                         </svg>
                     </div>
-                    <h2 style="color: #ff9800; margin: 0 0 16px 0; font-size: 22px;">Disclaimer & Terms of Use</h2>
+                    <h2 style="margin:0 0 14px;font-size:20px;font-weight:800;font-family:'VT323',monospace;background:linear-gradient(90deg,#f97316,#eab308);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Disclaimer & Terms of Use</h2>
                     <div style="
-                        background: #2d2d2d;
-                        border-radius: 8px;
-                        padding: 16px;
-                        margin-bottom: 20px;
+                        background: rgba(255,255,255,0.04);
+                        border: 1px solid rgba(255,255,255,0.08);
+                        border-radius: 10px;
+                        padding: 14px 16px;
+                        margin-bottom: 18px;
                         text-align: left;
                         max-height: 200px;
                         overflow-y: auto;
-                        font-size: 12px;
-                        color: #ccc;
-                        line-height: 1.6;
+                        font-size: 11.5px;
+                        color: #a1a1aa;
+                        line-height: 1.65;
+                        font-family: 'VT323', monospace;
                     ">
                         <p style="margin: 0 0 12px 0;"><strong style="color: #f44336;">IMPORTANT - READ CAREFULLY:</strong></p>
                         <ul style="margin: 0; padding-left: 20px;">
@@ -313,24 +323,30 @@
                     </p>
                     <div style="display: flex; gap: 12px; justify-content: center;">
                         <button id="bypass-accept-btn" style="
-                            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                            background: linear-gradient(135deg,#22c55e,#16a34a);
                             color: white;
                             border: none;
-                            padding: 12px 32px;
-                            border-radius: 8px;
-                            font-size: 14px;
-                            font-weight: bold;
+                            padding: 11px 28px;
+                            border-radius: 10px;
+                            font-size: 13px;
+                            font-weight: 700;
                             cursor: pointer;
-                        ">I Accept & Understand</button>
+                            font-family: 'VT323', monospace;
+                            letter-spacing: 0.3px;
+                            box-shadow: 0 4px 16px rgba(34,197,94,0.3);
+                            transition: transform 0.2s;
+" onmouseover="this.style.transform='scale(1.04)'" onmouseout="this.style.transform='scale(1)'">I Accept & Understand</button>
                         <button id="bypass-decline-btn" style="
-                            background: #333;
-                            color: #888;
-                            border: 1px solid #444;
-                            padding: 12px 24px;
-                            border-radius: 8px;
-                            font-size: 14px;
+                            background: rgba(255,255,255,0.06);
+                            color: #71717a;
+                            border: 1px solid rgba(255,255,255,0.1);
+                            padding: 11px 20px;
+                            border-radius: 10px;
+                            font-size: 13px;
+                            font-family: 'VT323', monospace;
                             cursor: pointer;
-                        ">Decline</button>
+                            transition: background 0.2s;
+" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='rgba(255,255,255,0.06)'">Decline</button>
                     </div>
                 </div>
             `;
@@ -1940,61 +1956,120 @@
     // SETTINGS UI
     // ============================================
     const createSettingsUI = () => {
-        // Create settings button
+        // Inject Google Fonts once
+        if (!document.getElementById('bypass-gfont')) {
+            const gfont = document.createElement('link');
+            gfont.id = 'bypass-gfont';
+            gfont.rel = 'stylesheet';
+            gfont.href = 'https://fonts.googleapis.com/css2?family=VT323&display=swap';
+            document.head.appendChild(gfont);
+        }
+
+        // Inject keyframe animations once
+        if (!document.getElementById('bypass-keyframes')) {
+            const ks = document.createElement('style');
+            ks.id = 'bypass-keyframes';
+            ks.textContent = `
+                @keyframes bypassPulse {
+                    0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5), 0 8px 32px rgba(0,0,0,0.6); }
+                    50%      { box-shadow: 0 0 0 10px rgba(239,68,68,0),  0 8px 32px rgba(0,0,0,0.6); }
+                }
+                @keyframes bypassSlideIn {
+                    from { opacity:0; transform:translateY(20px) scale(0.95); }
+                    to   { opacity:1; transform:translateY(0)     scale(1);    }
+                }
+                @keyframes bypassFadeIn {
+                    from { opacity:0; }
+                    to   { opacity:1; }
+                }
+                @keyframes bypassSpin {
+                    from { transform: rotate(0deg); }
+                    to   { transform: rotate(360deg); }
+                }
+                @keyframes bypassGlow {
+                    0%,100% { filter: drop-shadow(0 0 4px rgba(239,68,68,0.6)); }
+                    50%      { filter: drop-shadow(0 0 12px rgba(239,68,68,1)); }
+                }
+                #bypass-settings-panel::-webkit-scrollbar { width:5px; }
+                #bypass-settings-panel::-webkit-scrollbar-track { background:transparent; }
+                #bypass-settings-panel::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:4px; }
+                #bypass-settings-panel::-webkit-scrollbar-thumb:hover { background:#52525b; }
+            `;
+            document.head.appendChild(ks);
+        }
+
+        // Create settings button with custom pixel-art icon
         const settingsBtn = document.createElement('button');
-        settingsBtn.innerHTML = '⚙️';
         settingsBtn.title = 'Bypass Settings';
+        settingsBtn.innerHTML = `<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAeDklEQVR42m16Z4xk2XndOd99sUJXde6emZ6ZnbRpZnMO3F2Sq6WkpShSlE0JNGlBpmQbFiAYEJz1QzAMwzYMCIIESLQtS7YlixYlmWYmLW7Ou9wd7uxOjj0znbsr13vv3vv5R1WHodzoHnTXe3Pj+eI5rNVmQBAAAYVCARJQVRAKUDH8IggOXuHgEQgAg183f9n8QxWAgiSGg2+9Nnisg3mGY27NsGMVxOYD1e3Zt4cAANlaxeBv7ngaKAK94SMdrgpOt4bTrf+sCoVyaw7F5og62M6OOXR7j7rjhG5cyeb4Opx96+nWtIBsf6Kqm0MOfmIiIhTcGpKEA/aJjhEWKoCQAghAqKFGWwvV4fs7t6ObG1UFObyb4fCbJ7C1Hx2ch+489BsuYHjKg9vZ+cJgQAN0hvDZWhNBGGBJeVTQ9VCA3sdCIQuFAUJoE1CoIyNoMbzAIVQMVKF2e8Id+9txY9y6FhJK/P+/hlA3aVodDkaAiAG/edgAS9AYyAjBEJQG6AMADhEN1UOhRIWVwnrvK17r6jOKCPcREaUJNQpHEPBkGQigOUU4NJXNeba/NxFNgMbITmTxhr0MbzD4sf07blulhzpiGlBFBwg2j6gErHlE8KOFfnrP1NPTIxebnSvdrNHLVnvZO5nrWxsF5hoYgzmRqDpQiTZAUDahMECZ3ugFdGioKmK6vX4UhiJUbq8QN/gbmDipbC2ZpAdiwAAFUAYUWAdmgQ4ZAyWgAI1qlci9Tii13bsrkrsr6c3V0iPT9cdmx35ysjaWxu81OpH3XZEUGkF7pLnxKIdnP/iMxNZVDExTpN3tPvHwfVleNNsdI+YG+HALmTBpUt5xQXSKVEAgB0LAQ0vAOBCBDSAHq9AEqBGJcyPk/UZv8VnFZlevra91+o1Or9/L7y/H49QP2r06oeCKyMAl6ACfWzjfQg10y4cSCAJptTs//fQTv/YrX/jW959vt7smMNse+UbbCQaWsnlHmgAdhQAR0Ac8Oaa6j2hAE2BBASAl9lBT6qMx70vkwIGZ8i2HguffuJ4VHUWl22Ab95nwHfpz4FVKqsigGegAw80AsekqCLXYBn4QmFar/fRHHv7i5/9283t/3V9YlCSF9yQAJXeEAhKqAg6sc2hEQhAw0BIUQKpYJC8Ac8QcsBc6KpwROOAcJBCzP0R859Hs736ptHuypLbii92TlfrnPjU7O37MFy2KqBqoAxWYgMoOgxs4jM3VE9DAmHa78/QTj/zUTz7Teunl5a9/01Jkc726jfzNUQgTJ5WBSRhFQOQggBKQgAINwP3EOWWNPCI6KWhY17HaVix6RJTZLJ/qtpMPftQ7P7+EMLD5+KG97pe/FJ88gYUF47TttQlmRBWIoZ0h1JVkGZqBUB04lNCYbrf7sccfeuzRR/3y4sHm8lffOP5hWg6993qjD9oRQEyaVLY8vQCOqAIHySaQAXvIOar1GqmPyQ8KfyyNf366Pmb1VGbHCBNEB+CLK9fnnWlHkYoxq2ulN16bP3HuubZ9jsE8CKIHVoAOmA+CPyBED6BicPtGpN/vP/zA3UeP3tkv7Ef2T579yl/+RV/7xmArOG2H9m1nKzusgkoK0Acy4DbqMQG8+zBzM1EYRuFzfX0qiX9tuj6hWMttB3rS+mYQnpXw9aC0HsXOoyVmGeHK1dX/2bKveVlTLFM82CebQLh59aOEAoFXAzVARLq8uPuO2/cdvn319LmP7x299txLr5y/2o0jo34LN0Ok61ZIJsBgmCSoVzABFLDQea8zhvQ6Af7W4Zl7puunrq1++eLyy/3i3PxaJ3fHvR40wTnrRyP5i1Yf3kfkd5u935iuXy7szVHwopcrQAzsUb1GTkP3Ee8pFBRoFzAYevcS2SvsHXcc3TV3oHPx4k88fnfju9//w++9mldr3ut2yACU+jfjsUmTCnekgtNEA5wVthVh4X9zz8TusWq702cUHaqkHxstz3eyVws3bthxetHai85ezD0Vr/WL05m9oxT9VaO7LwnWM+s91lU96bzuM7ICrIEGGgEejIEZuHHoQu52zc1NzM611tY+Ols1b7/1rTd+9EpSVqI99LbcCfrtmDywgSSpDDYZEAJMQmcAL2wU/uNRECuWO/2bxqpz4yOjpTgv3G7vL/bso6Xw6dHS3mrpcj+/0suvWNf0WjJyqpdbr2928/czeyw0/3rP+E+MV3/U6l2yrikC6C5ojxKoF+e86q0hnDFrzqsJH7l5v7zxxrV3j7+UVHNjvGpO+mFOf6Pt7kigTZyUB28MHOgauBs6Sr1YYI8ELeceHImN8Fone2+5Oab6w/XuRav3V5OPzk1+bKb2uen6AyOlJLPLhTcikeJQaH52qvalPeMbrd7caGUuMrsK+06/yEQmgBxsqx4LzRcrycud/D2Lw6ksd/ujExPT85dOnj3XL1U+NKECRjUjdSvEDiyA2JlUEDBpUlEgIqpQBVNAiI7TplVQAso4tNvLX1lujas73ug938mtyH3VOA0MKer1SKX08ZnRer//fLv/xdHyv7nrpsd3je0KTF34O+eXFtv5B+3sSmF7wrJIj4Tzj4Xm1U7+dDX5+9P1P17p1pNgYXV9cWV1r8EFBssUB/SG6cNg2eR27rFZI5EgTZJUBhubAUDWibZ1D0Xhz5bir/XyhFyz/jvdIldczPxrmT3v/QOxOZKGpWqpauT6cuNao73U7c+V4nPN7idmR6fT+PLC6nvX15ser3Szt3L/6V2jD0yNrLZ6HxQuhKrqW53iqWq8SprCF7l/PbfjofYkrKufl6AtMqo+BjoUs+V2NnOg7fKNBGCSpCKABQTcTxREXuinyrEjdxl5K7PGcCyQs4V/v3CnvQ3AcRrNi8sbnfmNTklVgW5WXOnkr2ROcjuR541+kQZyuZu/lbnHE/NLc6NHK+mJ1eZMHO43Zj1zR+LgSBrdEZovr3TGTbDmfcNDiJi6ZEJLWjKnbFVtO9LnHfn1phFXAUTQPlgBRqBNj9VCD4YyGXBfEv3qzMh9I6kr3HJur3ltqV/1EMhUIHD+euFEte/95cy9kbsaOC7seH+uZ9/L7Enrpmjazc5fr7WcyBdG0qvd/B3rn60mK4V7tZk9lIQfOt8NWA2kEENoqJpA+6TbkZ96oAQYaA4Iub0FgvX6jEIjoA4dIej8SsFny9GdsbzYtj8/mkyV4vOeqxutv2znPyiKUUpXtUzuEjNtpAQ41RXn2/ALipLiJhOMCzZUP3Cuo/pAEI6JnLDFs6Wo6dxL8JnBcsf9dBh68LJz58VHgbFAD5z0VoGmmJzUTbSIgqRXharnziQcqmqSpELAEik4Tlwp/E1GPl6Olgv/Yuaq6puK1U7/QuZ+UDgFR4hJMhW2vL/gdUV9AX1qvPzFsXJY+J+sp+esfbWwy6pL3sfCDeCqc4HIKPSE0yKRZqEdpx1wSd110XIgGVgohHSqOdgaQH/znGOoJZTc0WAYhmSCJknKCg2AKbJpfaIsQR4fLT09N3Gh0fmrbl7kftHqa9aOiW96TooYoZDTxhwwMivyTBrOGXm3V7zYL2YoddWOMiAOBFjxSIASmDt33GlDcaFbdJ3OCktwLjRVI03QKkgImFEKMtjKfsgEKCs6EG4mDz9WQg76JrSAAwqFBTvwPityxS/tm3jzw2vfK2winApxq5i6+LdzX6OMC1NgSnja6Q9y91gQNJwLhC3vX8ltR7En0DHqEnQ8CGpB8Jmp0YP1yrevrEwnEaz9k9V2EQSJkWWFV3iCgAUm1XnFkjFGVRUxNAAaJKg7ejg3tAKGEAJgCPEaKxOhgLvh8sJJ4aDqBOXAXFEeMxoAVx2OBcG4wQdWC9XPpOGhNDyb2UBxZxRcLnxTYdVVw/Cf7p96LAmfrKZPjJZPr7YnvH7+8My90/VSs3u8cC3QA4YgkAIZEBGOkpEJoEQZ6IIFWVEUWyvejgokhqkEalCS4jSG3BzIeCjNzLrc9hQzwrPO5mQfyME9cKcdM+iocK/BomLVoZ25s861FE3rT3vtqD6cRv9stpY7vLrWXS3ca6udxW7WVry83JyBXu9mJ/OiRxhFAVahBVkAXTADY2gKDCo4S45DDdClAAigwY4aSIeRmIzJaWDFYZTigU/V4kNjIy81srb171m/DKVhDdhH/aDQJcUIuaRIBR1FR31IzaA9yLz6i949GprPVeMLPfvuRu+pifJ4GLzV7L1pMQE9nrt+p79s/Vu5rwsyyiDZaZKiKEM9MQtYckZtmQQlVV0AZVD5Kwpy0NscFvVJUiGYEeOqqXDD+hGKcf5wKTpYir7Z6J9xdjY0G4qMuB3utEcLLBk5EJq+8Egotxj0yIK4rnoVqKl+NAws2fDaVuSZfaedvVi4AvhMNZ4O5FSuC6ozoj1Va0SBlOwCQobEBDBFNBUbpIDT0A2gBwoQDIt/wZZH0s2iHopL4EHRFaoHWg4rvaweBhXRMlAROKv7BG3ldY8SWPFcKYrRMDjuMCbskFe8LwCqL4s55eCsN147Xv88wzlX7DLmwVDagkNh0LH+kuNug8XC54ocmIY6cJVIFNPEGUUOBJA5+CtgAwC0pOgBjgQ0BCLVNoVQGeyqDBRAH5wNuOJdAL3cdyq8LY2gbFp/1GAWet0pFPcb88nY/FQpcdar6vtWG96XCQcNgD655rVndd76d63fgN8AxoB70/By3x5vZ3siuS2Wc1YtWQB7oCnQBlPVm6kbgAdqwDHRguwCuSJW1KAybLch3K6Q1SRJVUELpEAFGpMLTkETeb8/MnfVSx+tlXrAlX5+yPD1Qg9J+HBijlXiW2tpkrsTuesIVhwyRcu6hHSqqfKy13WwBK55rYrvgbEyhL6X612pCUW+1ytywYTICHEGUiaOBtKh9MiEnBVSeIHiRcrAPuGiiFP1ZJUIoetKQwAMtvxqmwiVR6iJQL3fkwQXuvncSClz9vHQNMLgRJGPS3AkkIjYXU1rUdBnexdlxXkQrdwS9AJVPedtRSRQLEHnjB4yes2772d6KAjqgg45ArTUp+RY0bviXWqig2Kand4VZeBdRDTB64qOqoATUXglzzdEKuWSkiOqG7rdGAtIeMAAFXCdWIGOCuDQVwaqudc3esV/XWjdk5plz6pyfySBSDUKlrrZxdzvC+Rq5hbUD6Jhz3kqLFDA7xW/K5AVlTc1GNd+KLjq/G2hhOAt9dLDnfyFrD8/cfDDyszMxqW1fG3miadngGq17FWt6jHAQ0NF78wZc/hwq5e/+OKbY663IqY/bHRjs7mrSrKkPgO7lJDoUde9gvxfi43dwsnQvJHZFFoXHEmC4z3X6PS+u9o9HMqCh6E47yJgSrjk1QB14ZMRAganrRObNWqzlxRhZ/mRwJtAIuL4RveuOLTefsfR7T52cWnxjrvv+Be//itJHDZanTRJnHdJHJXS5Id/+D/W6nc9/NlPvnF+7WtvXElbZyEmHK6eAAIdZFHAMllTZKp1YlH9t3r5jLCvOmZEFROCdSc1MaOGkeAry92ZODwa4/m1rKcakXsN7434Uq7TwnGDjuKCU4mq+djMWr8HoKJoOlyhT3p2V8BHRsu3VOOnugvfeOdPTnW7dGOtTmdhsUOKH/GBERcGv/vlPzn57vuf+ewnvS2++dqHvr3mjBivAHIOeTCTpBUAVHVkTKRARk4J19UvOQWxoj6n7jNY9TAqM4I3+i4D/9ZofLxTvNgvOtDbIkwbkiwRI4Ie5TJkXIsFNZcmj0ZhohuXS65/0AQdj7lQbq5EDedrUdD1sjvQu2Lz5ocXllQfuPeu+kglTRIA/+53/2h5o/lPfuMfHjqwNwP++zdeX75wclcIIRvDhGKQC6WVAeEmhAPMoNVK3G4YGqaCPYFQzJzgkvNrkAWre0KpC3q5/V7XzaseCvzuwCxAVsFJ6HXIgmIEvpBwtT6nKlqqJep8e2XNuwVKoLg5Ckbj8BsbnXIQ/LCXf7tjfRp/6TOfkImJf/lvf296ov6HX/m6kL/5679MQJ29vND4g68+N9m9mgTBMqCk2WzVDTmykAiAAmyBDlhUXgNr5LKYc5BZ+EXnWh4l6EfKwa9Olbuq/7ltT3o3bfz+0CwpO9BFygLoiBAQ71aDcvPwkzJz2FRH7cxhuem+Xm0GeeuFPPu91W7D+nXl7yw3n+9mUbfxhbmxVFBJ47tuP/KPf+u3K5XSP/8Hn+8uLa+2uiLywaWV1sbKmJEI2oNEwLT6gRUMaRejmgLL4BSUQA84p0yoM+qF7Kv+qOBuCQ4Z5E6/tZGTyKEG7tZALigVqmDNu4tgWdWJKYqiOb4/MobVmkaptJclSSvCKC1XV85ddP1/NZ+XCOPyO0IzMV4beehBP7ur0+5+9tmPVyvlTzx0Zy8rfK0uK2tSjV97/2LaWWHKhiKlxooWh9TOgGZlH2gAIXQVpCKCxsAZjzIwS71s8UAQ3hGbNtHI7fvt/tt931G9PWQTsqLYABvAXuokmYElb5tRJZ+5WYIIRW66G4GzNqku77mzGY+4PcfGpm46Vk5vDXmK6d5H7n3mF3/2VBAgiVuNDQP3hZ//qZXrC2fe/6BWq5iN5cXrK+euXK8yX6VZAefUO2B9SAtwwJHpIJYJ4RQBUQUE2ievkOqdUVbIAwbXrCwBZ9VuKCeFgPaBCrCosMApmiNwfUhMdr23p19WVXVWbW4lkriStBfW4nIr7/VVrhd2lqSws2vv9dlD6+cu/4ff/8pnP/vpSyevBx9e/u5zLz366GOrL52olkcun187feb8XIgAmIEvwHwHt8d6fWZnsysADHCAmqpeBUGOq9/IecCYB0OcslhTLKveb/i+tWmgIjKvaABe4YhZaCqy0uo88OzTz37iyW63J8ZEUdTpdL72v7/zzDNPJlHUXG90v/6NH3bdm1cXc3J1+va834vzFnuNvqkgLkWuK+p8VPHehUEY0rPXGHOdw4ZUvAdxRAGCVN3aySaha6FG9ZriHtF5ZaIeZJO+o2bZI4Smijnisvcb8BMiy17XyUmgAHLVhJjwbj2J773vnsMHD1TKKQCv2mx1jh29LU3i9cWVeJ/vtlZdZfcP/v1vm9n9M0fu25DYUpL+xvjrfza+fql9x09f3XdvlLXgnQZxfuXEyJnn+3HSUNcgOmAJiIBClapDLxQRA8qkBPSBMlEF7qEGQAiUqS3vrzk4chVY9Pquc3MBekBBGLBLTlIViIBKnk1OTd5/37EoMN9/6c2/+PZzjUbzv/zZ/zn+wenV1fXxXdOLy6vpk0/+8OSlts3a++7vRJUg76E8ahn1arv3BuEDrfla4xpMiqgiUSnMs1zCm9WCWIJEQDwkIKGASdMKCAcM/q1DC6BB9sD9AgfkihWLUZpxoSeveH/FFw/ELJPnIW2wDl0B9sHPQjtGgk731md/YmJy8o/+/BvNdueJh+556c33QmOmJsf/21e/uWt6Ytfs1NlTF776nReKbtN572ZudpUaly+79av+lo+sKc6XJ/zoHuu9Rgmzjj/75pGiMWvkrLJKJIpVETvQfpCyRV5SUYAZcICYVj+vvKSYIjecjtOMCxRoeY2AaWGVuAqJoYNa+ybV85ARQdnpq2nt/gfu6fV6754489j9d85Mjr357ofPPPHg7Uf2O+//059+LY2jEy+8sjp/IXj4c7bfcSdfQD9Tihy4z8fl9pHHXdZrFYUv1w2hvVaYt0cNTqokYAysAJH3W2IZk8SV7RYFkIEBcBO0Ch242GtWU+UtoRyLRKHXnDbV1400yQQowDYYqJsdYL2XlQ8d+LlPPXNo356b5na98PoPT5y6sG/PzMzUxH/88p8+dPfRv/e5nzn/3o/eXmi9d2nJ3v6UmT7ozr7OypjMHITN0vZqESR2bC5dPiPdZmdkVpcujy2d7ApXiSlfbFAAFjvIbpNsknwKhKoGWCGVnCIWwHWPhtVn4uBj1Sg2ciiWVuFesW40NF7RVVQJ9X45qkcuO51M/aivn37q3kOHDzc31g/eNHfnbYc/OHPhE088ZIx58O7bHn/w7pffPv77f/zVV19+2c8dxZ5jbK9xfE5bKyBRFGKzvFSn0KTVI2efTy6+u95t2azZIQPIYjoZ+DyEd6DfbI6aJCnvEEdwQN82gRzogh2PZ6Lw0UrkRELhutV9kdlw+k7h2oo2sGrt1bFbfHl6pbWS9dq1kfgffekXRqrVPMtJLQp3/523ACysq1crf/pX3/7w1Pm/8/mf+79vn9qwNPVZdVbq06zNYPmiT6qhsNJbb6d1zftMqw+vnupuXF0A6X2vOuf33NMxSdG6RjGBqh201wc8MVW3uD7xCtW21471gddxY9qeHxau4fXFXpEaGRe82i8C9QJxUQm9DWle210dpYSjo9V4cq9tr9l+/60TV8I0XW10mxsbI6Xkey+8Hgfyq7/4MyfOLnz9xXdx86O0FpVReos8Y1oVMjPx7VffCZxbjasT7ZVLUiq3Fn3e9d4FvnCtRWkvJLAcVPekQlmrTw+kVk5VSIWqH/Tx1Co8AK9V0qpGFAcNQBAqOq5OxBSUqs3L8OvV2fO9LruNWlrbVR+93NywpKmMGaI0Wh8thyuLi8fuezgQLFy59M7F5eiWx9TmgPGrl2V8TmrTpM+sjraXkrw7P3Hgk8e/eqnVPNnvjqfltSCZXb9YF3MtjAFmpBUZZA+s1adVEUAFGFxKqkqgUI1IBQxUyAQwqglBsg947wmOqZty+W4gAcQVXfAsg7Xa1HwyGa1euiVbv6pY3HX7+oGP5GfeTK69WyAqi+wJ/HWgE5QhtBKarM24wihFXEKQQBHBtePaPcvvt/utU6YaH3k8mJizC2cql16fth3SNEgL9MWo6pAf4KaOL1Id6BdE1QAjqg2RMlQBSwZAolpSH6im6knZEOkq9nt7iH6ZpqF0tijgxQQBg4sMOmHSkSjqNafr491+u5a19pOXPAt1d/risimdBiMCzoZ5r0VTU7tm4lHgYdqIeNEHS2GpGNsrRS/uLEVqu2JkKEgkoazVZ7AtGtwqNoe97AHPtt/beQkC1XF18zLoxqJHdsFx7xNqqLpAGaW0glJkOxDJvI+9FxGvnurERN2oGuVd9XbM25YYT86o7yrWaBAEqS00rXdueuS2pZNy/f0Gg7oxqbd99R3Ioita6agmo6Z9XcR4QFVl0F4cbIDbggSoqgEdUIWfUHeVgUAzClQH/QsDFMSMyIOiCrzkGBC7qG87TRSWvFVwq6AJ/sDqXiGBk04fpJ2n2U/uMrSqLzhEwP2hDHsf1i2YMsuThhxZPZcbUyT1tL8x4JpSolB4dVuRV3UH0T1UrnAYDggIqEBGrsEIUAz6kApDKOAAJT8XcE3hgTGyKrjD8HULIzIh/BnDN5weFIwRY4LdxDsOv5AES56PB1z2mhAHDQHcb3DcqgWu0NDnprvK7moRRh6g7VlIKBBFNpQAyk6aflAQBDfI6IYta3Gb4hUh/NBdbWsoBzHQe/2Bw4oHqU8arIMFKIoQasFFyBoQQltKDwWw5tVCV5VfdxgDng20o7DgLtEXHdpeEzEqgapCPRVKQ8ICFJgd/fRtsCtADTYpJ91KqXWopt0E1Q7J6qZSgUptQPZSdxk1YEcRKPYJBtcl4EOBzpKnHLuqVXCXgVV2FYXiZmEJWPJKxYrT0w4jYAvqVbmpm8EOilWHmt2hZW7iZChbM0lc3nkFW09vEHLeyJSr9x7Y8Hqz+l3CecU6MEvsg6+pzjttKL7pcK1whH7odTf1KPxFj5OKOnBAUFJ9zSED6tAqMKI6r2pVd3KQmyjZ1jtvaSV2UMZgrT49ICy30KX6Y7C6QZtKcmSkmud5EEUeaLRacRi6vAiSpFIuZVlWjuOV9Q3aYnR83HrvisICYRhZa/udThBF3SyrVsppFHW73TCOsyxP00StpaLb61nnuEPRwS1N7w0UHzf9jR8Y8aYaYQtkJH5MMbsp1SRxYP9+a20ax5U0DYBKmkZRWKuUx6pVb22llKrznX62Z3Y2NGZifFytLSdJOUkI1CrlSEy9WhmplOMonBobK8VRkWWVcnlifGxtfcOrktAhRnjjsnGjfBQEWatNb0sqtpXjwN8UFw3gKYyjCEAcx0VRxHGcZVmaJP1+FkVRXuRhGDabLVWtVMrqtbCFUKIoKooiSZMsy6Io6vV6qhChiDjnoijKspxCW9jCFtzSxpPbwu+tVfEGm9zcwE5xr94olOcOu1EMalwMUiaheh3Q6CIyODfvfWAMSO/dltjTqycHL0C9inBTOKYkvVcR7tBDcMDCc8vl/42j1GGHXf8fAFH0iB0rhcgAAAAASUVORK5CYII=" alt="Settings" style="width:46px;height:46px;object-fit:cover;border-radius:50%;display:block;transition:transform 0.3s ease,filter 0.3s ease;">`;
         settingsBtn.style.cssText = `
             position: fixed;
-            bottom: 20px;
-            right: 20px;
+            bottom: 24px;
+            right: 24px;
             z-index: 99999;
-            width: 50px;
-            height: 50px;
+            width: 58px;
+            height: 58px;
             border-radius: 50%;
-            border: none;
-            background: #4CAF50;
-            color: white;
-            font-size: 24px;
+            border: 2px solid rgba(239,68,68,0.7);
+            background: #0f0f0f;
+            padding: 4px;
             cursor: pointer;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-            transition: transform 0.2s, background 0.2s;
+            animation: bypassPulse 2.5s infinite;
+            transition: transform 0.25s cubic-bezier(.34,1.56,.64,1), border-color 0.2s;
         `;
-        settingsBtn.onmouseover = () => settingsBtn.style.transform = 'scale(1.1)';
-        settingsBtn.onmouseout = () => settingsBtn.style.transform = 'scale(1)';
+        settingsBtn.onmouseover = () => {
+            settingsBtn.style.transform = 'scale(1.15) rotate(-5deg)';
+            const img = settingsBtn.querySelector('img');
+            if (img) img.style.filter = 'brightness(1.15) drop-shadow(0 0 8px rgba(239,68,68,0.8))';
+        };
+        settingsBtn.onmouseout = () => {
+            settingsBtn.style.transform = 'scale(1) rotate(0deg)';
+            const img = settingsBtn.querySelector('img');
+            if (img) img.style.filter = 'none';
+        };
 
         // Create settings panel
         const panel = document.createElement('div');
         panel.id = 'bypass-settings-panel';
         panel.style.cssText = `
             position: fixed;
-            bottom: 80px;
-            right: 20px;
+            bottom: 92px;
+            right: 24px;
             z-index: 99998;
-            width: 320px;
-            max-height: 500px;
+            width: 340px;
+            max-height: 560px;
             overflow-y: auto;
-            background: #1e1e1e;
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            overflow-x: hidden;
+            background: rgba(15,15,15,0.97);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 18px;
+            border: 1px solid rgba(239,68,68,0.25);
+            box-shadow: 0 24px 64px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04) inset;
             display: none;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'VT323', monospace;
         `;
 
         const panelHeader = document.createElement('div');
         panelHeader.style.cssText = `
-            padding: 16px;
-            border-bottom: 1px solid #333;
-            background: #2d2d2d;
-            border-radius: 12px 12px 0 0;
+            padding: 18px 20px 14px;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
+            background: linear-gradient(135deg, rgba(239,68,68,0.12) 0%, rgba(15,15,15,0) 60%);
+            border-radius: 18px 18px 0 0;
         `;
         panelHeader.innerHTML = `
-            <h3 style="margin: 0; color: #4CAF50; font-size: 16px;">🛡️ Bypass Settings</h3>
-            <small style="color: #888;">Toggle features on/off</small>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+                <svg viewBox="0 0 24 24" width="22" height="22" style="flex-shrink:0;filter:drop-shadow(0 0 6px rgba(239,68,68,0.6));">
+                    <defs><linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#ef4444"/><stop offset="100%" style="stop-color:#b91c1c"/></linearGradient></defs>
+                    <path fill="url(#shieldGrad)" d="M12 2L4 5v6c0 5.25 3.4 10.15 8 11.35C16.6 21.15 20 16.25 20 11V5l-8-3zm-1 13l-3-3 1.41-1.41L11 12.17l4.59-4.58L17 9l-6 6z"/>
+                </svg>
+                <h3 style="margin:0;font-size:15px;font-weight:700;letter-spacing:0.3px;background:linear-gradient(90deg,#ef4444,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Bypass Settings</h3>
+            </div>
+            <small style="color:#71717a;font-size:11px;font-weight:500;letter-spacing:0.5px;text-transform:uppercase;">Configure features &amp; AI providers</small>
         `;
 
         const panelContent = document.createElement('div');
-        panelContent.style.cssText = 'padding: 12px;';
+        panelContent.style.cssText = 'padding: 12px 14px 14px;';
 
         const createToggle = (id, label, checked, description = '') => {
             const wrapper = document.createElement('div');
@@ -2002,46 +2077,53 @@
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 10px 0;
-                border-bottom: 1px solid #333;
+                padding: 9px 2px;
+                border-bottom: 1px solid rgba(255,255,255,0.05);
+                transition: background 0.15s;
+                border-radius: 8px;
+                margin: 1px 0;
             `;
+            wrapper.onmouseover = () => wrapper.style.background = 'rgba(255,255,255,0.03)';
+            wrapper.onmouseout  = () => wrapper.style.background = 'transparent';
             wrapper.innerHTML = `
-                <div style="flex: 1;">
-                    <div style="color: #fff; font-size: 13px;">${label}</div>
-                    ${description ? `<div style="color: #666; font-size: 11px; margin-top: 2px;">${description}</div>` : ''}
+                <div style="flex: 1; padding-right: 12px;">
+                    <div style="color: #e4e4e7; font-size: 12.5px; font-weight: 500; font-family: 'VT323', monospace;">${label}</div>
+                    ${description ? `<div style="color: #52525b; font-size: 10.5px; margin-top: 2px; font-family: 'VT323', monospace; line-height:1.4;">${description}</div>` : ''}
                 </div>
-                <label style="position: relative; display: inline-block; width: 44px; height: 24px;">
+                <label style="position: relative; display: inline-block; width: 42px; height: 23px; flex-shrink:0;">
                     <input type="checkbox" id="${id}" ${checked ? 'checked' : ''} style="opacity: 0; width: 0; height: 0;">
                     <span style="
                         position: absolute;
                         cursor: pointer;
                         top: 0; left: 0; right: 0; bottom: 0;
-                        background-color: ${checked ? '#4CAF50' : '#555'};
-                        transition: .3s;
-                        border-radius: 24px;
+                        background: ${checked ? 'linear-gradient(135deg,#ef4444,#dc2626)' : '#27272a'};
+                        transition: background 0.25s ease, box-shadow 0.25s ease;
+                        border-radius: 23px;
+                        box-shadow: ${checked ? '0 0 8px rgba(239,68,68,0.4)' : 'inset 0 1px 3px rgba(0,0,0,0.4)'};
                     "></span>
                     <span style="
                         position: absolute;
-                        content: '';
-                        height: 18px;
-                        width: 18px;
-                        left: ${checked ? '23px' : '3px'};
-                        bottom: 3px;
-                        background-color: white;
-                        transition: .3s;
+                        height: 17px;
+                        width: 17px;
+                        left: ${checked ? '22px' : '3px'};
+                        top: 3px;
+                        background: white;
+                        transition: left 0.25s cubic-bezier(.34,1.56,.64,1), box-shadow 0.2s;
                         border-radius: 50%;
+                        box-shadow: 0 1px 4px rgba(0,0,0,0.4);
                     "></span>
                 </label>
             `;
 
             const checkbox = wrapper.querySelector('input');
-            const slider = wrapper.querySelector('span:first-of-type');
-            const circle = wrapper.querySelector('span:last-of-type');
+            const slider   = wrapper.querySelector('span:first-of-type');
+            const circle   = wrapper.querySelector('span:last-of-type');
 
             checkbox.addEventListener('change', () => {
                 SETTINGS[id] = checkbox.checked;
-                slider.style.backgroundColor = checkbox.checked ? '#4CAF50' : '#555';
-                circle.style.left = checkbox.checked ? '23px' : '3px';
+                slider.style.background = checkbox.checked ? 'linear-gradient(135deg,#ef4444,#dc2626)' : '#27272a';
+                slider.style.boxShadow  = checkbox.checked ? '0 0 8px rgba(239,68,68,0.4)' : 'inset 0 1px 3px rgba(0,0,0,0.4)';
+                circle.style.left       = checkbox.checked ? '22px' : '3px';
                 saveSettings(SETTINGS);
             });
 
@@ -2050,19 +2132,22 @@
 
         const createTextInput = (id, label, value, placeholder = '') => {
             const wrapper = document.createElement('div');
-            wrapper.style.cssText = 'padding: 10px 0; border-bottom: 1px solid #333;';
+            wrapper.style.cssText = 'padding: 9px 2px; border-bottom: 1px solid rgba(255,255,255,0.05);';
             wrapper.innerHTML = `
-                <div style="color: #fff; font-size: 13px; margin-bottom: 6px;">${label}</div>
+                <div style="color: #a1a1aa; font-size: 11px; font-weight: 600; font-family: 'VT323',monospace; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.6px;">${label}</div>
                 <input type="text" id="${id}" value="${value}" placeholder="${placeholder}" style="
                     width: 100%;
-                    padding: 8px;
-                    border: 1px solid #444;
-                    border-radius: 6px;
-                    background: #2d2d2d;
-                    color: #fff;
+                    padding: 8px 10px;
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 8px;
+                    background: rgba(255,255,255,0.05);
+                    color: #e4e4e7;
                     font-size: 12px;
                     box-sizing: border-box;
-                ">
+                    font-family: 'VT323', monospace;
+                    outline: none;
+                    transition: border-color 0.2s, box-shadow 0.2s;
+                " onfocus="this.style.borderColor='rgba(239,68,68,0.5)';this.style.boxShadow='0 0 0 3px rgba(239,68,68,0.1)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)';this.style.boxShadow='none'">
             `;
 
             const input = wrapper.querySelector('input');
@@ -2077,30 +2162,31 @@
         const createSectionHeader = (title, iconPath = '') => {
             const header = document.createElement('div');
             header.style.cssText = `
-                color: #4CAF50;
-                font-size: 11px;
-                font-weight: 800;
-                text-transform: uppercase;
-                padding: 12px 0 6px 0;
-                letter-spacing: 1.2px;
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                border-bottom: 2px solid #333;
-                margin-top: 10px;
-                margin-bottom: 5px;
+                padding: 14px 2px 8px;
+                margin-top: 6px;
+                border-bottom: 1px solid rgba(255,255,255,0.07);
+                margin-bottom: 4px;
             `;
 
-            if (iconPath) {
-                header.innerHTML = `
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-                        <path d="${iconPath}"></path>
-                    </svg>
-                    <span>${title}</span>
-                `;
-            } else {
-                header.textContent = title;
-            }
+            const iconSvg = iconPath ? `
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="rgba(239,68,68,0.85)">
+                    <path d="${iconPath}"></path>
+                </svg>` : '';
+
+            header.innerHTML = `
+                ${iconSvg}
+                <span style="
+                    color: #a1a1aa;
+                    font-size: 10px;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 1.4px;
+                    font-family: 'VT323', monospace;
+                ">${title}</span>
+            `;
             return header;
         };
 
@@ -2131,17 +2217,18 @@
                         color: #fff;
                         cursor: pointer;
                         font-size: 11px;
-                    ">🔄</button>
+                    "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                 </div>
                 <select id="g4fModel" style="
                     width: 100%;
                     padding: 8px;
                     border: 1px solid #444;
                     border-radius: 6px;
-                    background: #2d2d2d;
-                    color: #fff;
+                    background: rgba(255,255,255,0.05);
+                    color: #e4e4e7;
                     font-size: 11px;
                     box-sizing: border-box;
+                    font-family: 'VT323', monospace;
                 ">
                     <option value="auto">Auto (Automatic Model Selection)</option>
                 </select>
@@ -2238,26 +2325,26 @@
 
         // Temperature setting
         const tempWrapper = document.createElement('div');
-        tempWrapper.style.cssText = 'padding: 10px 0; border-bottom: 1px solid #333;';
+        tempWrapper.style.cssText = 'padding: 9px 2px; border-bottom: 1px solid rgba(255,255,255,0.05);';
         tempWrapper.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <div style="color: #fff; font-size: 13px;">AI Temperature</div>
-                <div id="temp-value" style="color: #4CAF50; font-size: 13px; font-weight: bold;">${SETTINGS.aiTemperature}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div style="color:#a1a1aa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.4px;font-family:'VT323',monospace;">AI Temperature</div>
+                <div id="temp-value" style="color:#ef4444;font-size:12px;font-weight:700;font-family:'VT323',monospace;background:rgba(239,68,68,0.1);padding:2px 8px;border-radius:99px;border:1px solid rgba(239,68,68,0.25);">${SETTINGS.aiTemperature}</div>
             </div>
             <input type="range" id="aiTemperature" min="0" max="1" step="0.1" value="${SETTINGS.aiTemperature}" style="
                 width: 100%;
-                height: 4px;
-                background: #444;
-                border-radius: 2px;
+                height: 5px;
+                background: #27272a;
+                border-radius: 3px;
                 outline: none;
                 cursor: pointer;
-                accent-color: #4CAF50;
+                accent-color: #ef4444;
             ">
-            <div style="color: #888; font-size: 11px; margin-top: 4px;">Lower is more predictable, higher is more creative.</div>
+            <div style="color:#52525b;font-size:10.5px;margin-top:5px;font-family:'VT323',monospace;">Lower = deterministic &nbsp;·&nbsp; Higher = creative</div>
         `;
         tempWrapper.querySelector('input').addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
-            document.getElementById('temp-value').textContent = val;
+            const tv = document.getElementById('temp-value'); if(tv){tv.textContent=val;}
             SETTINGS.aiTemperature = val;
             saveSettings(SETTINGS);
         });
@@ -2265,23 +2352,25 @@
 
         // Custom System Prompt
         const promptWrapper = document.createElement('div');
-        promptWrapper.style.cssText = 'padding: 10px 0; border-bottom: 1px solid #333;';
+        promptWrapper.style.cssText = 'padding: 9px 2px; border-bottom: 1px solid rgba(255,255,255,0.05);';
         promptWrapper.innerHTML = `
-            <div style="color: #fff; font-size: 13px; margin-bottom: 6px;">Custom System Prompt</div>
+            <div style="color:#a1a1aa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.4px;margin-bottom:7px;font-family:'VT323',monospace;">Custom System Prompt</div>
             <textarea id="aiSystemPrompt" placeholder="Inject custom instructions to AI solver..." style="
                 width: 100%;
-                height: 60px;
-                padding: 8px;
-                border: 1px solid #444;
-                border-radius: 6px;
-                background: #2d2d2d;
-                color: #fff;
-                font-size: 12px;
+                height: 62px;
+                padding: 8px 10px;
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 8px;
+                background: rgba(255,255,255,0.05);
+                color: #e4e4e7;
+                font-size: 11.5px;
                 resize: vertical;
                 box-sizing: border-box;
-                font-family: inherit;
-            ">${SETTINGS.aiSystemPrompt || ''}</textarea>
-            <div style="color: #888; font-size: 11px; margin-top: 4px;">Prepended to every AI request. Absolute priority.</div>
+                font-family: 'VT323', monospace;
+                outline: none;
+                transition: border-color 0.2s;
+" onfocus="this.style.borderColor='rgba(239,68,68,0.5)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'">${SETTINGS.aiSystemPrompt || ''}</textarea>
+            <div style="color:#52525b;font-size:10.5px;margin-top:5px;font-family:'VT323',monospace;">Prepended to every AI request · Absolute priority</div>
         `;
         promptWrapper.querySelector('textarea').addEventListener('input', (e) => {
             SETTINGS.aiSystemPrompt = e.target.value;
@@ -2405,17 +2494,18 @@
                         color: #fff;
                         cursor: pointer;
                         font-size: 11px;
-                    ">🔄</button>
+                    "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                 </div>
                 <select id="geminiModel" style="
                     width: 100%;
                     padding: 8px;
                     border: 1px solid #444;
                     border-radius: 6px;
-                    background: #2d2d2d;
-                    color: #fff;
+                    background: rgba(255,255,255,0.05);
+                    color: #e4e4e7;
                     font-size: 11px;
                     box-sizing: border-box;
+                    font-family: 'VT323', monospace;
                 ">
                     <option value="gemini-2.5-flash">Loading models...</option>
                 </select>
@@ -2463,7 +2553,7 @@
                     if (statusDiv) statusDiv.textContent = 'Loading models...';
                     if (refreshBtn) {
                         refreshBtn.disabled = true;
-                        refreshBtn.textContent = '⏳';
+                        refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;animation:bypassSpin 1s linear infinite"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>';
                     }
 
                     try {
@@ -2477,7 +2567,7 @@
                     } finally {
                         if (refreshBtn) {
                             refreshBtn.disabled = false;
-                            refreshBtn.textContent = '🔄';
+                            refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
                         }
                     }
                 };
@@ -2542,17 +2632,18 @@
                         color: #fff;
                         cursor: pointer;
                         font-size: 11px;
-                    ">🔄</button>
+                    "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                 </div>
                 <select id="openaiModel" style="
                     width: 100%;
                     padding: 8px;
                     border: 1px solid #444;
                     border-radius: 6px;
-                    background: #2d2d2d;
-                    color: #fff;
+                    background: rgba(255,255,255,0.05);
+                    color: #e4e4e7;
                     font-size: 11px;
                     box-sizing: border-box;
+                    font-family: 'VT323', monospace;
                 ">
                     <option value="gpt-4o-mini">Loading models...</option>
                 </select>
@@ -2599,7 +2690,7 @@
                     if (statusDiv) statusDiv.textContent = 'Loading models...';
                     if (refreshBtn) {
                         refreshBtn.disabled = true;
-                        refreshBtn.textContent = '⏳';
+                        refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;animation:bypassSpin 1s linear infinite"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>';
                     }
 
                     try {
@@ -2613,7 +2704,7 @@
                     } finally {
                         if (refreshBtn) {
                             refreshBtn.disabled = false;
-                            refreshBtn.textContent = '🔄';
+                            refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
                         }
                     }
                 };
@@ -2696,7 +2787,7 @@
                         color: #fff;
                         cursor: pointer;
                         font-size: 11px;
-                    ">🔄</button>
+                    "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                 </div>
 
                 <!-- Model dropdown -->
@@ -2705,10 +2796,11 @@
                     padding: 8px;
                     border: 1px solid #444;
                     border-radius: 6px;
-                    background: #2d2d2d;
-                    color: #fff;
+                    background: rgba(255,255,255,0.05);
+                    color: #e4e4e7;
                     font-size: 11px;
                     box-sizing: border-box;
+                    font-family: 'VT323', monospace;
                 ">
                     <option value="">Loading models...</option>
                 </select>
@@ -2823,7 +2915,7 @@
                     if (statusDiv) statusDiv.textContent = 'Loading models from OpenRouter...';
                     if (refreshBtn) {
                         refreshBtn.disabled = true;
-                        refreshBtn.textContent = '⏳';
+                        refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;animation:bypassSpin 1s linear infinite"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>';
                     }
 
                     try {
@@ -2837,7 +2929,7 @@
                     } finally {
                         if (refreshBtn) {
                             refreshBtn.disabled = false;
-                            refreshBtn.textContent = '🔄';
+                            refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
                         }
                     }
                 };
@@ -2907,17 +2999,18 @@
                         color: #fff;
                         cursor: pointer;
                         font-size: 11px;
-                    ">🔄</button>
+                    "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                 </div>
                 <select id="puterModel" style="
                     width: 100%;
                     padding: 8px;
                     border: 1px solid #444;
                     border-radius: 6px;
-                    background: #2d2d2d;
-                    color: #fff;
+                    background: rgba(255,255,255,0.05);
+                    color: #e4e4e7;
                     font-size: 11px;
                     box-sizing: border-box;
+                    font-family: 'VT323', monospace;
                 ">
                     <option value="gpt-5.4-nano">Loading models...</option>
                 </select>
@@ -3281,12 +3374,12 @@
             const currentModel = SETTINGS.yuppbridgeModel || 'gpt-4o';
 
             wrapper.innerHTML = `
-                <div style="color: #fff; font-size: 13px; margin-bottom: 6px;">🌉 YuppBridge (200+ Models)</div>
+                <div style="color: #fff; font-size: 13px; margin-bottom: 6px;"><svg viewBox="0 0 24 24" width="13" height="13" fill="#3b82f6" style="display:inline-block;vertical-align:middle;margin-right:5px"><path d="M4 13h16v-2H4v2zm-2 4h20v-2H2v2zM2 7v2h20V7H2z"/></svg>YuppBridge (200+ Models)</div>
                 <div style="background: #1a2a3a; border: 1px solid #2196F3; border-radius: 6px; padding: 8px; margin-bottom: 8px;">
-                    <div style="color: #2196F3; font-size: 11px; font-weight: bold;">✨ Self-hosted Yupp AI Proxy</div>
+                    <div style="color: #2196F3; font-size: 11px; font-weight: bold;"><svg viewBox="0 0 24 24" width="12" height="12" fill="#3b82f6" style="display:inline-block;vertical-align:middle;margin-right:4px"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>Self-hosted Yupp AI Proxy</div>
                     <div style="color: #888; font-size: 10px; margin-top: 4px;">OpenAI-compatible API with 200+ models</div>
                     <div style="color: #666; font-size: 9px; margin-top: 2px;">
-                        <a href="https://github.com/cloudWaddie/yuppbridge" target="_blank" style="color:#64B5F6;">📖 Self-host Guide</a>
+                        <a href="https://github.com/cloudWaddie/yuppbridge" target="_blank" style="color:#64B5F6;">Self-host Guide</a>
                     </div>
                 </div>
                 <div style="margin-bottom: 8px;">
@@ -3336,7 +3429,7 @@
                             color: #fff;
                             cursor: pointer;
                             font-size: 11px;
-                        ">🔄</button>
+                        "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                         <button id="yuppbridgeHealthCheck" title="Check API health" style="
                             padding: 6px 10px;
                             border: 1px solid #444;
@@ -3345,7 +3438,7 @@
                             color: #fff;
                             cursor: pointer;
                             font-size: 11px;
-                        ">❤️</button>
+                        "><svg viewBox="0 0 24 24" width="13" height="13" fill="#ef4444" style="display:block;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button>
                     </div>
                     <select id="yuppbridgeModelSelect" style="
                         width: 100%;
@@ -3411,7 +3504,7 @@
                     if (statusDiv) statusDiv.textContent = 'Loading models...';
                     if (refreshBtn) {
                         refreshBtn.disabled = true;
-                        refreshBtn.textContent = '⏳';
+                        refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;animation:bypassSpin 1s linear infinite"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>';
                     }
 
                     try {
@@ -3424,7 +3517,7 @@
                     } finally {
                         if (refreshBtn) {
                             refreshBtn.disabled = false;
-                            refreshBtn.textContent = '🔄';
+                            refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
                         }
                     }
                 };
@@ -3494,7 +3587,7 @@
                     healthBtn.addEventListener('click', async () => {
                         if (statusDiv) statusDiv.textContent = 'Checking health...';
                         healthBtn.disabled = true;
-                        healthBtn.textContent = '⏳';
+                        healthBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;animation:bypassSpin 1s linear infinite"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>';
 
                         const result = await YuppBridgeProvider.checkHealth();
 
@@ -3508,7 +3601,7 @@
                         }
 
                         healthBtn.disabled = false;
-                        healthBtn.textContent = '❤️';
+                        healthBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="#ef4444" style="display:block"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
                     });
                 }
 
@@ -3524,7 +3617,7 @@
         // ==============================================================
 
         const note = document.createElement('div');
-        note.style.cssText = 'color: #666; font-size: 10px; padding: 12px 0; text-align: center;';
+        note.style.cssText = 'color:#3f3f46;font-size:10px;padding:14px 4px;text-align:center;font-family:"VT323",monospace;line-height:1.7;border-top:1px solid rgba(255,255,255,0.05);margin-top:4px;';
         note.innerHTML = 'Reload page after changing settings<br>Keys: <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#4CAF50;">Gemini</a> | <a href="https://openrouter.ai/keys" target="_blank" style="color:#4CAF50;">OpenRouter</a> | <a href="https://g4f.space" target="_blank" style="color:#4CAF50;">G4F</a><br>Puter.js: no API key required | <a href="https://developer.puter.com/ai/" target="_blank" style="color:#2196F3;">Puter AI docs</a><br>DuckDuckGo AI is FREE! | <a href="https://github.com/cloudWaddie/yuppbridge" target="_blank" style="color:#2196F3;">YuppBridge</a>';
         panelContent.appendChild(note);
 
@@ -3532,12 +3625,20 @@
         panel.appendChild(panelContent);
 
         settingsBtn.addEventListener('click', () => {
-            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+            if (panel.style.display === 'none' || !panel.style.display) {
+                panel.style.display = 'block';
+                panel.style.animation = 'bypassSlideIn 0.28s cubic-bezier(.34,1.56,.64,1) forwards';
+            } else {
+                panel.style.animation = '';
+                panel.style.display = 'none';
+            }
         });
 
         // Close panel when clicking outside
+        // NOTE: use settingsBtn.contains() — not strict equality — so clicking
+        // the child <img> (or any future child element) is treated as "on the button".
         document.addEventListener('click', (e) => {
-            if (!panel.contains(e.target) && e.target !== settingsBtn) {
+            if (!panel.contains(e.target) && !settingsBtn.contains(e.target)) {
                 panel.style.display = 'none';
             }
         });
@@ -6825,7 +6926,7 @@ SOLVING APPROACH:
                 background: #2196F3;
                 color: white;
                 border-radius: 8px;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: 'VT323', monospace;
                 font-size: 13px;
                 font-weight: 500;
                 box-shadow: 0 4px 12px rgba(0,0,0,0.3);
