@@ -127,15 +127,15 @@
                             <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"></path>
                         </svg>
                     </div>
-                    <h2 style="margin:0 0 14px;font-size:22px;font-weight:800;font-family:'VT323',monospace;background:linear-gradient(90deg,#ef4444,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Update Required</h2>
-                    <p style="color: #fff; margin: 0 0 8px 0; font-size: 14px;">
+                    <h2 style="margin:0 0 14px;font-size:26px;font-weight:800;font-family:'VT323',monospace;background:linear-gradient(90deg,#ef4444,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Update Required</h2>
+                    <p style="color: #fff; margin: 0 0 8px 0; font-size: 18px;">
                         A new version of SkillRack Bypass is available!
                     </p>
-                    <p style="color: #888; margin: 0 0 24px 0; font-size: 13px;">
+                    <p style="color: #888; margin: 0 0 24px 0; font-size: 17px;">
                         Your version: <span style="color: #ff9800;">${SCRIPT_VERSION}</span><br>
                         Latest version: <span style="color: #4CAF50;">${remoteVersion}</span>
                     </p>
-                    <p style="color: #ff9800; margin: 0 0 24px 0; font-size: 12px;">
+                    <p style="color: #ff9800; margin: 0 0 24px 0; font-size: 16px;">
                         You must update to continue using this script.
                     </p>
                     <div style="display: flex; gap: 12px; justify-content: center;">
@@ -145,7 +145,7 @@
                             border: none;
                             padding: 11px 28px;
                             border-radius: 10px;
-                            font-size: 13px;
+                            font-size: 17px;
                             font-weight: 700;
                             cursor: pointer;
                             font-family: 'VT323', monospace;
@@ -159,7 +159,7 @@
                             border: 1px solid rgba(255,255,255,0.1);
                             padding: 11px 20px;
                             border-radius: 10px;
-                            font-size: 13px;
+                            font-size: 17px;
                             font-family: 'VT323', monospace;
                             cursor: pointer;
                             transition: background 0.2s;
@@ -225,11 +225,11 @@
                         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm5.31-3.1L6.69 6.29C8.04 5.23 9.74 4.6 11.4 4.6c4.42 0 8 3.58 8 8 0 1.85-.63 3.55-1.69 4.9z"></path>
                     </svg>
                 </div>
-                <h2 style="margin:0 0 14px;font-size:22px;font-weight:800;font-family:'VT323',monospace;background:linear-gradient(90deg,#ef4444,#dc2626);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Script Disabled</h2>
-                <p style="color: #fff; margin: 0 0 16px 0; font-size: 14px;">
+                <h2 style="margin:0 0 14px;font-size:26px;font-weight:800;font-family:'VT323',monospace;background:linear-gradient(90deg,#ef4444,#dc2626);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Script Disabled</h2>
+                <p style="color: #fff; margin: 0 0 16px 0; font-size: 18px;">
                     This script has been temporarily disabled by the author.
                 </p>
-                <p style="color: #888; margin: 0; font-size: 12px;">
+                <p style="color: #888; margin: 0; font-size: 16px;">
                     Please check back later or visit the GitHub repository for updates.
                 </p>
             </div>
@@ -287,7 +287,7 @@
                             <path d="M12 2L1 21h22L12 2zm0 3.45L20.14 19H3.86L12 5.45zM13 17h-2v-2h2v2zm0-4h-2v-4h2v4z"></path>
                         </svg>
                     </div>
-                    <h2 style="margin:0 0 14px;font-size:20px;font-weight:800;font-family:'VT323',monospace;background:linear-gradient(90deg,#f97316,#eab308);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Disclaimer & Terms of Use</h2>
+                    <h2 style="margin:0 0 14px;font-size:24px;font-weight:800;font-family:'VT323',monospace;background:linear-gradient(90deg,#f97316,#eab308);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Disclaimer & Terms of Use</h2>
                     <div style="
                         background: rgba(255,255,255,0.04);
                         border: 1px solid rgba(255,255,255,0.08);
@@ -297,7 +297,7 @@
                         text-align: left;
                         max-height: 200px;
                         overflow-y: auto;
-                        font-size: 11.5px;
+                        font-size: 16px;
                         color: #a1a1aa;
                         line-height: 1.65;
                         font-family: 'VT323', monospace;
@@ -318,7 +318,7 @@
                             <li style="margin-bottom: 8px;">This script is for <strong>educational purposes only</strong>.</li>
                         </ul>
                     </div>
-                    <p style="color: #888; margin: 0 0 20px 0; font-size: 11px;">
+                    <p style="color: #888; margin: 0 0 20px 0; font-size: 15px;">
                         By clicking "I Accept", you confirm that you have read, understood, and agree to these terms.
                     </p>
                     <div style="display: flex; gap: 12px; justify-content: center;">
@@ -328,7 +328,7 @@
                             border: none;
                             padding: 11px 28px;
                             border-radius: 10px;
-                            font-size: 13px;
+                            font-size: 17px;
                             font-weight: 700;
                             cursor: pointer;
                             font-family: 'VT323', monospace;
@@ -342,7 +342,7 @@
                             border: 1px solid rgba(255,255,255,0.1);
                             padding: 11px 20px;
                             border-radius: 10px;
-                            font-size: 13px;
+                            font-size: 17px;
                             font-family: 'VT323', monospace;
                             cursor: pointer;
                             transition: background 0.2s;
@@ -2063,9 +2063,9 @@
                     <defs><linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#ef4444"/><stop offset="100%" style="stop-color:#b91c1c"/></linearGradient></defs>
                     <path fill="url(#shieldGrad)" d="M12 2L4 5v6c0 5.25 3.4 10.15 8 11.35C16.6 21.15 20 16.25 20 11V5l-8-3zm-1 13l-3-3 1.41-1.41L11 12.17l4.59-4.58L17 9l-6 6z"/>
                 </svg>
-                <h3 style="margin:0;font-size:15px;font-weight:700;letter-spacing:0.3px;background:linear-gradient(90deg,#ef4444,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Bypass Settings</h3>
+                <h3 style="margin:0;font-size:19px;font-weight:700;letter-spacing:0.3px;background:linear-gradient(90deg,#ef4444,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Bypass Settings</h3>
             </div>
-            <small style="color:#71717a;font-size:11px;font-weight:500;letter-spacing:0.5px;text-transform:uppercase;">Configure features &amp; AI providers</small>
+            <small style="color:#71717a;font-size:15px;font-weight:500;letter-spacing:0.5px;text-transform:uppercase;">Configure features &amp; AI providers</small>
         `;
 
         const panelContent = document.createElement('div');
@@ -2087,8 +2087,8 @@
             wrapper.onmouseout  = () => wrapper.style.background = 'transparent';
             wrapper.innerHTML = `
                 <div style="flex: 1; padding-right: 12px;">
-                    <div style="color: #e4e4e7; font-size: 12.5px; font-weight: 500; font-family: 'VT323', monospace;">${label}</div>
-                    ${description ? `<div style="color: #52525b; font-size: 10.5px; margin-top: 2px; font-family: 'VT323', monospace; line-height:1.4;">${description}</div>` : ''}
+                    <div style="color: #e4e4e7; font-size: 16.5px; font-weight: 500; font-family: 'VT323', monospace;">${label}</div>
+                    ${description ? `<div style="color: #52525b; font-size: 14.5px; margin-top: 2px; font-family: 'VT323', monospace; line-height:1.4;">${description}</div>` : ''}
                 </div>
                 <label style="position: relative; display: inline-block; width: 42px; height: 23px; flex-shrink:0;">
                     <input type="checkbox" id="${id}" ${checked ? 'checked' : ''} style="opacity: 0; width: 0; height: 0;">
@@ -2134,7 +2134,7 @@
             const wrapper = document.createElement('div');
             wrapper.style.cssText = 'padding: 9px 2px; border-bottom: 1px solid rgba(255,255,255,0.05);';
             wrapper.innerHTML = `
-                <div style="color: #a1a1aa; font-size: 11px; font-weight: 600; font-family: 'VT323',monospace; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.6px;">${label}</div>
+                <div style="color: #a1a1aa; font-size: 15px; font-weight: 600; font-family: 'VT323',monospace; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.6px;">${label}</div>
                 <input type="text" id="${id}" value="${value}" placeholder="${placeholder}" style="
                     width: 100%;
                     padding: 8px 10px;
@@ -2142,7 +2142,7 @@
                     border-radius: 8px;
                     background: rgba(255,255,255,0.05);
                     color: #e4e4e7;
-                    font-size: 12px;
+                    font-size: 16px;
                     box-sizing: border-box;
                     font-family: 'VT323', monospace;
                     outline: none;
@@ -2180,7 +2180,7 @@
                 ${iconSvg}
                 <span style="
                     color: #a1a1aa;
-                    font-size: 10px;
+                    font-size: 14px;
                     font-weight: 700;
                     text-transform: uppercase;
                     letter-spacing: 1.4px;
@@ -2197,7 +2197,7 @@
             wrapper.style.cssText = `padding: 10px 0; border-bottom: 1px solid #333; display: ${SETTINGS.aiProvider === 'g4f' ? 'block' : 'none'};`;
 
             wrapper.innerHTML = `
-                <div style="color: #fff; font-size: 13px; margin-bottom: 6px;">G4F Model</div>
+                <div style="color: #fff; font-size: 17px; margin-bottom: 6px;">G4F Model</div>
                 <div style="display: flex; gap: 6px; margin-bottom: 6px;">
                     <input type="text" id="g4fModelSearch" placeholder="Search models (e.g., qwen, gpt)" style="
                         flex: 1;
@@ -2206,7 +2206,7 @@
                         border-radius: 6px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                     <button id="g4fRefreshModels" style="
@@ -2216,7 +2216,7 @@
                         background: #3d3d3d;
                         color: #fff;
                         cursor: pointer;
-                        font-size: 11px;
+                        font-size: 15px;
                     "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                 </div>
                 <select id="g4fModel" style="
@@ -2226,13 +2226,13 @@
                     border-radius: 6px;
                     background: rgba(255,255,255,0.05);
                     color: #e4e4e7;
-                    font-size: 11px;
+                    font-size: 15px;
                     box-sizing: border-box;
                     font-family: 'VT323', monospace;
                 ">
                     <option value="auto">Auto (Automatic Model Selection)</option>
                 </select>
-                <div id="g4fModelStatus" style="color: #666; font-size: 10px; margin-top: 4px;"></div>
+                <div id="g4fModelStatus" style="color: #666; font-size: 14px; margin-top: 4px;"></div>
             `;
 
             setTimeout(() => {
@@ -2328,8 +2328,8 @@
         tempWrapper.style.cssText = 'padding: 9px 2px; border-bottom: 1px solid rgba(255,255,255,0.05);';
         tempWrapper.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <div style="color:#a1a1aa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.4px;font-family:'VT323',monospace;">AI Temperature</div>
-                <div id="temp-value" style="color:#ef4444;font-size:12px;font-weight:700;font-family:'VT323',monospace;background:rgba(239,68,68,0.1);padding:2px 8px;border-radius:99px;border:1px solid rgba(239,68,68,0.25);">${SETTINGS.aiTemperature}</div>
+                <div style="color:#a1a1aa;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:1.4px;font-family:'VT323',monospace;">AI Temperature</div>
+                <div id="temp-value" style="color:#ef4444;font-size:16px;font-weight:700;font-family:'VT323',monospace;background:rgba(239,68,68,0.1);padding:2px 8px;border-radius:99px;border:1px solid rgba(239,68,68,0.25);">${SETTINGS.aiTemperature}</div>
             </div>
             <input type="range" id="aiTemperature" min="0" max="1" step="0.1" value="${SETTINGS.aiTemperature}" style="
                 width: 100%;
@@ -2340,7 +2340,7 @@
                 cursor: pointer;
                 accent-color: #ef4444;
             ">
-            <div style="color:#52525b;font-size:10.5px;margin-top:5px;font-family:'VT323',monospace;">Lower = deterministic &nbsp;·&nbsp; Higher = creative</div>
+            <div style="color:#52525b;font-size:14.5px;margin-top:5px;font-family:'VT323',monospace;">Lower = deterministic &nbsp;·&nbsp; Higher = creative</div>
         `;
         tempWrapper.querySelector('input').addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
@@ -2354,7 +2354,7 @@
         const promptWrapper = document.createElement('div');
         promptWrapper.style.cssText = 'padding: 9px 2px; border-bottom: 1px solid rgba(255,255,255,0.05);';
         promptWrapper.innerHTML = `
-            <div style="color:#a1a1aa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.4px;margin-bottom:7px;font-family:'VT323',monospace;">Custom System Prompt</div>
+            <div style="color:#a1a1aa;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:1.4px;margin-bottom:7px;font-family:'VT323',monospace;">Custom System Prompt</div>
             <textarea id="aiSystemPrompt" placeholder="Inject custom instructions to AI solver..." style="
                 width: 100%;
                 height: 62px;
@@ -2363,14 +2363,14 @@
                 border-radius: 8px;
                 background: rgba(255,255,255,0.05);
                 color: #e4e4e7;
-                font-size: 11.5px;
+                font-size: 15.5px;
                 resize: vertical;
                 box-sizing: border-box;
                 font-family: 'VT323', monospace;
                 outline: none;
                 transition: border-color 0.2s;
 " onfocus="this.style.borderColor='rgba(239,68,68,0.5)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'">${SETTINGS.aiSystemPrompt || ''}</textarea>
-            <div style="color:#52525b;font-size:10.5px;margin-top:5px;font-family:'VT323',monospace;">Prepended to every AI request · Absolute priority</div>
+            <div style="color:#52525b;font-size:14.5px;margin-top:5px;font-family:'VT323',monospace;">Prepended to every AI request · Absolute priority</div>
         `;
         promptWrapper.querySelector('textarea').addEventListener('input', (e) => {
             SETTINGS.aiSystemPrompt = e.target.value;
@@ -2408,7 +2408,7 @@
         const providerWrapper = document.createElement('div');
         providerWrapper.style.cssText = 'padding: 10px 0; border-bottom: 1px solid #333;';
         providerWrapper.innerHTML = `
-            <div style="color: #fff; font-size: 13px; margin-bottom: 6px;">AI Provider</div>
+            <div style="color: #fff; font-size: 17px; margin-bottom: 6px;">AI Provider</div>
             <select id="aiProvider" style="
                 width: 100%;
                 padding: 8px;
@@ -2416,7 +2416,7 @@
                 border-radius: 6px;
                 background: #2d2d2d;
                 color: #fff;
-                font-size: 12px;
+                font-size: 16px;
                 box-sizing: border-box;
             ">
                 <option value="gemini" ${SETTINGS.aiProvider === 'gemini' ? 'selected' : ''}>Google Gemini</option>
@@ -2474,7 +2474,7 @@
             wrapper.style.cssText = `padding: 10px 0; border-bottom: 1px solid #333; display: ${SETTINGS.aiProvider === 'gemini' ? 'block' : 'none'};`;
 
             wrapper.innerHTML = `
-                <div style="color: #fff; font-size: 13px; margin-bottom: 6px;">Gemini Model</div>
+                <div style="color: #fff; font-size: 17px; margin-bottom: 6px;">Gemini Model</div>
                 <div style="display: flex; gap: 6px; margin-bottom: 6px;">
                     <input type="text" id="geminiModelSearch" placeholder="Search models (e.g., 2.5, flash, pro)" style="
                         flex: 1;
@@ -2483,7 +2483,7 @@
                         border-radius: 6px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                     <button id="geminiRefreshModels" title="Refresh models list" style="
@@ -2493,7 +2493,7 @@
                         background: #3d3d3d;
                         color: #fff;
                         cursor: pointer;
-                        font-size: 11px;
+                        font-size: 15px;
                     "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                 </div>
                 <select id="geminiModel" style="
@@ -2503,13 +2503,13 @@
                     border-radius: 6px;
                     background: rgba(255,255,255,0.05);
                     color: #e4e4e7;
-                    font-size: 11px;
+                    font-size: 15px;
                     box-sizing: border-box;
                     font-family: 'VT323', monospace;
                 ">
                     <option value="gemini-2.5-flash">Loading models...</option>
                 </select>
-                <div id="geminiModelStatus" style="color: #666; font-size: 10px; margin-top: 4px;"></div>
+                <div id="geminiModelStatus" style="color: #666; font-size: 14px; margin-top: 4px;"></div>
             `;
 
             setTimeout(() => {
@@ -2612,7 +2612,7 @@
             wrapper.style.cssText = `padding: 10px 0; border-bottom: 1px solid #333; display: ${SETTINGS.aiProvider === 'openai' ? 'block' : 'none'};`;
 
             wrapper.innerHTML = `
-                <div style="color: #fff; font-size: 13px; margin-bottom: 6px;">OpenAI Model</div>
+                <div style="color: #fff; font-size: 17px; margin-bottom: 6px;">OpenAI Model</div>
                 <div style="display: flex; gap: 6px; margin-bottom: 6px;">
                     <input type="text" id="openaiModelSearch" placeholder="Search models (e.g., gpt-4, o1, turbo)" style="
                         flex: 1;
@@ -2621,7 +2621,7 @@
                         border-radius: 6px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                     <button id="openaiRefreshModels" title="Refresh models list" style="
@@ -2631,7 +2631,7 @@
                         background: #3d3d3d;
                         color: #fff;
                         cursor: pointer;
-                        font-size: 11px;
+                        font-size: 15px;
                     "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                 </div>
                 <select id="openaiModel" style="
@@ -2641,13 +2641,13 @@
                     border-radius: 6px;
                     background: rgba(255,255,255,0.05);
                     color: #e4e4e7;
-                    font-size: 11px;
+                    font-size: 15px;
                     box-sizing: border-box;
                     font-family: 'VT323', monospace;
                 ">
                     <option value="gpt-4o-mini">Loading models...</option>
                 </select>
-                <div id="openaiModelStatus" style="color: #666; font-size: 10px; margin-top: 4px;"></div>
+                <div id="openaiModelStatus" style="color: #666; font-size: 14px; margin-top: 4px;"></div>
             `;
 
             setTimeout(() => {
@@ -2749,7 +2749,7 @@
             wrapper.style.cssText = `padding: 10px 0; border-bottom: 1px solid #333; display: ${SETTINGS.aiProvider === 'openrouter' ? 'block' : 'none'};`;
 
             wrapper.innerHTML = `
-                <div style="color: #fff; font-size: 13px; margin-bottom: 6px;">OpenRouter Model</div>
+                <div style="color: #fff; font-size: 17px; margin-bottom: 6px;">OpenRouter Model</div>
 
                 <!-- Custom model ID input (highest priority) -->
                 <div style="margin-bottom: 8px;">
@@ -2760,11 +2760,11 @@
                         border-radius: 6px;
                         background: #1a2a1a;
                         color: #4CAF50;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                         font-family: monospace;
                     ">
-                    <div style="color: #555; font-size: 10px; margin-top: 3px;">Type any model ID directly. Changes auto-save.</div>
+                    <div style="color: #555; font-size: 14px; margin-top: 3px;">Type any model ID directly. Changes auto-save.</div>
                 </div>
 
                 <!-- Search + Refresh row -->
@@ -2776,7 +2776,7 @@
                         border-radius: 6px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                     <button id="orRefreshModels" title="Refresh models from OpenRouter API" style="
@@ -2786,7 +2786,7 @@
                         background: #3d3d3d;
                         color: #fff;
                         cursor: pointer;
-                        font-size: 11px;
+                        font-size: 15px;
                     "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                 </div>
 
@@ -2798,17 +2798,17 @@
                     border-radius: 6px;
                     background: rgba(255,255,255,0.05);
                     color: #e4e4e7;
-                    font-size: 11px;
+                    font-size: 15px;
                     box-sizing: border-box;
                     font-family: 'VT323', monospace;
                 ">
                     <option value="">Loading models...</option>
                 </select>
-                <div id="orModelStatus" style="color: #666; font-size: 10px; margin-top: 4px;"></div>
+                <div id="orModelStatus" style="color: #666; font-size: 14px; margin-top: 4px;"></div>
 
                 <!-- Filter checkboxes -->
                 <div style="display: flex; gap: 12px; margin-top: 6px;">
-                    <label style="display: flex; align-items: center; gap: 4px; color: #888; font-size: 10px; cursor: pointer;">
+                    <label style="display: flex; align-items: center; gap: 4px; color: #888; font-size: 14px; cursor: pointer;">
                         <input type="checkbox" id="orShowFreeOnly" style="margin: 0;">
                         Free only
                     </label>
@@ -2979,7 +2979,7 @@
             wrapper.style.cssText = `padding: 10px 0; border-bottom: 1px solid #333; display: ${SETTINGS.aiProvider === 'puter' ? 'block' : 'none'};`;
 
             wrapper.innerHTML = `
-                <div style="color: #fff; font-size: 13px; margin-bottom: 6px;">Puter.js Model</div>
+                <div style="color: #fff; font-size: 17px; margin-bottom: 6px;">Puter.js Model</div>
                 <div style="display: flex; gap: 6px; margin-bottom: 6px;">
                     <input type="text" id="puterModelSearch" placeholder="Search models (e.g., gemini, claude, gpt)" style="
                         flex: 1;
@@ -2988,7 +2988,7 @@
                         border-radius: 6px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                     <button id="puterRefreshModels" title="Reset models list" style="
@@ -2998,7 +2998,7 @@
                         background: #3d3d3d;
                         color: #fff;
                         cursor: pointer;
-                        font-size: 11px;
+                        font-size: 15px;
                     "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                 </div>
                 <select id="puterModel" style="
@@ -3008,13 +3008,13 @@
                     border-radius: 6px;
                     background: rgba(255,255,255,0.05);
                     color: #e4e4e7;
-                    font-size: 11px;
+                    font-size: 15px;
                     box-sizing: border-box;
                     font-family: 'VT323', monospace;
                 ">
                     <option value="gpt-5.4-nano">Loading models...</option>
                 </select>
-                <div id="puterModelStatus" style="color: #666; font-size: 10px; margin-top: 4px;"></div>
+                <div id="puterModelStatus" style="color: #666; font-size: 14px; margin-top: 4px;"></div>
                 <div style="display: flex; gap: 6px; margin-top: 6px;">
                     <input type="text" id="puterCustomModel" placeholder="Custom model (e.g., qwen/qwen3-coder:free)" style="
                         flex: 1;
@@ -3023,7 +3023,7 @@
                         border-radius: 6px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                     <button id="puterApplyCustomModel" title="Use custom model" style="
@@ -3033,15 +3033,15 @@
                         background: #3d3d3d;
                         color: #fff;
                         cursor: pointer;
-                        font-size: 11px;
+                        font-size: 15px;
                     ">Use</button>
                 </div>
                 <div style="display: flex; gap: 10px; align-items: center; margin-top: 6px; flex-wrap: wrap;">
-                    <label style="display: flex; align-items: center; gap: 4px; color: #888; font-size: 10px; cursor: pointer;">
+                    <label style="display: flex; align-items: center; gap: 4px; color: #888; font-size: 14px; cursor: pointer;">
                         <input type="checkbox" id="puterEnableReasoning" style="margin: 0;">
                         Enable reasoning
                     </label>
-                    <label style="display: flex; align-items: center; gap: 4px; color: #888; font-size: 10px; cursor: pointer;">
+                    <label style="display: flex; align-items: center; gap: 4px; color: #888; font-size: 14px; cursor: pointer;">
                         <span>Effort</span>
                         <select id="puterReasoningEffort" style="
                             padding: 4px 6px;
@@ -3049,7 +3049,7 @@
                             border-radius: 4px;
                             background: #2d2d2d;
                             color: #fff;
-                            font-size: 10px;
+                            font-size: 14px;
                         ">
                             <option value="low">Low</option>
                             <option value="medium">Medium</option>
@@ -3057,7 +3057,7 @@
                         </select>
                     </label>
                 </div>
-                <div style="color: #888; font-size: 10px; margin-top: 4px; line-height: 1.4;">
+                <div style="color: #888; font-size: 14px; margin-top: 4px; line-height: 1.4;">
                     No API key required. Uses your Puter account and supports short aliases plus full model IDs.
                 </div>
             `;
@@ -3221,13 +3221,13 @@
             ).join('');
 
             wrapper.innerHTML = `
-                <div style="color: #fff; font-size: 13px; margin-bottom: 6px;">🦆 DuckDuckGo AI (Proxy)</div>
+                <div style="color: #fff; font-size: 17px; margin-bottom: 6px;">🦆 DuckDuckGo AI (Proxy)</div>
                 <div style="background: #1a3a1a; border: 1px solid #4CAF50; border-radius: 6px; padding: 8px; margin-bottom: 8px;">
-                    <div style="color: #4CAF50; font-size: 11px; font-weight: bold;">✨ FREE - Uses Cloudflare Worker Proxy</div>
-                    <div style="color: #888; font-size: 10px; margin-top: 4px;">Bypasses CSP restrictions</div>
+                    <div style="color: #4CAF50; font-size: 15px; font-weight: bold;">✨ FREE - Uses Cloudflare Worker Proxy</div>
+                    <div style="color: #888; font-size: 14px; margin-top: 4px;">Bypasses CSP restrictions</div>
                 </div>
                 <div style="margin-bottom: 8px;">
-                    <label style="color: #aaa; font-size: 11px; display: block; margin-bottom: 4px;">API URL</label>
+                    <label style="color: #aaa; font-size: 15px; display: block; margin-bottom: 4px;">API URL</label>
                     <input type="text" id="ddgApiUrl" value="${currentApiUrl}" placeholder="https://your-worker.workers.dev" style="
                         width: 100%;
                         padding: 6px 8px;
@@ -3235,12 +3235,12 @@
                         border-radius: 4px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                 </div>
                 <div style="margin-bottom: 8px;">
-                    <label style="color: #aaa; font-size: 11px; display: block; margin-bottom: 4px;">API Key (optional)</label>
+                    <label style="color: #aaa; font-size: 15px; display: block; margin-bottom: 4px;">API Key (optional)</label>
                     <input type="password" id="ddgApiKey" value="${currentApiKey}" placeholder="Leave empty if not required" style="
                         width: 100%;
                         padding: 6px 8px;
@@ -3248,12 +3248,12 @@
                         border-radius: 4px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                 </div>
                 <div style="margin-bottom: 4px;">
-                    <label style="color: #aaa; font-size: 11px; display: block; margin-bottom: 4px;">Model</label>
+                    <label style="color: #aaa; font-size: 15px; display: block; margin-bottom: 4px;">Model</label>
                     <select id="ddgModelSelect" style="
                         width: 100%;
                         padding: 8px;
@@ -3261,19 +3261,19 @@
                         border-radius: 6px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 12px;
+                        font-size: 16px;
                         box-sizing: border-box;
                     ">
                         ${optionsHtml}
                     </select>
                 </div>
                 <div style="margin: 8px 0 6px 0; padding: 8px; border: 1px solid #333; border-radius: 6px; background: #232323;">
-                    <div style="color: #fff; font-size: 11px; margin-bottom: 6px;">Reasoning (GPT-5 / GPT-OSS / Claude)</div>
-                    <label style="display: flex; align-items: center; gap: 8px; color: #aaa; font-size: 11px; margin-bottom: 6px; cursor: pointer;">
+                    <div style="color: #fff; font-size: 15px; margin-bottom: 6px;">Reasoning (GPT-5 / GPT-OSS / Claude)</div>
+                    <label style="display: flex; align-items: center; gap: 8px; color: #aaa; font-size: 15px; margin-bottom: 6px; cursor: pointer;">
                         <input type="checkbox" id="ddgIncludeReasoning" ${currentIncludeReasoning ? 'checked' : ''}>
                         Include reasoning in output
                     </label>
-                    <label style="color: #aaa; font-size: 10px; display: block; margin-bottom: 4px;">Reasoning Effort</label>
+                    <label style="color: #aaa; font-size: 14px; display: block; margin-bottom: 4px;">Reasoning Effort</label>
                     <select id="ddgReasoningEffort" style="
                         width: 100%;
                         padding: 6px;
@@ -3281,7 +3281,7 @@
                         border-radius: 4px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                         <option value="minimal" ${currentReasoningEffort === 'minimal' ? 'selected' : ''}>Minimal</option>
@@ -3290,7 +3290,7 @@
                         <option value="high" ${currentReasoningEffort === 'high' ? 'selected' : ''}>High</option>
                         <option value="none" ${currentReasoningEffort === 'none' ? 'selected' : ''}>None (omit)</option>
                     </select>
-                    <div id="ddgReasoningHint" style="color: #777; font-size: 10px; margin-top: 6px;"></div>
+                    <div id="ddgReasoningHint" style="color: #777; font-size: 14px; margin-top: 6px;"></div>
                 </div>
             `;
 
@@ -3374,16 +3374,16 @@
             const currentModel = SETTINGS.yuppbridgeModel || 'gpt-4o';
 
             wrapper.innerHTML = `
-                <div style="color: #fff; font-size: 13px; margin-bottom: 6px;"><svg viewBox="0 0 24 24" width="13" height="13" fill="#3b82f6" style="display:inline-block;vertical-align:middle;margin-right:5px"><path d="M4 13h16v-2H4v2zm-2 4h20v-2H2v2zM2 7v2h20V7H2z"/></svg>YuppBridge (200+ Models)</div>
+                <div style="color: #fff; font-size: 17px; margin-bottom: 6px;"><svg viewBox="0 0 24 24" width="13" height="13" fill="#3b82f6" style="display:inline-block;vertical-align:middle;margin-right:5px"><path d="M4 13h16v-2H4v2zm-2 4h20v-2H2v2zM2 7v2h20V7H2z"/></svg>YuppBridge (200+ Models)</div>
                 <div style="background: #1a2a3a; border: 1px solid #2196F3; border-radius: 6px; padding: 8px; margin-bottom: 8px;">
-                    <div style="color: #2196F3; font-size: 11px; font-weight: bold;"><svg viewBox="0 0 24 24" width="12" height="12" fill="#3b82f6" style="display:inline-block;vertical-align:middle;margin-right:4px"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>Self-hosted Yupp AI Proxy</div>
-                    <div style="color: #888; font-size: 10px; margin-top: 4px;">OpenAI-compatible API with 200+ models</div>
-                    <div style="color: #666; font-size: 9px; margin-top: 2px;">
+                    <div style="color: #2196F3; font-size: 15px; font-weight: bold;"><svg viewBox="0 0 24 24" width="12" height="12" fill="#3b82f6" style="display:inline-block;vertical-align:middle;margin-right:4px"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>Self-hosted Yupp AI Proxy</div>
+                    <div style="color: #888; font-size: 14px; margin-top: 4px;">OpenAI-compatible API with 200+ models</div>
+                    <div style="color: #666; font-size: 13px; margin-top: 2px;">
                         <a href="https://github.com/cloudWaddie/yuppbridge" target="_blank" style="color:#64B5F6;">Self-host Guide</a>
                     </div>
                 </div>
                 <div style="margin-bottom: 8px;">
-                    <label style="color: #aaa; font-size: 11px; display: block; margin-bottom: 4px;">API URL <span style="color:#f44336;">*</span></label>
+                    <label style="color: #aaa; font-size: 15px; display: block; margin-bottom: 4px;">API URL <span style="color:#f44336;">*</span></label>
                     <input type="text" id="yuppbridgeApiUrl" value="${currentApiUrl}" placeholder="https://your-yuppbridge-instance.com" style="
                         width: 100%;
                         padding: 6px 8px;
@@ -3391,12 +3391,12 @@
                         border-radius: 4px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                 </div>
                 <div style="margin-bottom: 8px;">
-                    <label style="color: #aaa; font-size: 11px; display: block; margin-bottom: 4px;">API Key <span style="color:#f44336;">*</span></label>
+                    <label style="color: #aaa; font-size: 15px; display: block; margin-bottom: 4px;">API Key <span style="color:#f44336;">*</span></label>
                     <input type="password" id="yuppbridgeApiKey" value="${currentApiKey}" placeholder="Your YuppBridge API key" style="
                         width: 100%;
                         padding: 6px 8px;
@@ -3404,12 +3404,12 @@
                         border-radius: 4px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                 </div>
                 <div style="margin-bottom: 6px;">
-                    <label style="color: #aaa; font-size: 11px; display: block; margin-bottom: 4px;">Model</label>
+                    <label style="color: #aaa; font-size: 15px; display: block; margin-bottom: 4px;">Model</label>
                     <div style="display: flex; gap: 6px; margin-bottom: 6px;">
                         <input type="text" id="yuppbridgeModelSearch" placeholder="Search models (e.g., gpt-4, claude, gemini)" style="
                             flex: 1;
@@ -3418,7 +3418,7 @@
                             border-radius: 4px;
                             background: #2d2d2d;
                             color: #fff;
-                            font-size: 11px;
+                            font-size: 15px;
                             box-sizing: border-box;
                         ">
                         <button id="yuppbridgeRefreshModels" title="Refresh models list" style="
@@ -3428,7 +3428,7 @@
                             background: #3d3d3d;
                             color: #fff;
                             cursor: pointer;
-                            font-size: 11px;
+                            font-size: 15px;
                         "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                         <button id="yuppbridgeHealthCheck" title="Check API health" style="
                             padding: 6px 10px;
@@ -3437,7 +3437,7 @@
                             background: #3d3d3d;
                             color: #fff;
                             cursor: pointer;
-                            font-size: 11px;
+                            font-size: 15px;
                         "><svg viewBox="0 0 24 24" width="13" height="13" fill="#ef4444" style="display:block;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button>
                     </div>
                     <select id="yuppbridgeModelSelect" style="
@@ -3447,12 +3447,12 @@
                         border-radius: 6px;
                         background: #2d2d2d;
                         color: #fff;
-                        font-size: 11px;
+                        font-size: 15px;
                         box-sizing: border-box;
                     ">
                         <option value="${currentModel}">${currentModel}</option>
                     </select>
-                    <div id="yuppbridgeModelStatus" style="color: #666; font-size: 10px; margin-top: 4px;"></div>
+                    <div id="yuppbridgeModelStatus" style="color: #666; font-size: 14px; margin-top: 4px;"></div>
                 </div>
             `;
 
@@ -3617,7 +3617,7 @@
         // ==============================================================
 
         const note = document.createElement('div');
-        note.style.cssText = 'color:#3f3f46;font-size:10px;padding:14px 4px;text-align:center;font-family:"VT323",monospace;line-height:1.7;border-top:1px solid rgba(255,255,255,0.05);margin-top:4px;';
+        note.style.cssText = 'color:#3f3f46;font-size:14px;padding:14px 4px;text-align:center;font-family:"VT323",monospace;line-height:1.7;border-top:1px solid rgba(255,255,255,0.05);margin-top:4px;';
         note.innerHTML = 'Reload page after changing settings<br>Keys: <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#4CAF50;">Gemini</a> | <a href="https://openrouter.ai/keys" target="_blank" style="color:#4CAF50;">OpenRouter</a> | <a href="https://g4f.space" target="_blank" style="color:#4CAF50;">G4F</a><br>Puter.js: no API key required | <a href="https://developer.puter.com/ai/" target="_blank" style="color:#2196F3;">Puter AI docs</a><br>DuckDuckGo AI is FREE! | <a href="https://github.com/cloudWaddie/yuppbridge" target="_blank" style="color:#2196F3;">YuppBridge</a>';
         panelContent.appendChild(note);
 
