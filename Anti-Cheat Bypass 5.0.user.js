@@ -8,7 +8,9 @@
 // @match        https://skillrack.com/*
 // @require      https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js
 // @require      https://js.puter.com/v2/
-// @grant        none
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_deleteValue
 // @run-at       document-start
 // @downloadURL https://raw.githubusercontent.com/ToonTamilIndia/skillrack-userscript/refs/heads/main/userscript.user.js
 // @updateURL https://raw.githubusercontent.com/ToonTamilIndia/skillrack-userscript/refs/heads/main/userscript.user.js
@@ -512,10 +514,15 @@
     // Load settings from localStorage or use defaults
     const loadSettings = () => {
         try {
-            const saved = localStorage.getItem('skillrack_bypass_settings');
+            let saved = null;
+            if (typeof GM_getValue !== 'undefined') {
+                saved = GM_getValue('skillrack_bypass_settings', null);
+            }
+            if (!saved) {
+                saved = localStorage.getItem('skillrack_bypass_settings');
+            }
             if (saved) {
                 const merged = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
-                // Migrate: old default was 1 which made retry loop never fire — bump to 5
                 if (merged.autoSolverMaxRetries < 2) merged.autoSolverMaxRetries = 5;
                 return merged;
             }
@@ -527,7 +534,11 @@
 
     const saveSettings = (settings) => {
         try {
-            localStorage.setItem('skillrack_bypass_settings', JSON.stringify(settings));
+            const str = JSON.stringify(settings);
+            if (typeof GM_setValue !== 'undefined') {
+                GM_setValue('skillrack_bypass_settings', str);
+            }
+            localStorage.setItem('skillrack_bypass_settings', str);
         } catch (e) {
             console.log('Failed to save settings:', e);
         }
@@ -2416,7 +2427,7 @@
         panelContent.appendChild(autoSolverToggle);
 
         // Find Incomplete toggle
-        const findIncompleteToggle = createToggle('enableFindIncomplete', 'Find Incomplete Question', SETTINGS.enableFindIncomplete, 'Scan & navigate to least-complete section');
+        const findIncompleteToggle = createToggle('enableFindIncomplete', 'Incomplete Question', SETTINGS.enableFindIncomplete, 'Show incomplete tracks in the dropdown (requires scan)');
         panelContent.appendChild(findIncompleteToggle);
         const findIncompleteCheckbox = findIncompleteToggle.querySelector('input');
         findIncompleteCheckbox.addEventListener('change', () => {
@@ -7671,15 +7682,14 @@ SOLVING APPROACH:
         let queuePromise = Promise.resolve();
 
         function enqueueRequest(fn) {
-            queuePromise = queuePromise.then(async () => {
-                try {
-                    return await fn();
-                } catch (err) {
-                    console.error("Queue request failed:", err);
-                    throw err;
-                }
-            });
-            return queuePromise;
+            // Keep the chain alive by catching errors for the next link,
+            // but return the actual promise (which can reject) to the caller.
+            const nextLink = queuePromise.then(
+                () => fn(),
+                () => fn()
+            );
+            queuePromise = nextLink.catch(() => {});
+            return nextLink;
         }
 
         async function queuedFetch(url, options = {}, retries = 2, delay = 1000) {
@@ -7770,7 +7780,8 @@ SOLVING APPROACH:
             const controller = new AbortController();
             const id = setTimeout(() => controller.abort(), timeout);
             
-            const combinedSignal = signal ? createCombinedSignal([signal, controller.signal]) : controller.signal;
+            const cleanupObj = {};
+            const combinedSignal = signal ? createCombinedSignal([signal, controller.signal], cleanupObj) : controller.signal;
 
             try {
                 const res = await fetch(url, {
@@ -7779,33 +7790,52 @@ SOLVING APPROACH:
                     credentials: 'include'
                 });
                 clearTimeout(id);
+                if (cleanupObj.cleanup) cleanupObj.cleanup();
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 return await res.text();
             } catch (err) {
                 clearTimeout(id);
+                if (cleanupObj.cleanup) cleanupObj.cleanup();
                 throw err;
             }
         }
 
-        function createCombinedSignal(signals) {
+        // Helper functions
+        function createCombinedSignal(signals, cleanupObj = {}) {
             const ctrl = new AbortController();
             const abort = () => ctrl.abort();
-            signals.forEach(s => { if (s) s.addEventListener('abort', abort); });
+            const activeSignals = signals.filter(Boolean);
+            activeSignals.forEach(s => s.addEventListener('abort', abort));
+            
+            cleanupObj.cleanup = () => {
+                activeSignals.forEach(s => s.removeEventListener('abort', abort));
+            };
+            
             return ctrl.signal;
         }
 
         function extractViewState(html) {
+            try {
+                if (html.includes('<partial-response>')) {
+                    const xmlDoc = new DOMParser().parseFromString(html, 'text/xml');
+                    const updates = xmlDoc.querySelectorAll('update');
+                    for (const upd of updates) {
+                        if (upd.getAttribute('id') === 'jakarta.faces.ViewState') {
+                            return upd.textContent;
+                        }
+                    }
+                }
+            } catch (_) {}
             try {
                 const doc = new DOMParser().parseFromString(html, 'text/html');
                 const el = doc.querySelector('input[name="jakarta.faces.ViewState"]');
                 if (el) return el.value;
             } catch (_) {}
             const m = html.match(/jakarta\.faces\.ViewState.*?value="([^"]+)"/) || html.match(/value="([^"]+)".*?jakarta\.faces\.ViewState/);
-            return m ? m[1] : null;
-        }
-
-        function getPostUrl(url) {
-            return url.split('#')[0].split('?')[0];
+            if (m) return m[1];
+            
+            const xmlMatch = html.match(/<update[^>]*id="jakarta\.faces\.ViewState"[^>]*><!\[CDATA\[([^\]]+)\]\]><\/update>/) || html.match(/id="jakarta\.faces\.ViewState"[^>]*><!\[CDATA\[([^\]]+)\]\]>/);
+            return xmlMatch ? xmlMatch[1] : null;
         }
 
         // ── Storage Wrapper ──────────────────────────────────────────────────
@@ -7912,7 +7942,7 @@ SOLVING APPROACH:
             const gridCols = doc.querySelectorAll('.ui-datagrid-column');
             if (gridCols.length > 0) return gridCols.length;
 
-            const cards = doc.querySelectorAll('form .ui-card, #pkglistform .ui-card, [id$="form"] .ui-card');
+            const cards = doc.querySelectorAll('form .ui-card, form .card, #pkglistform .ui-card, #pkglistform .card, [id$="form"] .ui-card, [id$="form"] .card');
             if (cards.length > 0) return cards.length;
 
             const buttons = doc.querySelectorAll('input[type="submit"][value*="Check"], button[type="submit"]:not([name*="pkglistform"])');
@@ -7944,7 +7974,34 @@ SOLVING APPROACH:
             if (t.includes('ADDON') || t.includes('ADD-ON') || t.includes('ADD ON')) return 10;
             if (t.includes('LAB')) return solvedCount > 0 ? Math.max(solvedCount, 10) : 10;
             if (t.includes('FUNCTIONS PRACTICE') || t.includes('FUNCTION PRACTICE')) return 20;
+            if (t.includes('-H') || t.match(/-H\d+/)) return 10;
             return 10;
+        }
+
+        // Title normalization match helper
+        function cleanName(name) {
+            if (!name) return '';
+            return name
+                .toUpperCase()
+                .replace(/[\xa0\s]+/g, ' ')
+                .trim()
+                .replace(/^[-.:\s#\(\)\[\]]+|[-.:\s#\(\)\[\]]+$/g, '');
+        }
+
+        // Title normalization match helper
+        function matchSolvedInfo(partName, solvedCounts) {
+            const cleanPart = cleanName(partName);
+            // 1. Exact clean match
+            let found = solvedCounts.find(s => cleanName(s.partName) === cleanPart);
+            if (found) return found;
+
+            // 2. Simplified part suffix match (e.g. PART001 -> PART1)
+            const simplify = (str) => str.replace(/PART\s*0+(\d+)/g, 'PART$1').replace(/SET\s*0+(\d+)/g, 'SET$1');
+            const simplePart = simplify(cleanPart);
+            found = solvedCounts.find(s => simplify(cleanName(s.partName)) === simplePart);
+            if (found) return found;
+
+            return null;
         }
 
         function getCleanTitle(titleEl) {
@@ -7971,8 +8028,68 @@ SOLVING APPROACH:
             return 0;
         }
 
+        // ── Active Server State Synchronization Engine ────────────────────────
+        let activeServerLevelUrl = null;
+        let currentServerPath = []; // Array of transition objects
+        let currentServerHtml = null;
+        let currentServerViewState = null;
+
+        async function ensureServerAt(levelUrl, targetPath) {
+            // Check if level has changed
+            if (activeServerLevelUrl !== levelUrl) {
+                activeServerLevelUrl = levelUrl;
+                currentServerPath = [];
+                currentServerHtml = null;
+                currentServerViewState = null;
+            }
+
+            // Check if targetPath is already active
+            const isMatch = targetPath.length === currentServerPath.length &&
+                targetPath.every((t, i) => t.btnName === currentServerPath[i].btnName && t.href === currentServerPath[i].href);
+
+            if (isMatch && currentServerHtml) {
+                return { html: currentServerHtml, viewState: currentServerViewState };
+            }
+
+            console.log(`ensureServerAt: Path mismatch. Resetting and navigating to target path of length ${targetPath.length}`);
+            
+            // 1. Reset state by GET request to levelUrl
+            let html = await queuedFetch(levelUrl, { method: 'GET' });
+            let freshState = extractViewState(html);
+            if (!freshState) throw new Error('Could not retrieve ViewState token during reset');
+
+            // 2. Replay targetPath
+            let currentUrl = levelUrl;
+            for (let i = 0; i < targetPath.length; i++) {
+                const step = targetPath[i];
+                if (step.type === 'POST') {
+                    const body = new URLSearchParams({
+                        'pkglistform': 'pkglistform',
+                        'pkglistform_SUBMIT': '1',
+                        'jakarta.faces.ViewState': freshState,
+                        [step.btnName]: 'Show'
+                    });
+                    const postUrl = getPostUrl(currentUrl);
+                    html = await queuedFetch(postUrl, { method: 'POST', body: body.toString() });
+                    freshState = extractViewState(html);
+                    if (!freshState) throw new Error('Could not retrieve ViewState token at step ' + i);
+                } else if (step.type === 'LINK') {
+                    currentUrl = step.href;
+                    html = await queuedFetch(currentUrl, { method: 'GET' });
+                    freshState = extractViewState(html);
+                    if (!freshState) throw new Error('Could not retrieve ViewState token at step ' + i);
+                }
+            }
+
+            currentServerPath = [...targetPath];
+            currentServerHtml = html;
+            currentServerViewState = freshState;
+
+            return { html, viewState: freshState };
+        }
+
         // ── Recursive Deep Crawler ───────────────────────────────────────────
-        async function crawlPage(url, buttonNameToPress, parentViewState, pathNames, buttonPath, statusCallback) {
+        async function crawlPage(url, transition, parentViewState, pathNames, buttonPath, statusCallback) {
             if (activeController && activeController.signal.aborted) throw new Error('Cancelled');
             
             const currentPathName = pathNames.join(' ➔ ');
@@ -7981,102 +8098,221 @@ SOLVING APPROACH:
             }
 
             let html;
-            try {
-                if (!buttonNameToPress) {
-                    html = await queuedFetch(url, { method: 'GET' });
-                } else {
-                    const body = new URLSearchParams({
-                        'pkglistform': 'pkglistform',
-                        'pkglistform_SUBMIT': '1',
-                        'jakarta.faces.ViewState': parentViewState || '',
-                        [buttonNameToPress]: 'Show'
-                    });
-                    const postUrl = getPostUrl(url);
-                    html = await queuedFetch(postUrl, { method: 'POST', body: body.toString() });
-                }
-            } catch (err) {
-                // Retry once with a fresh GET of the clean page URL
-                console.warn(`Fetch failed for ${url} (${buttonNameToPress}). Retrying with fresh page GET:`, err);
-                try {
-                    const cleanUrl = getPostUrl(url);
-                    const freshHtml = await queuedFetch(cleanUrl, { method: 'GET' }, 1);
-                    const freshState = extractViewState(freshHtml);
-                    if (buttonNameToPress) {
-                        const body = new URLSearchParams({
-                            'pkglistform': 'pkglistform',
-                            'pkglistform_SUBMIT': '1',
-                            'jakarta.faces.ViewState': freshState || '',
-                            [buttonNameToPress]: 'Show'
-                        });
-                        html = await queuedFetch(cleanUrl, { method: 'POST', body: body.toString() }, 1);
-                    } else {
-                        html = freshHtml;
-                    }
-                } catch (retryErr) {
-                    console.error(`Crawl retry failed for ${url} (${buttonNameToPress}):`, retryErr);
-                    // Return as status: unknown
-                    const failedName = pathNames[pathNames.length - 1] || 'Unknown Page';
-                    return [{
-                        partName: failedName,
-                        buttonPath: buttonPath,
-                        totalCount: 10,
-                        status: 'unknown',
-                        error: retryErr.message
-                    }];
-                }
+            let thisPageState = parentViewState;
+            const levelUrl = pathNames.length > 0 ? LEVEL_URLS[pathNames[0]] : url;
+
+            if (buttonPath.length > 0) {
+                // ensureServerAt will navigate the server to the target path and return the HTML and ViewState
+                const res = await ensureServerAt(levelUrl, buttonPath);
+                html = res.html;
+                thisPageState = res.viewState;
+            } else {
+                // Entry page of the level
+                html = await queuedFetch(url, { method: 'GET' });
+                thisPageState = extractViewState(html);
+                
+                // Clear any previous state tracking for new level
+                activeServerLevelUrl = levelUrl;
+                currentServerPath = [];
+                currentServerHtml = html;
+                currentServerViewState = thisPageState;
             }
 
             const doc = new DOMParser().parseFromString(html, 'text/html');
             const form = doc.getElementById('pkglistform') || doc.querySelector('form');
-            
-            // If there's no form/pkglistform, it's a final challenges page
-            if (!form) {
-                const finalName = pathNames[pathNames.length - 1] || 'Unknown Part';
-                const count = parseTotalCountFromPartPage(html) || countItemsOnPage(html) || inferTotal(finalName, 0) || 10;
-                return [{
-                    partName: finalName,
-                    buttonPath: buttonPath,
-                    totalCount: count,
-                    status: 'ok'
-                }];
-            }
 
-            const thisPageState = extractViewState(html);
-
-            // Find all Show buttons on this page
-            const showButtons = [];
-            const cards = form.querySelectorAll('.ui-card');
+            // Check if this page contains cards representing parts (indicated by "Challenges Count" or matching CHILD_PART_REGEX)
+            const CHILD_PART_REGEX = /\b(PART\d+|SET\s*\d+|H\d{3}|H0\d{2}|H\d{2}[A-Z]?|PACK\d+|PRACTICE\s*\d+)\b/i;
+            const partCards = [];
+            const cards = doc.querySelectorAll('.ui-card, .card');
             cards.forEach(card => {
-                const header = card.querySelector('.ui.header, .header, h1, h2, h3, h4');
-                const btn = card.querySelector('button[type="submit"], input[type="submit"]');
-                if (header && btn) {
-                    const name = getCleanTitle(header);
-                    const btnName = btn.getAttribute('name');
-                    if (name && btnName && btn.textContent.trim().toLowerCase().includes('show')) {
-                        showButtons.push({ name, btnName });
+                // Leaf card detection to prevent matching main container or menus
+                if (card.querySelector('.ui-card, .card')) return;
+                if (card.closest('.ui-breadcrumb') || card.closest('.ui-toolbar')) return;
+
+                const header = card.querySelector('.ui.header, .header, h1, h2, h3, h4, .ui-card-title');
+                if (!header) return;
+
+                const name = getCleanTitle(header);
+                if (!name || shouldSkipTitle(name)) return;
+
+                const txt = card.textContent || '';
+                const isPart = /challenges\s*count/i.test(txt) || CHILD_PART_REGEX.test(name);
+                
+                if (isPart) {
+                    const clickTarget = card.querySelector('button, input[type="submit"], input[type="button"], a');
+                    if (clickTarget) {
+                        const href = clickTarget.getAttribute('href');
+                        if (href && !href.startsWith('#') && href !== '') {
+                            const nextUrl = new URL(href, window.location.origin).pathname + new URL(href, window.location.origin).search;
+                            const countMatch = txt.match(/challenges\s*count:\s*(\d+)/i);
+                            const count = countMatch ? parseInt(countMatch[1], 10) : (inferTotal(name, 0) || 10);
+                            partCards.push({
+                                partName: name,
+                                type: 'LINK',
+                                href: nextUrl,
+                                totalCount: count
+                            });
+                        } else {
+                            const btnName = clickTarget.getAttribute('name') || clickTarget.getAttribute('id');
+                            if (btnName) {
+                                const countMatch = txt.match(/challenges\s*count:\s*(\d+)/i);
+                                const count = countMatch ? parseInt(countMatch[1], 10) : (inferTotal(name, 0) || 10);
+                                partCards.push({
+                                    partName: name,
+                                    type: 'POST',
+                                    btnName: btnName,
+                                    totalCount: count
+                                });
+                            }
+                        }
                     }
                 }
             });
 
-            if (showButtons.length === 0) {
+            if (partCards.length > 0) {
+                return partCards.map(c => ({
+                    partName: c.partName,
+                    buttonPath: [...buttonPath, c.type === 'POST' ? 
+                        { type: 'POST', name: c.partName, btnName: c.btnName } : 
+                        { type: 'LINK', name: c.partName, href: c.href }
+                    ],
+                    totalCount: c.totalCount,
+                    status: 'ok'
+                }));
+            }
+
+            // Check if this page contains datatable rows representing parts (matching CHILD_PART_REGEX)
+            const partRows = [];
+            if (form) {
                 const rows = form.querySelectorAll('.ui-datatable-data tr[data-ri]');
                 rows.forEach(tr => {
                     const cells = tr.querySelectorAll('td');
                     if (cells.length >= 2) {
                         const title = cells[0].textContent.trim();
-                        const btn = cells[cells.length - 1].querySelector('button[type="submit"], input[type="submit"]');
-                        if (title && btn) {
-                            const btnName = btn.getAttribute('name');
-                            if (btnName && btn.textContent.trim().toLowerCase().includes('show')) {
-                                showButtons.push({ name: title, btnName });
+                        if (title && !shouldSkipTitle(title) && CHILD_PART_REGEX.test(title)) {
+                            const clickTarget = cells[cells.length - 1].querySelector('button, input[type="submit"], input[type="button"], a');
+                            if (clickTarget) {
+                                const href = clickTarget.getAttribute('href');
+                                if (href && !href.startsWith('#') && href !== '') {
+                                    const nextUrl = new URL(href, window.location.origin).pathname + new URL(href, window.location.origin).search;
+                                    const count = inferTotal(title, 0) || 10;
+                                    partRows.push({
+                                        partName: title,
+                                        type: 'LINK',
+                                        href: nextUrl,
+                                        totalCount: count
+                                    });
+                                } else {
+                                    const btnName = clickTarget.getAttribute('name') || clickTarget.getAttribute('id');
+                                    if (btnName) {
+                                        const count = inferTotal(title, 0) || 10;
+                                        partRows.push({
+                                            partName: title,
+                                            type: 'POST',
+                                            btnName: btnName,
+                                            totalCount: count
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
                 });
             }
 
-            // If there are no intermediate Show buttons, it is the final page itself!
-            if (showButtons.length === 0) {
+            if (partRows.length > 0) {
+                return partRows.map(r => ({
+                    partName: r.partName,
+                    buttonPath: [...buttonPath, r.type === 'POST' ? 
+                        { type: 'POST', name: r.partName, btnName: r.btnName } : 
+                        { type: 'LINK', name: r.partName, href: r.href }
+                    ],
+                    totalCount: r.totalCount,
+                    status: 'ok'
+                }));
+            }
+
+            // Check for Solve buttons on this page
+            // If the page contains Solve buttons (not Show/View/Check), it is a final page!
+            const contentForm = doc.getElementById('pkglistform') || doc.querySelector('form:not([id="j_id_14"])');
+            let hasSolveButtons = false;
+            if (contentForm) {
+                const solveBtns = contentForm.querySelectorAll('button, input[type="submit"], input[type="button"], a.ui-button');
+                for (const btn of solveBtns) {
+                    const txt = (btn.textContent || btn.value || '').trim().toUpperCase();
+                    if (txt === 'SOLVE' || txt.includes('SOLVE')) {
+                        hasSolveButtons = true;
+                        break;
+                    }
+                }
+            }
+
+            // Find all transitions on this page
+            const transitions = [];
+            if (form && !hasSolveButtons) {
+                // 1. Cards with submit buttons or links
+                const cards = form.querySelectorAll('.ui-card, .card');
+                cards.forEach(card => {
+                    const header = card.querySelector('.ui.header, .header, h1, h2, h3, h4, .ui-card-title');
+                    if (!header) return;
+                    const name = getCleanTitle(header);
+                    if (!name || shouldSkipTitle(name)) return;
+
+                    // Unified clickTarget transition check
+                    const clickTarget = card.querySelector('button, input[type="submit"], input[type="button"], a');
+                    if (clickTarget) {
+                        const btnText = (clickTarget.textContent || clickTarget.value || '').trim().toLowerCase();
+                        if (btnText.includes('show') || btnText.includes('view') || btnText.includes('check') || (clickTarget.getAttribute('href') && clickTarget.getAttribute('href').includes('codeprogramgroup'))) {
+                            const href = clickTarget.getAttribute('href');
+                            if (href && !href.startsWith('#') && href !== '') {
+                                const nextUrl = new URL(href, window.location.origin).pathname + new URL(href, window.location.origin).search;
+                                transitions.push({ type: 'LINK', name, href: nextUrl });
+                            } else {
+                                const btnName = clickTarget.getAttribute('name') || clickTarget.getAttribute('id');
+                                if (btnName) {
+                                    transitions.push({ type: 'POST', name, btnName });
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // 2. Datatable rows with submit buttons or links
+                if (transitions.length === 0) {
+                    const rows = form.querySelectorAll('.ui-datatable-data tr[data-ri]');
+                    rows.forEach(tr => {
+                        const cells = tr.querySelectorAll('td');
+                        if (cells.length >= 2) {
+                            const title = cells[0].textContent.trim();
+                            if (!title || shouldSkipTitle(title)) return;
+
+                            const btn = cells[cells.length - 1].querySelector('button[type="submit"], input[type="submit"]');
+                            if (btn) {
+                                const btnName = btn.getAttribute('name');
+                                const btnText = (btn.textContent || btn.value || '').trim().toLowerCase();
+                                if (btnName && (btnText.includes('show') || btnText.includes('view') || btnText.includes('check'))) {
+                                    transitions.push({ type: 'POST', name: title, btnName });
+                                    return;
+                                }
+                            }
+
+                            const link = cells[cells.length - 1].querySelector('a');
+                            if (link) {
+                                const href = link.getAttribute('href');
+                                const btnText = (link.textContent || link.value || '').trim().toLowerCase();
+                                if (href && (btnText.includes('show') || btnText.includes('view') || btnText.includes('check') || href.includes('codeprogramgroup'))) {
+                                    const nextUrl = new URL(href, window.location.origin).pathname + new URL(href, window.location.origin).search;
+                                    transitions.push({ type: 'LINK', name: title, href: nextUrl });
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+
+            // If it is a final page (hasSolveButtons or no form or no transitions)
+            if (hasSolveButtons || !form || transitions.length === 0) {
                 const finalName = pathNames[pathNames.length - 1] || 'Unknown Part';
                 const count = parseTotalCountFromPartPage(html) || countItemsOnPage(html) || inferTotal(finalName, 0) || 10;
                 return [{
@@ -8087,23 +8323,22 @@ SOLVING APPROACH:
                 }];
             }
 
-            // Recurse into each found Show button
+            // Recurse into each transition
             let results = [];
-            for (const btn of showButtons) {
-                if (shouldSkipTitle(btn.name)) continue;
-
-                // Loop prevention: check if this track/package name is already in the parent pathNames
-                if (pathNames.includes(btn.name)) {
-                    console.warn(`FindIncomplete: Loop detected for "${btn.name}" under path: ${currentPathName}. Skipping recursion.`);
+            for (const trans of transitions) {
+                // Loop prevention
+                if (pathNames.includes(trans.name)) {
+                    console.warn("FindIncomplete: Loop detected under path. Skipping.");
                     continue;
                 }
 
+                const nextUrl = trans.type === 'LINK' ? trans.href : url;
                 const nextResults = await crawlPage(
-                    url,
-                    btn.btnName,
+                    nextUrl,
+                    trans,
                     thisPageState,
-                    [...pathNames, btn.name],
-                    [...buttonPath, btn.btnName],
+                    [...pathNames, trans.name],
+                    [...buttonPath, trans],
                     statusCallback
                 );
                 results = results.concat(nextResults);
@@ -8129,7 +8364,7 @@ SOLVING APPROACH:
 
         // ── Core Crawler Orchestration ───────────────────────────────────────
         const LEVEL_URLS = {
-            'Level 1': '/faces/candidate/lev1.xhtml',
+            'Level 1': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETUTOR',
             'Level 2': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=2',
             'Level 3': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=3',
             'Level 4': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=4',
@@ -8139,6 +8374,10 @@ SOLVING APPROACH:
             'LACS': '/faces/candidate/webinarcodetrack.xhtml',
             'LAB': '/faces/candidate/labcodeprograms.xhtml?type=LAB'
         };
+
+        function getPostUrl(url) {
+            return url.split('#')[0].split('?')[0];
+        }
 
         async function runFullCrawl() {
             if (currentState === STATE.SCANNING) return;
@@ -8186,7 +8425,7 @@ SOLVING APPROACH:
                 // Map solved counts to parsed parts
                 allParts.forEach(part => {
                     if (part.status === 'ok') {
-                        const solvedInfo = solvedCounts.find(s => s.partName === part.partName);
+                        const solvedInfo = matchSolvedInfo(part.partName, solvedCounts);
                         part.solvedCount = solvedInfo ? solvedInfo.solvedCount : 0;
                         part.ratio = part.totalCount > 0 ? (part.solvedCount / part.totalCount) : 1.0;
                     } else {
@@ -8204,7 +8443,10 @@ SOLVING APPROACH:
                 setState(STATE.IDLE);
                 showStatus('Scan completed! 🎉', '✅');
                 setTimeout(hideStatus, 3000);
-                renderList(allParts);
+                
+                if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
+                    renderList(allParts, cacheData.timestamp);
+                }
 
             } catch (err) {
                 if (err.message === 'Cancelled') {
@@ -8226,7 +8468,7 @@ SOLVING APPROACH:
                 const solvedCounts = await getSolvedCounts();
                 cachedParts.forEach(part => {
                     if (part.status === 'ok') {
-                        const solvedInfo = solvedCounts.find(s => s.partName === part.partName);
+                        const solvedInfo = matchSolvedInfo(part.partName, solvedCounts);
                         part.solvedCount = solvedInfo ? solvedInfo.solvedCount : 0;
                         part.ratio = part.totalCount > 0 ? (part.solvedCount / part.totalCount) : 1.0;
                     }
@@ -8236,10 +8478,10 @@ SOLVING APPROACH:
                     parts: cachedParts,
                     timestamp: Date.now()
                 };
-                storage.setValue('find_incomplete_cache_v2', JSON.stringify(cacheData));
+                storage.setValue('find_incomplete_cache_v2', JSON.stringify(cachedParts));
                 
                 if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
-                    renderList(cachedParts);
+                    renderList(cachedParts, cacheData.timestamp);
                 }
             } catch (e) {
                 console.warn("Silent solved counts update failed:", e);
@@ -8247,7 +8489,13 @@ SOLVING APPROACH:
         }
 
         async function loadAndRenderTracks(forceRefresh = false) {
-            if (currentState === STATE.SCANNING) return;
+            if (currentState === STATE.SCANNING) {
+                renderScanningState();
+                if (statusText) {
+                    updateLoadingMessage(statusText.textContent);
+                }
+                return;
+            }
 
             let cache = null;
             if (!forceRefresh) {
@@ -8261,13 +8509,32 @@ SOLVING APPROACH:
                 }
             }
 
-            if (cache && cache.parts && (Date.now() - cache.timestamp < 24 * 60 * 60 * 1000)) {
-                renderList(cache.parts);
+            if (forceRefresh) {
+                await runFullCrawl();
+            } else if (!cache || !cache.parts) {
+                renderUnscrapedState();
+            } else {
+                renderList(cache.parts, cache.timestamp);
                 updateSolvedCountsSilently(cache.parts);
-                return;
             }
+        }
 
-            await runFullCrawl();
+        function cancelScan() {
+            if (activeController) activeController.abort();
+            setState(STATE.IDLE);
+            hideStatus();
+            
+            let cache = null;
+            try {
+                const rawCache = storage.getValue('find_incomplete_cache_v2');
+                if (rawCache) cache = JSON.parse(rawCache);
+            } catch (_) {}
+            
+            if (cache && cache.parts) {
+                renderList(cache.parts, cache.timestamp);
+            } else {
+                hideDropdown();
+            }
         }
 
         // ── Sequential Navigation ────────────────────────────────────────────
@@ -8278,55 +8545,68 @@ SOLVING APPROACH:
             hideDropdown();
             
             try {
-                const levUrl = item.levelUrl;
-                const postUrl = getPostUrl(levUrl);
+                let currentUrl = item.levelUrl;
                 
-                // Step 1: GET levelUrl to get initial ViewState
-                const html = await queuedFetch(levUrl, { method: 'GET' });
+                // Step 1: GET currentUrl to get initial ViewState
+                const html = await queuedFetch(currentUrl, { method: 'GET' });
                 let freshState = extractViewState(html);
                 if (!freshState) throw new Error('Could not retrieve ViewState token');
 
-                // Step 2: POST each intermediate button in buttonPath except the last one
+                // Step 2: Traverse each intermediate step in buttonPath except the last one
                 const path = item.buttonPath || [];
                 for (let i = 0; i < path.length - 1; i++) {
-                    const btn = path[i];
-                    const body = new URLSearchParams({
+                    const step = path[i];
+                    if (step.type === 'POST') {
+                        const body = new URLSearchParams({
+                            'pkglistform': 'pkglistform',
+                            'pkglistform_SUBMIT': '1',
+                            'jakarta.faces.ViewState': freshState,
+                            [step.btnName]: 'Show'
+                        });
+                        const postUrl = getPostUrl(currentUrl);
+                        const resHtml = await queuedFetch(postUrl, { method: 'POST', body: body.toString() });
+                        freshState = extractViewState(resHtml);
+                        if (!freshState) throw new Error('Could not retrieve ViewState token at step ' + i);
+                    } else if (step.type === 'LINK') {
+                        currentUrl = step.href;
+                        const resHtml = await queuedFetch(currentUrl, { method: 'GET' });
+                        freshState = extractViewState(resHtml);
+                        if (!freshState) throw new Error('Could not retrieve ViewState token at step ' + i);
+                    }
+                }
+
+                // Step 3: Create form submission or redirection for final step to navigate browser
+                const lastStep = path[path.length - 1];
+                if (lastStep.type === 'POST') {
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.action = getPostUrl(currentUrl);
+                    form.style.display = 'none';
+
+                    const params = {
                         'pkglistform': 'pkglistform',
                         'pkglistform_SUBMIT': '1',
                         'jakarta.faces.ViewState': freshState,
-                        [btn]: 'Show'
-                    });
-                    const resHtml = await queuedFetch(postUrl, { method: 'POST', body: body.toString() });
-                    freshState = extractViewState(resHtml);
-                    if (!freshState) throw new Error('Could not retrieve ViewState token at step ' + i);
+                        [lastStep.btnName]: 'Show'
+                    };
+
+                    for (const [key, value] of Object.entries(params)) {
+                        const input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = key;
+                        input.value = value;
+                        form.appendChild(input);
+                    }
+
+                    document.body.appendChild(form);
+                    form.submit();
+                } else if (lastStep.type === 'LINK') {
+                    window.location.href = lastStep.href;
                 }
-
-                // Step 3: Create a form in the main page and submit it to navigate the browser!
-                const lastBtn = path[path.length - 1];
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.action = postUrl;
-                form.style.display = 'none';
-
-                const params = {
-                    'pkglistform': 'pkglistform',
-                    'pkglistform_SUBMIT': '1',
-                    'jakarta.faces.ViewState': freshState,
-                    [lastBtn]: 'Show'
-                };
-
-                for (const [key, value] of Object.entries(params)) {
-                    const input = document.createElement('input');
-                    input.type = 'hidden';
-                    input.name = key;
-                    input.value = value;
-                    form.appendChild(input);
-                }
-
-                document.body.appendChild(form);
-                form.submit();
+                
+                setState(STATE.IDLE);
             } catch (err) {
-                setState(STATE.ERROR);
+                setState(STATE.IDLE);
                 showStatus(`Navigation failed: ${err.message}`, '❌');
                 setTimeout(hideStatus, 5000);
             }
@@ -8347,7 +8627,7 @@ SOLVING APPROACH:
                 '-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);' +
                 'border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,0.65);' +
                 'padding:14px;min-width:320px;max-width:380px;' +
-                "color:#f4f4f5;font-family:'VT323',monospace;font-size:15px;" +
+                "color:#f4f4f5;font-family:'VT323',monospace;font-size:18px;" +
                 'transition:opacity 0.25s, transform 0.25s;opacity:0;transform:translateY(-8px);';
             document.body.appendChild(dropdown);
         }
@@ -8371,12 +8651,6 @@ SOLVING APPROACH:
             dropdown.style.opacity = '0';
             dropdown.style.transform = 'translateY(-8px)';
             
-            if (currentState === STATE.SCANNING) {
-                if (activeController) activeController.abort();
-                setState(STATE.IDLE);
-                hideStatus();
-            }
-            
             setTimeout(() => {
                 if (dropdown && dropdown.style.opacity === '0') {
                     dropdown.style.display = 'none';
@@ -8384,7 +8658,19 @@ SOLVING APPROACH:
             }, 250);
         }
 
-        function renderList(parts) {
+        function formatTimeAgo(ts) {
+            if (!ts) return '';
+            const diffMs = Date.now() - ts;
+            const diffMins = Math.floor(diffMs / 60000);
+            if (diffMins < 1) return 'just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            const diffHours = Math.floor(diffMins / 60);
+            if (diffHours < 24) return `${diffHours}h ago`;
+            const diffDays = Math.floor(diffHours / 24);
+            return `${diffDays}d ago`;
+        }
+
+        function renderList(parts, timestamp) {
             if (!dropdown) return;
             dropdown.innerHTML = '';
 
@@ -8407,11 +8693,23 @@ SOLVING APPROACH:
             const remainingQuestions = totalQuestions - totalSolved;
 
             const header = document.createElement('div');
-            header.style.cssText = 'font-weight: 700; font-size: 15px; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center;';
+            header.style.cssText = 'font-weight: 700; font-size: 18px; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;';
             header.innerHTML = '<span>Incomplete Tracks</span>' + 
-                               `<span style="font-size: 10px; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 2px 6px; border-radius: 4px; white-space: nowrap;">` +
+                               `<span style="font-size: 11px; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 2px 6px; border-radius: 4px; white-space: nowrap;">` +
                                `${incompleteList.length} Tracks | ${remainingQuestions} Qs Left</span>`;
             dropdown.appendChild(header);
+
+            if (timestamp) {
+                const timeAgo = formatTimeAgo(timestamp);
+                const timeEl = document.createElement('div');
+                timeEl.style.cssText = 'font-size: 11px; color: #71717a; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px;';
+                timeEl.textContent = `Last Scanned: ${timeAgo}`;
+                dropdown.appendChild(timeEl);
+            } else {
+                const divider = document.createElement('div');
+                divider.style.cssText = 'border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 12px;';
+                dropdown.appendChild(divider);
+            }
 
             const listContainer = document.createElement('div');
             listContainer.style.cssText = 'max-height: 280px; overflow-y: auto;';
@@ -8447,7 +8745,7 @@ SOLVING APPROACH:
                 // VISIBLY SEPARATE "COULDN'T VERIFY" SECTION
                 if (failedList.length > 0) {
                     const failHeader = document.createElement('div');
-                    failHeader.style.cssText = 'font-weight: 700; font-size: 13px; color: #f87171; margin: 14px 0 8px 0; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; display: flex; justify-content: space-between; align-items: center;';
+                    failHeader.style.cssText = 'font-weight: 700; font-size: 15px; color: #f87171; margin: 14px 0 8px 0; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; display: flex; justify-content: space-between; align-items: center;';
                     failHeader.innerHTML = '<span>⚠️ Couldn\'t Verify (Crawl Failed)</span>';
                     listContainer.appendChild(failHeader);
 
@@ -8457,7 +8755,7 @@ SOLVING APPROACH:
                         itemEl.style.cssText = 'border-color: rgba(239, 68, 68, 0.15) !important; background: rgba(239, 68, 68, 0.02);';
                         itemEl.innerHTML = `
                             <div class="find-inc-title" style="color: #d1d5db;">${item.partName}</div>
-                            <div class="find-inc-meta" style="color: #ef4444; font-size: 10px;">
+                            <div class="find-inc-meta" style="color: #ef4444; font-size: 12px;">
                                 <span>${item.levelName}</span>
                                 <span>Crawl failed: ${item.error || 'Unknown Error'}</span>
                             </div>
@@ -8474,7 +8772,7 @@ SOLVING APPROACH:
 
             const refreshBtn = document.createElement('div');
             refreshBtn.id = 'find-inc-refresh-btn';
-            refreshBtn.style.cssText = 'text-align: center; padding: 10px 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); color: #63b3ed; cursor: pointer; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;';
+            refreshBtn.style.cssText = 'text-align: center; padding: 10px 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); color: #63b3ed; cursor: pointer; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;';
             refreshBtn.innerHTML = '🔄 Force Re-Crawl & Refresh';
             refreshBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -8488,10 +8786,69 @@ SOLVING APPROACH:
             dropdown.innerHTML = `
                 <div style="text-align: center; padding: 30px 15px;">
                     <div style="font-size: 24px; margin-bottom: 12px; animation: spin 2s linear infinite; display: inline-block;">🔄</div>
-                    <div id="find-inc-loading-msg" style="font-size: 13px; color: #a1a1aa;">Starting scan...</div>
-                    <div style="margin-top: 12px; font-size: 10px; color: #71717a;">Please wait, rate-limiting is active to ensure safety.</div>
+                    <div id="find-inc-loading-msg" style="font-size: 15px; color: #a1a1aa;">Starting scan...</div>
+                    <div style="margin-top: 12px; font-size: 11px; color: #71717a;">Please wait, rate-limiting is active to ensure safety.</div>
+                    <div id="find-inc-cancel-btn" style="margin-top: 16px; font-size: 13px; color: #f87171; cursor: pointer; text-decoration: underline;">Cancel Scan</div>
                 </div>
             `;
+            const cancelBtn = dropdown.querySelector('#find-inc-cancel-btn');
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    cancelScan();
+                });
+            }
+        }
+
+        function renderErrorState(msg) {
+            if (!dropdown) return;
+            dropdown.innerHTML = `
+                <div style="text-align: center; padding: 30px 15px;">
+                    <div style="font-size: 24px; margin-bottom: 12px;">❌</div>
+                    <div style="font-size: 15px; color: #f87171; font-weight: 600;">Scan Failed</div>
+                    <div style="margin-top: 8px; font-size: 13px; color: #a1a1aa; max-height: 80px; overflow-y: auto;">${msg}</div>
+                    <div id="find-inc-retry-btn" style="margin-top: 16px; font-size: 13px; color: #63b3ed; cursor: pointer; text-decoration: underline;">Try Again</div>
+                </div>
+            `;
+            const retryBtn = dropdown.querySelector('#find-inc-retry-btn');
+            if (retryBtn) {
+                retryBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    loadAndRenderTracks(true);
+                });
+            }
+        }
+
+        function renderUnscrapedState() {
+            if (!dropdown) return;
+            dropdown.innerHTML = `
+                <div style="text-align: center; padding: 24px 12px;">
+                    <div style="font-size: 24px; margin-bottom: 8px;">🔍</div>
+                    <div style="font-size: 15px; color: #a1a1aa; margin-bottom: 12px;">No Scraped Data Found</div>
+                    <div style="font-size: 12px; color: #71717a; margin-bottom: 16px; line-height: 1.4;">
+                        Please run a scan to discover and list all incomplete tracks.
+                    </div>
+                    <div id="find-inc-start-btn" style="
+                        display: inline-block;
+                        background: linear-gradient(135deg, #3182ce, #63b3ed);
+                        color: white;
+                        padding: 8px 16px;
+                        border-radius: 8px;
+                        font-size: 13px;
+                        font-weight: 600;
+                        cursor: pointer;
+                        text-transform: uppercase;
+                        box-shadow: 0 4px 12px rgba(49, 130, 206, 0.3);
+                    ">Start Scan</div>
+                </div>
+            `;
+            const startBtn = dropdown.querySelector('#find-inc-start-btn');
+            if (startBtn) {
+                startBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    runFullCrawl();
+                });
+            }
         }
 
         function updateLoadingMessage(msg) {
@@ -8499,27 +8856,7 @@ SOLVING APPROACH:
             if (el) el.textContent = msg;
         }
 
-        function renderErrorState(errStr) {
-            if (!dropdown) return;
-            dropdown.innerHTML = `
-                <div style="text-align: center; padding: 20px 15px;">
-                    <div style="font-size: 24px; margin-bottom: 12px;">❌</div>
-                    <div style="font-size: 13px; color: #f87171; font-weight: 600;">Scan Failed</div>
-                    <div style="font-size: 12px; color: #a1a1aa; margin-top: 4px; overflow-wrap: break-word;">${errStr}</div>
-                    <div id="find-inc-retry-btn" style="margin-top: 15px; display: inline-block; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600;">
-                        Try Again
-                    </div>
-                </div>
-            `;
-            const btn = document.getElementById('find-inc-retry-btn');
-            if (btn) {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    loadAndRenderTracks(true);
-                });
-            }
-        }
-
+        // Expose init/crawling interfaces
         function ensureStatusPanel() {
             if (statusPanel) return;
             statusPanel = document.createElement('div');
@@ -8531,13 +8868,14 @@ SOLVING APPROACH:
                 '-webkit-backdrop-filter:blur(18px);border-radius:14px;' +
                 'border:1px solid rgba(99,179,237,0.3);' +
                 'box-shadow:0 16px 48px rgba(0,0,0,0.65);' +
-                "font-family:'VT323',monospace;font-size:16px;color:#e4e4e7;" +
+                "font-family:'VT323',monospace;font-size:19px;color:#e4e4e7;" +
                 'display:none;transition:opacity 0.2s;';
             statusText = document.createElement('span');
             statusPanel.appendChild(statusText);
             document.body.appendChild(statusPanel);
         }
 
+        // Expose function for updating status Panel
         function showStatus(msg, icon) {
             ensureStatusPanel();
             statusText.textContent = (icon ? icon + '  ' : '') + msg;
@@ -8586,11 +8924,11 @@ SOLVING APPROACH:
                 }
                 .find-inc-title {
                     font-weight: 600;
-                    font-size: 13px;
+                    font-size: 16px;
                     color: #e4e4e7;
                 }
                 .find-inc-meta {
-                    font-size: 11px;
+                    font-size: 13px;
                     color: #a1a1aa;
                     margin-top: 2px;
                     display: flex;
@@ -8614,6 +8952,7 @@ SOLVING APPROACH:
             document.head.appendChild(style);
         }
 
+        // ── Set State ────────────────────────────────────────────────────────
         function setState(s) {
             currentState = s;
         }
@@ -8690,7 +9029,6 @@ SOLVING APPROACH:
             }
         };
     })();
-
 
 
 
