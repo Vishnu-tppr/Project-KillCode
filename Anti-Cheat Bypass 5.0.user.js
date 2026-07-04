@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Anti-Cheat Bypass
 // @namespace    http://tampermonkey.net/
-// @version      5.0
+// @version      5.0f
 // @description  Bypass tab switching, copy/paste restrictions, full-screen enforcement, auto-solve captcha, and AI-powered solution generator
 // @author       ToonTamilIndia (Captcha solver by adithyagenie)
 // @match        https://*.skillrack.com/*
@@ -500,9 +500,13 @@
 
         // ========== AUTO SOLVER SETTINGS ==========
         enableAutoSolver: false,
-        autoSolverMaxRetries: 1,
+        autoSolverMaxRetries: 3,
         autoSolverDelay: 500,
         // ==========================================
+
+        // ========== FIND INCOMPLETE SETTINGS ==========
+        enableFindIncomplete: true,
+        // ===============================================
     };
 
     // Load settings from localStorage or use defaults
@@ -510,7 +514,10 @@
         try {
             const saved = localStorage.getItem('skillrack_bypass_settings');
             if (saved) {
-                return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+                const merged = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+                // Migrate: old default was 1 which made retry loop never fire — bump to 5
+                if (merged.autoSolverMaxRetries < 2) merged.autoSolverMaxRetries = 5;
+                return merged;
             }
         } catch (e) {
             console.log('Failed to load settings:', e);
@@ -2060,10 +2067,6 @@
         panelHeader.innerHTML = `
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
                 <svg viewBox="0 0 24 24" width="22" height="22" style="flex-shrink:0;filter:drop-shadow(0 0 6px rgba(239,68,68,0.6));">
-                    <defs><linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#ef4444"/><stop offset="100%" style="stop-color:#b91c1c"/></linearGradient></defs>
-                    <path fill="url(#shieldGrad)" d="M12 2L4 5v6c0 5.25 3.4 10.15 8 11.35C16.6 21.15 20 16.25 20 11V5l-8-3zm-1 13l-3-3 1.41-1.41L11 12.17l4.59-4.58L17 9l-6 6z"/>
-                </svg>
-                <h3 style="margin:0;font-size:19px;font-weight:700;letter-spacing:0.3px;background:linear-gradient(90deg,#ef4444,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Bypass Settings</h3>
             </div>
             <small style="color:#71717a;font-size:15px;font-weight:500;letter-spacing:0.5px;text-transform:uppercase;">Configure features &amp; AI providers</small>
         `;
@@ -2082,9 +2085,10 @@
                 transition: background 0.15s;
                 border-radius: 8px;
                 margin: 1px 0;
+                cursor: pointer;
             `;
             wrapper.onmouseover = () => wrapper.style.background = 'rgba(255,255,255,0.03)';
-            wrapper.onmouseout  = () => wrapper.style.background = 'transparent';
+            wrapper.onmouseout = () => wrapper.style.background = 'transparent';
             wrapper.innerHTML = `
                 <div style="flex: 1; padding-right: 12px;">
                     <div style="color: #e4e4e7; font-size: 16.5px; font-weight: 500; font-family: 'VT323', monospace;">${label}</div>
@@ -2116,15 +2120,22 @@
             `;
 
             const checkbox = wrapper.querySelector('input');
-            const slider   = wrapper.querySelector('span:first-of-type');
-            const circle   = wrapper.querySelector('span:last-of-type');
+            const slider = wrapper.querySelector('span:first-of-type');
+            const circle = wrapper.querySelector('span:last-of-type');
 
             checkbox.addEventListener('change', () => {
                 SETTINGS[id] = checkbox.checked;
                 slider.style.background = checkbox.checked ? 'linear-gradient(135deg,#ef4444,#dc2626)' : '#27272a';
-                slider.style.boxShadow  = checkbox.checked ? '0 0 8px rgba(239,68,68,0.4)' : 'inset 0 1px 3px rgba(0,0,0,0.4)';
-                circle.style.left       = checkbox.checked ? '22px' : '3px';
+                slider.style.boxShadow = checkbox.checked ? '0 0 8px rgba(239,68,68,0.4)' : 'inset 0 1px 3px rgba(0,0,0,0.4)';
+                circle.style.left = checkbox.checked ? '22px' : '3px';
                 saveSettings(SETTINGS);
+            });
+
+            wrapper.addEventListener('click', (e) => {
+                if (e.target.closest('label') || e.target.tagName === 'INPUT') {
+                    return;
+                }
+                checkbox.click();
             });
 
             return wrapper;
@@ -2224,8 +2235,8 @@
                     padding: 8px;
                     border: 1px solid #444;
                     border-radius: 6px;
-                    background: rgba(255,255,255,0.05);
-                    color: #e4e4e7;
+                    background: #000000;
+                    color: #ffffff;
                     font-size: 15px;
                     box-sizing: border-box;
                     font-family: 'VT323', monospace;
@@ -2344,7 +2355,7 @@
         `;
         tempWrapper.querySelector('input').addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
-            const tv = document.getElementById('temp-value'); if(tv){tv.textContent=val;}
+            const tv = document.getElementById('temp-value'); if (tv) { tv.textContent = val; }
             SETTINGS.aiTemperature = val;
             saveSettings(SETTINGS);
         });
@@ -2403,6 +2414,27 @@
             });
         }
         panelContent.appendChild(autoSolverToggle);
+
+        // Find Incomplete toggle
+        const findIncompleteToggle = createToggle('enableFindIncomplete', 'Find Incomplete Question', SETTINGS.enableFindIncomplete, 'Scan & navigate to least-complete section');
+        panelContent.appendChild(findIncompleteToggle);
+        const findIncompleteCheckbox = findIncompleteToggle.querySelector('input');
+        findIncompleteCheckbox.addEventListener('change', () => {
+            if (findIncompleteCheckbox.checked) {
+                if (window.FindIncompleteModule) {
+                    window.FindIncompleteModule.init();
+                }
+            } else {
+                if (window.FindIncompleteModule) {
+                    window.FindIncompleteModule.cancel();
+                }
+                const btn = document.getElementById('find-incomplete-btn');
+                if (btn) {
+                    const li = btn.closest('li');
+                    if (li) li.remove();
+                }
+            }
+        });
 
         // AI Provider selector
         const providerWrapper = document.createElement('div');
@@ -2501,8 +2533,8 @@
                     padding: 8px;
                     border: 1px solid #444;
                     border-radius: 6px;
-                    background: rgba(255,255,255,0.05);
-                    color: #e4e4e7;
+                    background: #000000;
+                    color: #ffffff;
                     font-size: 15px;
                     box-sizing: border-box;
                     font-family: 'VT323', monospace;
@@ -2639,8 +2671,8 @@
                     padding: 8px;
                     border: 1px solid #444;
                     border-radius: 6px;
-                    background: rgba(255,255,255,0.05);
-                    color: #e4e4e7;
+                    background: #000000;
+                    color: #ffffff;
                     font-size: 15px;
                     box-sizing: border-box;
                     font-family: 'VT323', monospace;
@@ -2796,8 +2828,8 @@
                     padding: 8px;
                     border: 1px solid #444;
                     border-radius: 6px;
-                    background: rgba(255,255,255,0.05);
-                    color: #e4e4e7;
+                    background: #000000;
+                    color: #ffffff;
                     font-size: 15px;
                     box-sizing: border-box;
                     font-family: 'VT323', monospace;
@@ -3006,8 +3038,8 @@
                     padding: 8px;
                     border: 1px solid #444;
                     border-radius: 6px;
-                    background: rgba(255,255,255,0.05);
-                    color: #e4e4e7;
+                    background: #000000;
+                    color: #ffffff;
                     font-size: 15px;
                     box-sizing: border-box;
                     font-family: 'VT323', monospace;
@@ -5283,7 +5315,7 @@
     const extractMFIBTemplate = () => {
         // Base selector for inputs, ignoring ace text area and ensuring we target potential blanks
         const inputSelector = 'input.blankcode, input[id^="blank"], input[name^="blank"], input.ui-inputtext, input[type="text"]:not(.ace_text-input)';
-        
+
         // Helper to filter out helper panels, settings panel, captcha, etc.
         const isActualCodingBlank = (el) => {
             if (!el) return false;
@@ -5300,7 +5332,7 @@
         };
 
         let container = null;
-        
+
         // On SkillRack, MFIB blanks are always contained in multifibpanel.
         // We look for multifibpanel first.
         const mfibPanel = document.getElementById('multifibpanel');
@@ -5741,6 +5773,13 @@
         return data.choices?.[0]?.message?.content || '';
     };
 
+    // Shared OpenRouter request gate to avoid bursty 429s across repeated AutoSolver calls
+    const OPENROUTER_RATE_STATE = {
+        nextAllowedAt: 0,
+        consecutive429: 0,
+        minIntervalMs: 3000
+    };
+
     const generateWithOpenRouter = async (prompt) => {
         const apiKey = SETTINGS.openrouterApiKey;
         if (!apiKey) {
@@ -5752,31 +5791,6 @@
         // Reasoning models reject temperature/top_p — detect by name
         const isReasoning = (m) => /gpt-oss|\bo[134]\b|deepseek-r1|qwen.*think|nemotron.*ultra|nemotron.*super|nemotron.*nano|laguna|liquid.*think|lfm.*think/i.test(m);
 
-        // Full free-model fallback chain (sorted by coding capability, fetched 2026-07-02)
-        // Primary is always tried first; all others are tried in order on failure.
-        const FREE_FALLBACKS = [
-            // === Coding-specialist models (highest priority) ===
-            'qwen/qwen3-coder:free',                          // Qwen3 Coder 480B MoE — best coder
-            'poolside/laguna-m.1:free',                       // Laguna M.1 — agentic coding flagship
-            'poolside/laguna-xs-2.1:free',                    // Laguna XS 2.1 — fast coder
-            'poolside/laguna-xs.2:free',                      // Laguna XS.2 — fast coder
-            'cohere/north-mini-code:free',                    // North Mini Code 30B MoE
-            // === Large general-purpose reasoning models ===
-            'nvidia/nemotron-3-ultra-550b-a55b:free',         // Nemotron Ultra 550B (coding 49.3)
-            'nvidia/nemotron-3-super-120b-a12b:free',         // Nemotron Super 120B (coding 37.7)
-            'google/gemma-4-31b-it:free',                     // Gemma 4 31B (coding 43.4)
-            'google/gemma-4-26b-a4b-it:free',                 // Gemma 4 26B MoE
-            // === Strong general instruct models ===
-            'openai/gpt-oss-120b:free',                       // GPT-OSS 120B (current primary)
-            'openai/gpt-oss-20b:free',                        // GPT-OSS 20B
-            'qwen/qwen3-next-80b-a3b-instruct:free',          // Qwen3 Next 80B
-            'meta-llama/llama-3.3-70b-instruct:free',         // Llama 3.3 70B
-            'nousresearch/hermes-3-llama-3.1-405b:free',      // Hermes 3 405B
-            'qwen/qwen-2.5-coder-32b-instruct:free',          // Qwen 2.5 Coder 32B
-            'nvidia/nemotron-3-nano-30b-a3b:free',            // Nemotron Nano 30B
-            'nvidia/nemotron-nano-9b-v2:free',                // Nemotron Nano 9B
-            'meta-llama/llama-3.2-3b-instruct:free',          // Llama 3.2 3B (smallest fallback)
-        ].filter(m => m !== primaryModel);
 
         // Build OpenAI-SDK-compatible request body for a given model
         const buildBody = (model) => {
@@ -5806,10 +5820,48 @@
                         return Math.ceil(secs * 1000) + 500; // add 500ms buffer
                     }
                 }
+
+                // Some gateways expose reset timestamp headers
+                const resetUnix = response.headers.get('x-ratelimit-reset');
+                if (resetUnix) {
+                    const parsed = parseFloat(resetUnix);
+                    if (!isNaN(parsed) && parsed > 0) {
+                        const ms = parsed > 1e12 ? parsed - Date.now() : (parsed * 1000) - Date.now();
+                        if (ms > 0) {
+                            console.log(`[OpenRouter] x-ratelimit-reset header wait: ${Math.ceil(ms / 1000)}s`);
+                            return Math.ceil(ms) + 500;
+                        }
+                    }
+                }
             } catch (headerErr) {
                 console.warn('[OpenRouter] Failed to read Retry-After header:', headerErr.message);
             }
             return fallbackMs;
+        };
+
+        const nowMs = () => Date.now();
+        const jitter = (baseMs) => baseMs + Math.floor(Math.random() * 500);
+
+        const mark429Cooldown = (response, fallbackMs) => {
+            OPENROUTER_RATE_STATE.consecutive429 += 1;
+            const headerWait = getRetryAfterMs(response, fallbackMs);
+            const adaptivePenalty = Math.min(30000, Math.pow(2, Math.max(0, OPENROUTER_RATE_STATE.consecutive429 - 1)) * 1000);
+            const waitMs = Math.max(headerWait, adaptivePenalty);
+            OPENROUTER_RATE_STATE.nextAllowedAt = Math.max(OPENROUTER_RATE_STATE.nextAllowedAt, nowMs() + waitMs);
+            return waitMs;
+        };
+
+        const markSuccessRateWindow = () => {
+            OPENROUTER_RATE_STATE.consecutive429 = 0;
+            OPENROUTER_RATE_STATE.nextAllowedAt = Math.max(OPENROUTER_RATE_STATE.nextAllowedAt, nowMs() + OPENROUTER_RATE_STATE.minIntervalMs);
+        };
+
+        const waitForRequestSlot = async (label = 'OpenRouter cooldown') => {
+            const waitMs = OPENROUTER_RATE_STATE.nextAllowedAt - nowMs();
+            if (waitMs > 0) {
+                console.log(`[OpenRouter] Global gate wait ${Math.ceil(waitMs / 1000)}s (${label})`);
+                await countdownWait(waitMs, label);
+            }
         };
 
         // Helper to update UI button status during rate limit countdown
@@ -5834,6 +5886,7 @@
 
         // Single fetch attempt — returns { ok, status, content, errMsg, response }
         const attempt = async (model) => {
+            await waitForRequestSlot('OpenRouter cooldown');
             console.log(`[OpenRouter] → POST model="${model}" reasoning=${isReasoning(model)}`);
             let response;
             try {
@@ -5870,6 +5923,7 @@
                     return { ok: false, status: 200, errMsg: providerErr };
                 }
 
+                markSuccessRateWindow();
                 return { ok: true, status: 200, content };
             }
 
@@ -5887,18 +5941,20 @@
 
         // Unified request executor that retries a model on transient errors (429, 503, provider issues, etc.)
         const requestModelWithRetry = async (model, maxRetries = 3) => {
-            const delays = [5000, 10000, 20000, 40000];
+            const delays = [5000, 10000, 20000, 30000];
             let lastRes;
 
             for (let i = 0; i <= maxRetries; i++) {
                 if (i > 0) {
-                    const waitMs = getRetryAfterMs(lastRes?.response, delays[i - 1] || 10000);
+                    const waitMs = lastRes?.status === 429
+                        ? mark429Cooldown(lastRes?.response, delays[i - 1] || 10000)
+                        : (delays[i - 1] || 10000);
                     console.log(`[OpenRouter] Retrying model "${model}" in ${waitMs / 1000}s (Retry ${i}/${maxRetries})...`);
                     await countdownWait(waitMs, `Rate limit (${model.split('/')[1] || model})`);
                 }
 
-                // Global rate limit safety buffer: never request faster than 1 req / 1.5s
-                await new Promise(r => setTimeout(r, 1500));
+                // Global pacing safety buffer even when no explicit cooldown header exists
+                await new Promise(r => setTimeout(r, jitter(OPENROUTER_RATE_STATE.minIntervalMs)));
 
                 lastRes = await attempt(model);
                 if (lastRes.ok) {
@@ -5921,47 +5977,14 @@
             return lastRes;
         };
 
-        // 1. Try primary model first with retries
+        // Try primary model first with retries
         console.log(`[OpenRouter] Trying primary model: "${primaryModel}"`);
         let lastResult = await requestModelWithRetry(primaryModel, 3);
         if (lastResult.ok) {
             return lastResult.content;
         }
 
-        // 2. Primary failed. If it was transient, start trying free fallback models
         const primaryErr = lastResult.errMsg || 'Unknown error';
-        const isPrimaryTransient = lastResult.status === 429
-            || lastResult.status === 424
-            || lastResult.status === 502
-            || lastResult.status === 503
-            || lastResult.status === 504
-            || lastResult.status === 0
-            || /rate.limit|overload|busy|provider.returned.error|too.many.requests/i.test(primaryErr);
-
-        if (isPrimaryTransient) {
-            console.log(`[OpenRouter] Primary model rate-limited or overloaded. Checking free fallbacks...`);
-            let lastFallbackResult = null;
-
-            for (const fb of FREE_FALLBACKS) {
-                console.log(`[OpenRouter] Trying fallback model: "${fb}"`);
-                updateBtnStatus(`Trying fallback (${fb.split('/')[1] || fb})...`);
-
-                // Give each fallback model up to 2 retries on rate limits before moving to the next
-                const res = await requestModelWithRetry(fb, 2);
-                lastFallbackResult = res;
-
-                if (res.ok) {
-                    console.log(`[OpenRouter] ✅ Fallback "${fb}" succeeded`);
-                    return res.content;
-                }
-                console.warn(`[OpenRouter] Fallback "${fb}" failed: ${res.errMsg}`);
-            }
-
-            const fallbackErr = lastFallbackResult?.errMsg || 'No fallback succeeded';
-            throw new Error(`OpenRouter (${primaryModel}) rate-limited. Fallback failed: ${fallbackErr}`);
-        }
-
-        // 3. If primary failed with a non-transient error, throw immediately
         throw new Error(`OpenRouter (${primaryModel}): ${primaryErr}`);
     };
 
@@ -6710,7 +6733,10 @@ SOLVING APPROACH:
             runTimeout: 45000,     // 45 seconds max for code execution
             resultTimeout: 45000,  // 45 seconds to wait for pass/fail result
             delayAfterGen: 1000,   // Delay after generation before clicking Run
-            delayBetweenRetries: 5000,  // 5s between solve retries (OpenRouter cooldown)
+            // Exponential backoff: base delay per attempt (capped at 30s)
+            backoffBase: 3000,     // 3s on first failure
+            backoffMultiplier: 2,  // doubles each retry
+            backoffCap: 30000,     // 30s max
             delayBeforeNext: 2000
         };
 
@@ -6721,52 +6747,45 @@ SOLVING APPROACH:
         let shouldStop = false;
         let currentRetries = 0;
         let statusIndicator = null;
+        let activeResultWaitController = null;
 
-        // Load persistent stop state
-        function loadStopState() {
-            try {
-                return localStorage.getItem(STOP_PERSIST_KEY) === 'true';
-            } catch (e) {
-                return false;
-            }
+        // Guard: timestamp when DOM was ready (for isAllCompleted false-positive fix)
+        let domReadyTime = 0;
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => { domReadyTime = Date.now(); });
+        } else {
+            domReadyTime = Date.now();
         }
 
-        // Save persistent stop state
+        // ── Persistent stop state ────────────────────────────────────────────────
+        function loadStopState() {
+            try { return localStorage.getItem(STOP_PERSIST_KEY) === 'true'; } catch (e) { return false; }
+        }
+
         function saveStopState(stopped) {
             try {
-                if (stopped) {
-                    localStorage.setItem(STOP_PERSIST_KEY, 'true');
-                } else {
-                    localStorage.removeItem(STOP_PERSIST_KEY);
-                }
+                if (stopped) localStorage.setItem(STOP_PERSIST_KEY, 'true');
+                else localStorage.removeItem(STOP_PERSIST_KEY);
             } catch (e) { }
         }
 
-        // Initialize stop state from localStorage
         shouldStop = loadStopState();
 
-        // Helper: Sleep function (checks shouldStop)
+        // ── Core helpers ─────────────────────────────────────────────────────────
+
+        // Sleep that respects shouldStop for fast cancellation
         const sleep = ms => new Promise(r => {
             const checkInterval = setInterval(() => {
-                if (shouldStop) {
-                    clearInterval(checkInterval);
-                    r();
-                }
+                if (shouldStop) { clearInterval(checkInterval); r(); }
             }, 100);
-            setTimeout(() => {
-                clearInterval(checkInterval);
-                r();
-            }, ms);
+            setTimeout(() => { clearInterval(checkInterval); r(); }, ms);
         });
 
-        // Helper: Check if we should abort
         function checkStop() {
-            if (shouldStop) {
-                throw new Error('STOPPED_BY_USER');
-            }
+            if (shouldStop) throw new Error('STOPPED_BY_USER');
         }
 
-        // Helper: Wait for element to appear
+        // Wait for a DOM element to become visible
         async function waitFor(selector, timeout = 15000) {
             const start = Date.now();
             while (Date.now() - start < timeout) {
@@ -6778,14 +6797,11 @@ SOLVING APPROACH:
             return null;
         }
 
-        // Helper: Force click with fallback
+        // Single-event click (avoids triple-submission)
         function forceClick(el, name) {
-            if (!el) {
-                console.warn(`[AutoSolver] ${name} not found`);
-                return false;
-            }
+            if (!el) { console.warn(`[AutoSolver] ${name} not found`); return false; }
             try {
-                el.click();
+                el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
                 console.log(`[AutoSolver] Clicked: ${name}`);
                 return true;
             } catch (e) {
@@ -6794,22 +6810,177 @@ SOLVING APPROACH:
             }
         }
 
-        // Helper: Check if element contains text
         function hasText(selector, text) {
             const el = document.querySelector(selector);
             return el && el.innerText && el.innerText.toLowerCase().includes(text.toLowerCase());
         }
 
-        // Helper: Clear success/error messages to avoid stale results
+        // ── Exponential backoff helper ────────────────────────────────────────────
+        // Returns backoff delay (ms) for the given attempt number (0-indexed)
+        function getBackoffDelay(attemptIndex) {
+            const delay = CONFIG.backoffBase * Math.pow(CONFIG.backoffMultiplier, attemptIndex);
+            return Math.min(delay, CONFIG.backoffCap);
+        }
+
+        function createResultWaitController() {
+            if (activeResultWaitController) {
+                try { activeResultWaitController.abort(); } catch (e) { }
+            }
+            activeResultWaitController = new AbortController();
+            return activeResultWaitController;
+        }
+
+        function abortResultWait() {
+            if (!activeResultWaitController) return;
+            try { activeResultWaitController.abort(); } catch (e) { }
+            activeResultWaitController = null;
+        }
+
+        // Sleep with a live countdown shown in the status popup
+        async function sleepWithCountdown(ms, label) {
+            console.log(`[AutoSolver] Backoff ${ms}ms (${label}) at ${new Date().toISOString()}`);
+            const steps = Math.ceil(ms / 1000);
+            for (let i = steps; i > 0; i--) {
+                if (shouldStop) return;
+                updateStatus(`Retrying in ${i}s... ${label}`, 'warning');
+                await sleep(1000);
+            }
+        }
+
+        function readResultCards() {
+            const out = { input: '', expected: '', actual: '' };
+            const panelContent = document.getElementById('errormsg_content') || document.getElementById('errormsg');
+            if (!panelContent) return out;
+            const cards = panelContent.querySelectorAll('.ui-card-content');
+            const labels = panelContent.querySelectorAll('.ui.label');
+            labels.forEach((label, index) => {
+                const key = (label.textContent || '').toLowerCase();
+                let value = '';
+                const siblingCard = label.parentElement?.querySelector('.ui-card-content');
+                if (siblingCard) {
+                    value = (siblingCard.textContent || '').trim();
+                } else {
+                    value = (cards[index]?.textContent || '').trim();
+                }
+                if (key.includes('input')) out.input = value;
+                else if (key.includes('expected')) out.expected = value;
+                else if (key.includes('your program') || key.includes('your output')) out.actual = value;
+            });
+            return out;
+        }
+
+        function buildRetryContext(resultType) {
+            const errEl = document.getElementById('errormsg');
+            const panelContent = document.getElementById('errormsg_content') || errEl;
+            const rawError = (panelContent?.textContent || errEl?.textContent || '').trim();
+            const cards = readResultCards();
+
+            if (resultType === 'compilation_error') {
+                const lines = rawError.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 10);
+                return {
+                    retryType: 'compilation_error',
+                    label: 'compilation error',
+                    contextText: lines.join('\n') || rawError
+                };
+            }
+
+            if (resultType === 'runtime_error') {
+                const lines = rawError.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 8);
+                const runtimeText = lines.join('\n') || rawError;
+                const ioBlock = [
+                    cards.input ? `Input: ${cards.input}` : '',
+                    cards.expected ? `Expected: ${cards.expected}` : '',
+                    cards.actual ? `Actual: ${cards.actual}` : ''
+                ].filter(Boolean).join('\n');
+                return {
+                    retryType: 'runtime_error',
+                    label: 'runtime error',
+                    contextText: ioBlock ? `${runtimeText}\n${ioBlock}` : runtimeText
+                };
+            }
+
+            if (resultType === 'failed') {
+                const wrongOutputText = [
+                    cards.input ? `Input: ${cards.input}` : '',
+                    cards.expected ? `Expected Output: ${cards.expected}` : '',
+                    `Actual Output: ${cards.actual || '(EMPTY)'}`
+                ].filter(Boolean).join('\n');
+                return {
+                    retryType: 'wrong_output',
+                    label: 'wrong output',
+                    contextText: wrongOutputText || rawError
+                };
+            }
+
+            return {
+                retryType: 'timeout',
+                label: 'timeout',
+                contextText: ''
+            };
+        }
+
+        function clearInjectedRetryContext() {
+            const aiBtn = document.getElementById('ai-solution-btn');
+            if (aiBtn?.dataset) {
+                delete aiBtn.dataset.autoSolverRetryType;
+                delete aiBtn.dataset.autoSolverContext;
+            }
+            const injected = document.querySelector('#errormsg_content [data-autosolver-context], #errormsg [data-autosolver-context]');
+            if (injected) injected.remove();
+        }
+
+        function injectRetryContext(resultType) {
+            const ctx = buildRetryContext(resultType);
+            clearInjectedRetryContext();
+
+            if (!ctx.contextText || resultType === 'timeout') return ctx;
+
+            const aiBtn = document.getElementById('ai-solution-btn');
+            if (aiBtn?.dataset) {
+                aiBtn.dataset.autoSolverRetryType = ctx.retryType;
+                aiBtn.dataset.autoSolverContext = ctx.contextText.slice(0, 4000);
+            }
+
+            const panelContent = document.getElementById('errormsg_content') || document.getElementById('errormsg');
+            if (panelContent) {
+                const marker = document.createElement('div');
+                marker.setAttribute('data-autosolver-context', '1');
+                marker.style.display = 'none';
+                marker.textContent = `AutoSolver retry context (${ctx.retryType}):\n${ctx.contextText}`;
+                panelContent.appendChild(marker);
+            }
+
+            return ctx;
+        }
+
+        // ── Error DOM helper ─────────────────────────────────────────────────────
+        // Wait up to maxWait ms for the #errormsg panel to be populated after Run
+        async function waitForErrorDOMToSettle(maxWait = 3000) {
+            const deadline = Date.now() + maxWait;
+            while (Date.now() < deadline && !shouldStop) {
+                const el = document.querySelector('#errormsg');
+                if (el && el.innerText && el.innerText.trim().length > 0) return;
+                await sleep(100);
+            }
+        }
+
+        // Extract a short error summary for status display from #errormsg
+        function extractErrorSummary() {
+            const el = document.querySelector('#errormsg');
+            if (!el) return '';
+            const text = el.innerText || '';
+            // First non-blank line, capped at 60 chars
+            const firstLine = text.split('\n').find(l => l.trim().length > 0) || '';
+            return firstLine.trim().slice(0, 60);
+        }
+
+        // ── Clear stale results ───────────────────────────────────────────────────
         function clearPreviousResults() {
             try {
                 const successEl = document.querySelector('#successmsg');
                 if (successEl) successEl.innerHTML = '';
-                
                 const errorEl = document.querySelector('#errormsg');
                 if (errorEl) errorEl.innerHTML = '';
-                
-                // Clear PrimeFaces growls
                 document.querySelectorAll('.ui-growl-item-container').forEach(el => el.remove());
                 console.log('[AutoSolver] Cleared previous results');
             } catch (e) {
@@ -6817,27 +6988,19 @@ SOLVING APPROACH:
             }
         }
 
-        // Helper: Click Proceed Next button robustly (similar to AI Solution button)
+        // ── Proceed Next ─────────────────────────────────────────────────────────
         async function clickProceedNext() {
             updateStatus('Looking for Proceed Next...', 'info');
 
             const findProceedNextButton = () => {
-                // Method 1: Try known ID
                 let btn = document.querySelector('#j_id_9i');
                 if (btn) return btn;
-
-                // Method 2: Try partial ID match
                 btn = document.querySelector('button[id*="_9i"], a[id*="_9i"], input[id*="_9i"]');
                 if (btn) return btn;
-
-                // Method 3: Find by text variants
                 const candidates = document.querySelectorAll('button, a, input[type="button"], input[type="submit"]');
                 for (const el of candidates) {
                     const span = el.querySelector?.('span.ui-button-text');
-                    const spanText = (span?.textContent || '').trim();
-                    const ownText = (el.textContent || '').trim();
-                    const inputValue = (el.value || '').trim();
-                    const text = `${spanText} ${ownText} ${inputValue}`.toLowerCase();
+                    const text = `${(span?.textContent || '')} ${(el.textContent || '')} ${(el.value || '')}`.toLowerCase();
                     if (text.includes('proceed next') || text.includes('proceed to next') || text.includes('next')) {
                         return el;
                     }
@@ -6845,7 +7008,6 @@ SOLVING APPROACH:
                 return null;
             };
 
-            // Wait for button to appear (PrimeFaces updates can be delayed after retries)
             let nextBtn = null;
             const maxWaitMs = 12000;
             const waitStart = Date.now();
@@ -6864,52 +7026,34 @@ SOLVING APPROACH:
             console.log('[AutoSolver] Found Proceed Next button:', nextBtn.id || nextBtn.className);
             updateStatus('Clicking Proceed Next...', 'info');
 
-            // Single click to avoid duplicate submissions
+            // Single dispatchEvent click — avoids triple-submission
             try {
-                if (typeof nextBtn.onclick === 'function') {
-                    nextBtn.onclick();
-                }
                 nextBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                if (typeof nextBtn.click === 'function') {
-                    nextBtn.click();
-                }
                 console.log('[AutoSolver] Clicked: Proceed Next');
                 updateStatus('Moving to next...', 'info');
-
             } catch (e) {
                 console.error('[AutoSolver] Click failed: Proceed Next', e);
                 return false;
             }
 
-            // Wait for page to change, then trigger auto-solve again
             await sleep(3000);
-            if (!shouldStop) {
-                setTimeout(() => solve(), 2000);
-            }
+            if (!shouldStop) setTimeout(() => solve(), 2000);
             return true;
         }
 
-        // Helper: Update status indicator
+        // ── Status indicator ─────────────────────────────────────────────────────
+        let stopButton = null;
+        let statusText = null;
+
         function updateStatus(message, type = 'info') {
             console.log(`[AutoSolver] ${message}`);
             if (!SETTINGS.enablePopupMode) return;
             if (statusIndicator) {
-                const colors = {
-                    info: '#2196F3',
-                    success: '#4CAF50',
-                    warning: '#FF9800',
-                    error: '#f44336'
-                };
+                const colors = { info: '#2196F3', success: '#4CAF50', warning: '#FF9800', error: '#f44336' };
                 statusIndicator.style.background = colors[type] || colors.info;
-                if (statusText) {
-                    statusText.textContent = `Auto Solver: ${message}`;
-                }
+                if (statusText) statusText.textContent = `Auto Solver: ${message}`;
             }
         }
-
-        // Create floating status indicator with stop button
-        let stopButton = null;
-        let statusText = null;
 
         function createStatusIndicator() {
             if (!SETTINGS.enablePopupMode) return;
@@ -6935,13 +7079,11 @@ SOLVING APPROACH:
                 gap: 10px;
             `;
 
-            // Status text span
             statusText = document.createElement('span');
             statusText.id = 'auto-solver-text';
             statusText.textContent = 'Auto Solver: Initializing...';
             statusIndicator.appendChild(statusText);
 
-            // Stop button
             stopButton = document.createElement('button');
             stopButton.id = 'auto-solver-stop';
             stopButton.textContent = 'STOP';
@@ -6957,12 +7099,8 @@ SOLVING APPROACH:
                 margin-left: 8px;
                 transition: background 0.2s;
             `;
-            stopButton.addEventListener('mouseover', () => {
-                stopButton.style.background = '#d32f2f';
-            });
-            stopButton.addEventListener('mouseout', () => {
-                stopButton.style.background = '#f44336';
-            });
+            stopButton.addEventListener('mouseover', () => { stopButton.style.background = '#d32f2f'; });
+            stopButton.addEventListener('mouseout', () => { stopButton.style.background = '#f44336'; });
             stopButton.addEventListener('click', () => {
                 stop();
                 updateStatus('Stopped by user', 'warning');
@@ -6970,13 +7108,10 @@ SOLVING APPROACH:
             });
             statusIndicator.appendChild(stopButton);
 
-            // Wait for body to exist before appending
             if (document.body) {
                 document.body.appendChild(statusIndicator);
             } else {
-                document.addEventListener('DOMContentLoaded', () => {
-                    document.body.appendChild(statusIndicator);
-                });
+                document.addEventListener('DOMContentLoaded', () => { document.body.appendChild(statusIndicator); });
             }
         }
 
@@ -6990,12 +7125,12 @@ SOLVING APPROACH:
             if (statusIndicator) statusIndicator.style.display = 'none';
         }
 
-        // Wait for AI generation to complete (with phase check to avoid false quick returns)
+        // ── AI Generation wait ────────────────────────────────────────────────────
         async function waitForAIGeneration() {
             const start = Date.now();
             updateStatus('Generating solution...', 'info');
 
-            // Phase 1: Wait up to 5s for generation to actually start (button becomes disabled or changes text)
+            // Phase 1: Wait up to 5s for generation to actually start
             let started = false;
             const startCheckDeadline = Date.now() + 5000;
             while (Date.now() < startCheckDeadline) {
@@ -7015,22 +7150,19 @@ SOLVING APPROACH:
 
             if (!started) {
                 console.warn('[AutoSolver] Generation did not start within 5s');
-                // Give a 3s buffer before declaring failed to prevent rapid click spam
                 await sleep(3000);
                 return false;
             }
 
-            // Phase 2: Wait for generation to complete (until button is no longer disabled and text resets)
+            // Phase 2: Wait for generation to complete
             while (Date.now() - start < CONFIG.genTimeout) {
                 if (shouldStop) return false;
-
                 const btn = document.querySelector('#ai-solution-btn');
                 if (btn) {
                     const text = btn.innerText || btn.textContent || '';
                     const isDisabled = btn.disabled || btn.hasAttribute('disabled');
                     const opacity = parseFloat(btn.style.opacity || '1');
 
-                    // Update AutoSolver status popup if button shows rate limited / fallback
                     if (text.includes('Rate limited') || text.includes('fallback')) {
                         updateStatus(text, 'warning');
                     } else if (text.includes('Generating') || text.includes('Fixing')) {
@@ -7042,8 +7174,6 @@ SOLVING APPROACH:
                         if (shouldStop) return false;
                         continue;
                     }
-
-                    // Generation completed successfully
                     return true;
                 }
                 await sleep(300);
@@ -7054,67 +7184,73 @@ SOLVING APPROACH:
             return false;
         }
 
-        // Wait for execution result
-        async function waitForResult() {
+        // ── Result detection ──────────────────────────────────────────────────────
+        // Improved: also checks PrimeFaces growl messages and URL change as success signals
+        async function waitForResult(signal) {
             const start = Date.now();
+            const initialUrl = window.location.href;
             updateStatus('Waiting for result...', 'info');
 
-            while (Date.now() - start < CONFIG.resultTimeout) {
-                // Check for stop request
-                if (shouldStop) return 'stopped';
+            const detectResult = async () => {
+                while (Date.now() - start < CONFIG.resultTimeout) {
+                    if (shouldStop) return 'stopped';
+                    if (signal?.aborted) return 'stopped';
 
-                // Check for success
-                if (hasText('#successmsg', 'passed') || hasText('.ui-panel-title', 'passed')) {
-                    return 'success';
+                    // URL changed → SkillRack navigated to next problem (treat as success)
+                    if (window.location.href !== initialUrl) {
+                        console.log('[AutoSolver] URL changed — treating as success');
+                        return 'success';
+                    }
+
+                    // Standard success/error elements
+                    if (hasText('#successmsg', 'passed') || hasText('.ui-panel-title', 'passed')) return 'success';
+                    if (hasText('#errormsg', 'error:') || hasText('#errormsg', 'compilation')) return 'compilation_error';
+                    if (hasText('#errormsg', 'segmentation') || hasText('#errormsg', 'runtime')) return 'runtime_error';
+                    if (hasText('#errormsg', 'did not pass') || hasText('#errormsg', 'wrong') || hasText('#errormsg', 'execution')) return 'failed';
+
+                    // PrimeFaces growl messages (fallback when errormsg is absent)
+                    const growlItems = document.querySelectorAll('.ui-growl-item-container, .ui-growl-item');
+                    for (const g of growlItems) {
+                        const gt = (g.innerText || '').toLowerCase();
+                        if (gt.includes('pass') || gt.includes('success') || gt.includes('correct')) return 'success';
+                        if (gt.includes('error') || gt.includes('fail') || gt.includes('wrong')) return 'failed';
+                    }
+
+                    await sleep(100);
                 }
 
-                // Check for failure
-                if (hasText('#errormsg', 'did not pass') || hasText('#errormsg', 'execution')) {
-                    return 'failed';
-                }
+                return 'timeout';
+            };
 
-                // Check for compilation error
-                if (hasText('#errormsg', 'error:') || hasText('#errormsg', 'compilation')) {
-                    return 'compilation_error';
-                }
+            if (!signal) return detectResult();
 
-                // Check for runtime error
-                if (hasText('#errormsg', 'segmentation') || hasText('#errormsg', 'runtime')) {
-                    return 'runtime_error';
-                }
+            const aborted = new Promise(resolve => {
+                if (signal.aborted) resolve('stopped');
+                signal.addEventListener('abort', () => resolve('stopped'), { once: true });
+            });
 
-                await sleep(100);
-                if (shouldStop) return 'stopped';
-            }
-
-            return 'timeout';
+            return Promise.race([detectResult(), aborted]);
         }
 
-        // Check if we're on a problem page URL
+        // ── Page detection helpers ────────────────────────────────────────────────
         function isOnProblemPageURL() {
             const href = window.location.href;
             if (href.includes('codeprogram') || href.includes('tutorprogram')) return true;
             return hasCodeEditor() || hasCaptcha() || isOnProblemListPage();
         }
 
-        // Check if we're on the problem LIST page (shows "Solve" buttons)
         function isOnProblemListPage() {
-            // Look for datagrid with Solve buttons
-            const solveButtons = document.querySelectorAll('button span.ui-button-text');
-            for (const span of solveButtons) {
-                if (span.textContent === 'Solve') {
-                    return true;
-                }
+            const spans = document.querySelectorAll('button span.ui-button-text');
+            for (const span of spans) {
+                if (span.textContent === 'Solve') return true;
             }
             return false;
         }
 
-        // Check if we're on the actual CODING page (with code editor)
         function isOnCodingPage() {
             return hasCodeEditor() || hasCaptcha();
         }
 
-        // Check if there's a captcha to solve first (but NOT if we're already on coding page)
         function hasCaptcha() {
             const captchaInput = document.getElementById('capval');
             const proceedBtn = document.getElementById('proceedbtn');
@@ -7123,28 +7259,23 @@ SOLVING APPROACH:
             return isVisible(captchaInput) && isVisible(proceedBtn);
         }
 
-        // Check if code editor is visible (also handles MFIB challenges)
         function hasCodeEditor() {
             if (document.getElementById('txtCode') !== null) return true;
             if (document.querySelector('.ace_editor') !== null) return true;
-            // MFIB check: verify if we have any actual coding blanks
             return extractMFIBTemplate().inputs.length > 0;
         }
 
-        // Main auto-solve function
+        // ── Main solve function ───────────────────────────────────────────────────
         async function solve() {
             if (!SETTINGS.enableAutoSolver || !SETTINGS.enableAISolver) {
                 console.log('[AutoSolver] Disabled in settings');
                 return false;
             }
-
-            // Check for persistent stop state
             if (loadStopState()) {
                 console.log('[AutoSolver] Persistent stop active - not solving');
                 return false;
             }
 
-            // Reset stop flag when starting a new solve
             shouldStop = false;
             saveStopState(false);
 
@@ -7160,40 +7291,26 @@ SOLVING APPROACH:
                 return false;
             }
 
-            // Create and show status indicator early
             createStatusIndicator();
             showStatus();
             updateStatus('Analyzing page...', 'info');
 
-            // Check if we're on problem LIST page (need to click Solve first)
+            // On problem LIST page — click Solve first
             if (isOnProblemListPage() && !isOnCodingPage()) {
                 updateStatus('Finding Solve button...', 'info');
                 console.log('[AutoSolver] On problem list page - looking for Solve button...');
                 const solveButtons = document.querySelectorAll('button');
                 for (const btn of solveButtons) {
-                    if (shouldStop) {
-                        updateStatus('Stopped', 'warning');
-                        setTimeout(hideStatus, 2000);
-                        solveInvocationActive = false;
-                        return false;
-                    }
+                    if (shouldStop) { updateStatus('Stopped', 'warning'); setTimeout(hideStatus, 2000); solveInvocationActive = false; return false; }
                     const span = btn.querySelector('span.ui-button-text');
                     if (span && span.textContent === 'Solve') {
                         console.log('[AutoSolver] Found Solve button, clicking...');
                         updateStatus('Clicking Solve...', 'info');
                         forceClick(btn, 'Solve Problem');
-                        // Wait for page transition, then re-check
                         await sleep(3000);
-                        if (shouldStop) {
-                            hideStatus();
-                            solveInvocationActive = false;
-                            return false;
-                        }
+                        if (shouldStop) { hideStatus(); solveInvocationActive = false; return false; }
                         hideStatus();
-                        // Re-trigger solve after page loads
-                        if (!shouldStop) {
-                            setTimeout(() => solve(), 2000);
-                        }
+                        if (!shouldStop) setTimeout(() => solve(), 2000);
                         solveInvocationActive = false;
                         return true;
                     }
@@ -7205,33 +7322,21 @@ SOLVING APPROACH:
                 return false;
             }
 
-            // Wait for captcha to be solved first
+            // Wait for captcha to be solved
             if (hasCaptcha()) {
                 updateStatus('Waiting for captcha...', 'info');
                 console.log('[AutoSolver] Captcha detected, waiting for it to be solved...');
-                // Wait up to 60 seconds for captcha to be solved
                 let waitTime = 0;
                 const maxWait = 60000;
                 while (hasCaptcha() && waitTime < maxWait && !shouldStop) {
                     await sleep(1000);
-                    if (shouldStop) {
-                        updateStatus('Stopped', 'warning');
-                        setTimeout(hideStatus, 2000);
-                        solveInvocationActive = false;
-                        return false;
-                    }
                     waitTime += 1000;
                     if (waitTime % 5000 === 0) {
                         updateStatus(`Captcha... (${waitTime / 1000}s)`, 'info');
                         console.log(`[AutoSolver] Still waiting for captcha... (${waitTime / 1000}s)`);
                     }
                 }
-                if (shouldStop) {
-                    updateStatus('Stopped', 'warning');
-                    setTimeout(hideStatus, 2000);
-                    solveInvocationActive = false;
-                    return false;
-                }
+                if (shouldStop) { updateStatus('Stopped', 'warning'); setTimeout(hideStatus, 2000); solveInvocationActive = false; return false; }
                 if (hasCaptcha()) {
                     console.log('[AutoSolver] Captcha still present after 60s, aborting');
                     updateStatus('Captcha timeout!', 'error');
@@ -7242,12 +7347,7 @@ SOLVING APPROACH:
                 console.log('[AutoSolver] Captcha solved! Continuing...');
                 updateStatus('Captcha solved!', 'success');
                 await sleep(1000);
-                if (shouldStop) {
-                    updateStatus('Stopped', 'warning');
-                    setTimeout(hideStatus, 2000);
-                    solveInvocationActive = false;
-                    return false;
-                }
+                if (shouldStop) { updateStatus('Stopped', 'warning'); setTimeout(hideStatus, 2000); solveInvocationActive = false; return false; }
             }
 
             // Wait for code editor
@@ -7255,12 +7355,7 @@ SOLVING APPROACH:
                 updateStatus('Waiting for editor...', 'info');
                 console.log('[AutoSolver] Code editor not found, waiting...');
                 await sleep(3000);
-                if (shouldStop) {
-                    updateStatus('Stopped', 'warning');
-                    setTimeout(hideStatus, 2000);
-                    solveInvocationActive = false;
-                    return false;
-                }
+                if (shouldStop) { updateStatus('Stopped', 'warning'); setTimeout(hideStatus, 2000); solveInvocationActive = false; return false; }
                 if (!hasCodeEditor()) {
                     console.log('[AutoSolver] Code editor still not found, aborting');
                     updateStatus('Editor not found', 'error');
@@ -7271,7 +7366,7 @@ SOLVING APPROACH:
             }
 
             isRunning = true;
-            shouldStop = false;  // Reset stop flag
+            shouldStop = false;
             currentRetries = 0;
 
             try {
@@ -7292,115 +7387,120 @@ SOLVING APPROACH:
             }
         }
 
-        // Main solve loop with retries
+        // ── Main solve loop with exponential backoff ──────────────────────────────
         async function runSolveLoop() {
             const maxRetries = SETTINGS.autoSolverMaxRetries || CONFIG.maxRetries;
 
             while (currentRetries < maxRetries && !shouldStop) {
-                if (shouldStop) throw new Error('STOPPED_BY_USER');
+                checkStop();
 
-                updateStatus(`Attempt ${currentRetries + 1}/${maxRetries}`, 'info');
+                const attemptLabel = `Attempt ${currentRetries + 1}/${maxRetries}`;
+                updateStatus(attemptLabel, 'info');
 
                 // Step 1: Click AI Solution button
+                clearInjectedRetryContext();
+                // On retry, the error DOM still reflects the PREVIOUS run at this point.
+                // getErrorInfo() (called inside the AI button handler) will read it correctly
+                // because clearPreviousResults() and waitForResult() haven't run yet on this
+                // retry — the stale error IS the context we want to inject.
+
                 await sleep(500);
-                if (shouldStop) throw new Error('STOPPED_BY_USER');
+                checkStop();
 
                 const aiBtn = await waitFor('#ai-solution-btn', 5000);
-                if (shouldStop) throw new Error('STOPPED_BY_USER');
-
-                if (!aiBtn) {
-                    updateStatus('AI button not found', 'error');
-                    return false;
-                }
+                checkStop();
+                if (!aiBtn) { updateStatus('AI button not found', 'error'); return false; }
 
                 forceClick(aiBtn, 'AI Solution');
 
-                // Step 2: Wait for generation to complete
+                // Step 2: Wait for AI generation to complete
                 const generated = await waitForAIGeneration();
-                if (shouldStop) throw new Error('STOPPED_BY_USER');
+                checkStop();
                 if (!generated) {
                     currentRetries++;
-                    updateStatus('Generation failed, retrying...', 'warning');
-                    await sleep(CONFIG.delayBetweenRetries);
-                    if (shouldStop) throw new Error('STOPPED_BY_USER');
+                    const backoff = getBackoffDelay(currentRetries - 1);
+                    await sleepWithCountdown(backoff, `Gen failed — retry ${currentRetries}/${maxRetries}`);
+                    checkStop();
                     continue;
                 }
 
                 updateStatus('Solution generated!', 'success');
                 await sleep(SETTINGS.autoSolverDelay || CONFIG.delayAfterGen);
-                if (shouldStop) throw new Error('STOPPED_BY_USER');
+                checkStop();
 
                 // Step 3: Click Run button
                 clearPreviousResults();
                 const runBtn = await waitFor('#j_id_bg, button[id*="_bg"]', 5000);
-                if (shouldStop) throw new Error('STOPPED_BY_USER');
+                checkStop();
 
                 if (!runBtn) {
-                    // Try alternative selectors
-                    const buttons = document.querySelectorAll('button');
+                    // Fallback: find Run button by text
                     let foundRun = false;
-                    for (const btn of buttons) {
+                    for (const btn of document.querySelectorAll('button')) {
                         if (btn.textContent.includes('Run')) {
                             forceClick(btn, 'Run');
                             foundRun = true;
                             break;
                         }
                     }
-                    if (!foundRun) {
-                        updateStatus('Run button not found', 'error');
-                        return false;
-                    }
+                    if (!foundRun) { updateStatus('Run button not found', 'error'); return false; }
                 } else {
                     forceClick(runBtn, 'Run');
                 }
 
                 // Step 4: Wait for result
-                const result = await waitForResult();
-                if (shouldStop) throw new Error('STOPPED_BY_USER');
-
-                // Handle stopped result
-                if (result === 'stopped') {
-                    throw new Error('STOPPED_BY_USER');
+                const resultController = createResultWaitController();
+                const result = await waitForResult(resultController.signal);
+                if (activeResultWaitController === resultController) {
+                    activeResultWaitController = null;
                 }
+                if (shouldStop || result === 'stopped') throw new Error('STOPPED_BY_USER');
 
+                // Step 5: Handle result with error-type-aware status
                 if (result === 'success') {
-                    updateStatus('PASSED', 'success');
-
-                    // Click Proceed to Next using robust method
+                    clearInjectedRetryContext();
+                    updateStatus('PASSED ✓', 'success');
                     await sleep(CONFIG.delayBeforeNext);
-                    if (shouldStop) throw new Error('STOPPED_BY_USER');
+                    checkStop();
 
                     const movedNext = await clickProceedNext();
-                    if (movedNext) {
-                        return true;
-                    }
+                    if (movedNext) return true;
 
-                    // If next button wasn't clickable yet, retry instead of falsely reporting success
+                    // Proceed Next failed — retry
                     currentRetries++;
-                    updateStatus(`Passed but Next click failed - Retry ${currentRetries}/${maxRetries}`, 'warning');
-                    if (currentRetries < maxRetries) {
-                        await sleep(CONFIG.delayBetweenRetries);
-                        if (shouldStop) throw new Error('STOPPED_BY_USER');
-                        continue;
-                    }
-                    return false;
+                    const backoff = getBackoffDelay(currentRetries - 1);
+                    await sleepWithCountdown(backoff, `Next click failed — retry ${currentRetries}/${maxRetries}`);
+                    checkStop();
+                    continue;
 
                 } else if (result === 'failed' || result === 'compilation_error' || result === 'runtime_error') {
                     currentRetries++;
-                    updateStatus(`${result} - Retry ${currentRetries}/${maxRetries}`, 'warning');
+                    // Wait for error DOM to settle so we get the full message for status display
+                    await waitForErrorDOMToSettle(2000);
+                    const injectedContext = injectRetryContext(result);
+                    const errorSummary = extractErrorSummary() || injectedContext.contextText.split('\n')[0] || '';
+                    const errorLabel = injectedContext.label;
 
-                    if (currentRetries < maxRetries) {
-                        await sleep(CONFIG.delayBetweenRetries);
-                        if (shouldStop) throw new Error('STOPPED_BY_USER');
-                        // The AI should now detect the error and try to fix it
-                        continue;
-                    }
+                    const backoff = getBackoffDelay(currentRetries - 1);
+                    const statusMsg = errorSummary
+                        ? `Retry ${currentRetries}/${maxRetries} — ${errorLabel}: ${errorSummary}`
+                        : `Retry ${currentRetries}/${maxRetries} — ${errorLabel}`;
+
+                    console.log(`[AutoSolver] ${statusMsg}`);
+                    updateStatus(statusMsg, 'warning');
+                    // sleepWithCountdown shows countdown in status popup
+                    await sleepWithCountdown(backoff, statusMsg);
+                    checkStop();
+                    // Loop continues — getErrorInfo() on next iteration reads the error from DOM
+                    continue;
+
                 } else {
-                    // Timeout or unknown
+                    // timeout or unknown
                     currentRetries++;
-                    updateStatus('Result timeout, retrying...', 'warning');
-                    await sleep(CONFIG.delayBetweenRetries);
-                    if (shouldStop) throw new Error('STOPPED_BY_USER');
+                    clearInjectedRetryContext();
+                    const backoff = getBackoffDelay(currentRetries - 1);
+                    await sleepWithCountdown(backoff, `Retry ${currentRetries}/${maxRetries} — timeout`);
+                    checkStop();
                     continue;
                 }
             }
@@ -7409,70 +7509,70 @@ SOLVING APPROACH:
             return false;
         }
 
-        // Stop auto solver
+        // ── Stop / Resume ─────────────────────────────────────────────────────────
         function stop() {
+            saveStopState(false);
+            clearInjectedRetryContext();
             shouldStop = true;
             isRunning = false;
-            saveStopState(true);  // Persist stop state
+            saveStopState(true);
             console.log('[AutoSolver] Stop requested (persistent)');
             updateStatus('Stopping...', 'warning');
-            setTimeout(() => {
-                hideStatus();
-                console.log('[AutoSolver] Stopped');
-            }, 1000);
+            setTimeout(() => { hideStatus(); console.log('[AutoSolver] Stopped'); }, 1000);
         }
 
-        // Resume auto solver (clear persistent stop)
+        function resume() {
+            shouldStop = false;
+            abortResultWait();
+            clearInjectedRetryContext();
+            shouldStop = true;
+            isRunning = false;
+            saveStopState(true);
+            console.log('[AutoSolver] Stop requested (persistent)');
+            updateStatus('Stopping...', 'warning');
+            setTimeout(() => { hideStatus(); console.log('[AutoSolver] Stopped'); }, 1000);
+        }
+
         function resume() {
             shouldStop = false;
             saveStopState(false);
             console.log('[AutoSolver] Resumed');
         }
 
-        // Track failed attempts to prevent infinite loops
+        // ── Consecutive failure tracking ──────────────────────────────────────────
         let consecutiveFailures = 0;
         const MAX_CONSECUTIVE_FAILURES = 3;
         let lastSolveAttempt = 0;
-        const MIN_SOLVE_INTERVAL = 5000; // Minimum 5 seconds between solve attempts
+        const MIN_SOLVE_INTERVAL = 5000;
 
-        // Check if all problems are completed
+        // ── Completion check ──────────────────────────────────────────────────────
+        // Guard: do not fire within 500ms of DOMContentLoaded to avoid false-positives
         function isAllCompleted() {
-            // Look for completion messages
+            if (Date.now() - domReadyTime < 500) return false;
             const pageText = document.body?.innerText || '';
             if (pageText.includes('Congratulations') ||
                 pageText.includes('All problems completed') ||
                 pageText.includes('completed all')) {
                 return true;
             }
-            // Check if there's no Solve button and no code editor
             const hasSolveBtn = isOnProblemListPage();
             const hasEditor = hasCodeEditor();
             const hasCaptchaPage = hasCaptcha();
-
-            // If we're on the URL but none of these exist, probably completed
-            if (!hasSolveBtn && !hasEditor && !hasCaptchaPage) {
-                return true;
-            }
-            return false;
+            return !hasSolveBtn && !hasEditor && !hasCaptchaPage;
         }
 
-        // Initialize
+        // ── Init ──────────────────────────────────────────────────────────────────
         function init() {
-            if (!SETTINGS.enableAutoSolver || !SETTINGS.enableAISolver) {
-                return;
-            }
+            if (!SETTINGS.enableAutoSolver || !SETTINGS.enableAISolver) return;
 
             console.log('[AutoSolver] Starting...');
 
-            // Check for persistent stop state
             if (loadStopState()) {
                 console.log('[AutoSolver] Persistent stop detected - not auto-starting');
-                // Show a resume button/notification
                 createStatusIndicator();
                 showStatus();
                 updateStatus('Stopped (click to resume)', 'warning');
 
-                // Modify stop button to be a resume button
                 if (stopButton) {
                     stopButton.textContent = 'RESUME';
                     stopButton.style.background = '#4CAF50';
@@ -7480,23 +7580,14 @@ SOLVING APPROACH:
                         resume();
                         stopButton.textContent = 'STOP';
                         stopButton.style.background = '#f44336';
-                        stopButton.onclick = () => {
-                            stop();
-                            updateStatus('Stopped by user', 'warning');
-                            setTimeout(hideStatus, 2000);
-                        };
+                        stopButton.onclick = () => { stop(); updateStatus('Stopped by user', 'warning'); setTimeout(hideStatus, 2000); };
                         updateStatus('Resumed!', 'success');
-                        setTimeout(() => {
-                            if (isOnProblemPageURL()) {
-                                solve();
-                            }
-                        }, 1000);
+                        setTimeout(() => { if (isOnProblemPageURL()) solve(); }, 1000);
                     };
                 }
                 return;
             }
 
-            // Start immediately if on problem page
             if (isOnProblemPageURL()) {
                 console.log('[AutoSolver] On problem page, starting auto-solve...');
                 solve();
@@ -7508,50 +7599,36 @@ SOLVING APPROACH:
                 if (solveTimeout) clearTimeout(solveTimeout);
                 solveTimeout = setTimeout(() => {
                     const now = Date.now();
-
-                    // Prevent rapid retries
-                    if (now - lastSolveAttempt < MIN_SOLVE_INTERVAL) {
-                        return;
-                    }
-
-                    // Check if all completed
+                    if (now - lastSolveAttempt < MIN_SOLVE_INTERVAL) return;
                     if (isAllCompleted()) {
                         console.log('[AutoSolver] All problems completed!');
                         updateStatus('All completed', 'success');
                         setTimeout(hideStatus, 5000);
                         return;
                     }
-
-                    // Check consecutive failures
                     if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
                         console.log('[AutoSolver] Too many failures, stopping');
                         updateStatus('Stopped - too many failures', 'error');
                         setTimeout(hideStatus, 5000);
                         return;
                     }
-
                     if (isOnProblemPageURL() && !isRunning) {
                         lastSolveAttempt = now;
-                        solve().then((ok) => {
+                        solve().then(ok => {
                             if (ok) consecutiveFailures = 0;
                             else consecutiveFailures++;
-                        }).catch(() => {
-                            consecutiveFailures++;
-                        });
+                        }).catch(() => { consecutiveFailures++; });
                     }
-                }, 1000); // Wait 1 second before triggering
+                }, 1000);
             };
 
-            // Throttled observer - only check every 2 seconds max
+            // Throttled MutationObserver — max once per 2s
             let lastObserverTrigger = 0;
             const navObserver = new MutationObserver(() => {
                 const now = Date.now();
-                if (now - lastObserverTrigger < 2000) return; // Throttle
+                if (now - lastObserverTrigger < 2000) return;
                 lastObserverTrigger = now;
-
-                if (isOnProblemPageURL() && !isRunning) {
-                    debouncedSolve();
-                }
+                if (isOnProblemPageURL() && !isRunning) debouncedSolve();
             });
 
             if (document.body) {
@@ -7582,4 +7659,1415 @@ SOLVING APPROACH:
         window.AutoSolver = AutoSolver;
     });
 
-})();
+    // ============================================
+    // 12. FIND INCOMPLETE MODULE
+    // Scans viewsolved.xhtml for started-but-incomplete parts,
+    // navigates to the lowest-ratio one, optionally triggers AutoSolver.
+    // ============================================
+    const FindIncompleteModule = (function () {
+        'use strict';
+
+        // ── State Machine ────────────────────────────────────────────────────
+        const STATE = Object.freeze({
+            IDLE: 'IDLE',
+            DISCOVERING: 'DISCOVERING',
+            MATCHING: 'MATCHING',
+            TRAVERSING: 'TRAVERSING',
+            VALIDATING: 'VALIDATING',
+            SOLVING: 'SOLVING',
+            COMPLETE: 'COMPLETE',
+            ERROR: 'ERROR'
+        });
+        let currentState = STATE.IDLE;
+        let activeController = null;
+
+        // ── Page Types ───────────────────────────────────────────────────────
+        const PAGE_TYPE = Object.freeze({
+            TRACKS_HOME: 'TRACKS_HOME',
+            LEVEL_LANDING: 'LEVEL_LANDING',
+            TRACK_SECTION_LIST: 'TRACK_SECTION_LIST',
+            PART_CHALLENGE_LIST: 'PART_CHALLENGE_LIST',
+            QUESTION_SET_LIST: 'QUESTION_SET_LIST',
+            FINAL_SOLVE_TARGET: 'FINAL_SOLVE_TARGET',
+            UNKNOWN: 'UNKNOWN'
+        });
+
+        // ── JSF ViewState & Sequential Request Queue ─────────────────────────
+        let currentViewState = null;
+        let queuePromise = Promise.resolve();
+
+        function enqueueRequest(fn) {
+            queuePromise = queuePromise.then(async () => {
+                try {
+                    return await fn();
+                } catch (err) {
+                    console.error("Queue request failed:", err);
+                    throw err;
+                }
+            });
+            return queuePromise;
+        }
+
+        async function queuedFetch(url, options = {}, retries = 2, delay = 1000) {
+            const signal = activeController ? activeController.signal : null;
+            if (signal && signal.aborted) throw new Error('Cancelled');
+
+            return enqueueRequest(async () => {
+                if (signal && signal.aborted) throw new Error('Cancelled');
+
+                // Rate-limiting delay: 300-500ms
+                await new Promise(r => setTimeout(r, 300 + Math.random() * 200));
+
+                if (signal && signal.aborted) throw new Error('Cancelled');
+
+                // Pre-populate ViewState if POST and currentViewState is null
+                if (options.method === 'POST' && !currentViewState) {
+                    console.log("No active ViewState found for POST. Fetching clean URL first...");
+                    try {
+                        const cleanUrl = url.split('#')[0].split('?')[0];
+                        const initHtml = await fetchWithTimeout(cleanUrl, { method: 'GET', credentials: 'include' });
+                        const initialState = extractViewState(initHtml);
+                        if (initialState) currentViewState = initialState;
+                    } catch (err) {
+                        console.error("Failed to initialize ViewState:", err);
+                    }
+                }
+
+                // Inject ViewState in POST body if not already present
+                if (options.method === 'POST') {
+                    let bodyParams = new URLSearchParams(options.body || '');
+                    if (!bodyParams.has('jakarta.faces.ViewState')) {
+                        bodyParams.set('jakarta.faces.ViewState', currentViewState || '');
+                    }
+                    options.body = bodyParams.toString();
+                    options.headers = options.headers || {};
+                    options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+                }
+
+                let html;
+                let attempt = 0;
+                while (true) {
+                    if (signal && signal.aborted) throw new Error('Cancelled');
+                    try {
+                        html = await fetchWithTimeout(url, options);
+                        break;
+                    } catch (err) {
+                        attempt++;
+                        if (attempt > retries) {
+                            throw new Error(`Failed to fetch ${url} after ${retries} retries: ${err.message}`);
+                        }
+                        const backoff = delay * Math.pow(2, attempt - 1);
+                        console.warn(`Fetch error on ${url}. Retrying in ${backoff}ms:`, err);
+                        await new Promise(r => setTimeout(r, backoff));
+                    }
+                }
+
+                // Parse and update ViewState
+                const nextState = extractViewState(html);
+                if (nextState) currentViewState = nextState;
+
+                // Check for ViewExpiredException
+                if (html.includes('ViewExpiredException') || html.includes('viewExpired') || html.includes('javax.faces.application.ViewExpiredException')) {
+                    console.warn(`ViewExpiredException detected on ${url}. Fetching fresh ViewState from the same page...`);
+                    const cleanUrl = url.split('#')[0];
+                    const freshHtml = await fetchWithTimeout(cleanUrl, { method: 'GET', credentials: 'include' });
+                    const freshState = extractViewState(freshHtml);
+                    if (freshState) {
+                        currentViewState = freshState;
+                        console.log("Got fresh ViewState. Retrying original request...");
+                        
+                        if (options.method === 'POST') {
+                            let bodyParams = new URLSearchParams(options.body || '');
+                            bodyParams.set('jakarta.faces.ViewState', freshState);
+                            options.body = bodyParams.toString();
+                        }
+                        
+                        return queuedFetch(url, options, retries, delay);
+                    }
+                    throw new Error("JSF session expired and could not be restored.");
+                }
+
+                return html;
+            });
+        }
+
+        async function fetchWithTimeout(url, options = {}, timeout = 10000) {
+            const signal = activeController ? activeController.signal : null;
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeout);
+            
+            const combinedSignal = signal ? createCombinedSignal([signal, controller.signal]) : controller.signal;
+
+            try {
+                const res = await fetch(url, {
+                    ...options,
+                    signal: combinedSignal,
+                    credentials: 'include'
+                });
+                clearTimeout(id);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return await res.text();
+            } catch (err) {
+                clearTimeout(id);
+                throw err;
+            }
+        }
+
+        function createCombinedSignal(signals) {
+            const ctrl = new AbortController();
+            const abort = () => ctrl.abort();
+            signals.forEach(s => { if (s) s.addEventListener('abort', abort); });
+            return ctrl.signal;
+        }
+
+        function extractViewState(html) {
+            try {
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const el = doc.querySelector('input[name="jakarta.faces.ViewState"]');
+                if (el) return el.value;
+            } catch (_) {}
+            const m = html.match(/jakarta\.faces\.ViewState.*?value="([^"]+)"/) || html.match(/value="([^"]+)".*?jakarta\.faces\.ViewState/);
+            return m ? m[1] : null;
+        }
+
+        function getPostUrl(url) {
+            return url.split('#')[0].split('?')[0];
+        }
+
+        // ── Storage Wrapper ──────────────────────────────────────────────────
+        const storage = {
+            getValue(key, def) {
+                try {
+                    if (typeof GM_getValue !== 'undefined') {
+                        return GM_getValue(key, def);
+                    }
+                } catch (_) {}
+                const val = localStorage.getItem(key);
+                return val !== null ? val : def;
+            },
+            setValue(key, value) {
+                try {
+                    if (typeof GM_setValue !== 'undefined') {
+                        GM_setValue(key, value);
+                        return;
+                    }
+                } catch (_) {}
+                localStorage.setItem(key, value);
+            },
+            deleteValue(key) {
+                try {
+                    if (typeof GM_deleteValue !== 'undefined') {
+                        GM_deleteValue(key);
+                        return;
+                    }
+                } catch (_) {}
+                localStorage.removeItem(key);
+            }
+        };
+
+        // ── Daily-skip patterns ──────────────────────────────────────────────
+        const SKIP_PATTERNS = [/daily\s*challenge/i, /daily\s*test/i, /daily\s*quiz/i];
+
+        function shouldSkipTitle(title) {
+            return SKIP_PATTERNS.some(p => p.test(title));
+        }
+
+        // ── Page Type Detector ───────────────────────────────────────────────
+        function detectPageType(doc, url) {
+            const path = url.split('?')[0];
+            
+            if (doc.getElementById('codeForm') || doc.querySelector('[id$="codeForm"]') || doc.getElementById('codeForm:submitBtn') || doc.querySelector('.ui-editor')) {
+                return PAGE_TYPE.FINAL_SOLVE_TARGET;
+            }
+
+            if (path.includes('trackshome.xhtml')) {
+                return PAGE_TYPE.TRACKS_HOME;
+            }
+
+            const breadcrumb = doc.querySelector('.ui-breadcrumb');
+            if (breadcrumb) {
+                const items = Array.from(breadcrumb.querySelectorAll('.ui-breadcrumb-items li'));
+                if (items.length > 0) {
+                    const lastText = items[items.length - 1].textContent.trim().toUpperCase();
+                    if (lastText.includes('LEVEL') && doc.getElementById('pkglistform')) {
+                        return PAGE_TYPE.LEVEL_LANDING;
+                    }
+                }
+            }
+
+            if (doc.getElementById('solcnt:tbl')) {
+                return PAGE_TYPE.UNKNOWN;
+            }
+
+            const form = doc.getElementById('pkglistform') || doc.querySelector('form[id="pkglistform"]');
+            if (form) {
+                const dataGrid = form.querySelector('.ui-datagrid');
+                const dataTable = form.querySelector('.ui-datatable');
+                
+                const solves = form.querySelectorAll('input[type="submit"][value*="Solve"], button[type="submit"]:not([name*="pkglistform"])');
+                if (solves.length > 0) {
+                    return PAGE_TYPE.QUESTION_SET_LIST;
+                }
+
+                if (dataTable || dataGrid) {
+                    const text = form.textContent;
+                    if (text.includes('PART') || text.includes('Part') || text.includes('Set') || text.includes('SET')) {
+                        return PAGE_TYPE.PART_CHALLENGE_LIST;
+                    }
+                    return PAGE_TYPE.TRACK_SECTION_LIST;
+                }
+            }
+
+            if (url.includes('codeprogramgroup.xhtml')) {
+                if (url.includes('lev=')) return PAGE_TYPE.LEVEL_LANDING;
+                return PAGE_TYPE.TRACK_SECTION_LIST;
+            }
+            if (url.includes('webinarcodetrack.xhtml') || url.includes('labcodeprograms.xhtml')) {
+                return PAGE_TYPE.LEVEL_LANDING;
+            }
+
+            return PAGE_TYPE.UNKNOWN;
+        }
+
+        // ── Semantic Title Normalization and Matching ────────────────────────
+        function normalizeTitle(str) {
+            if (!str) return '';
+            return str.toUpperCase()
+                .replace(/[^A-Z0-9\s-]/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        function calculateConfidence(btnText, candidateName, btnCount, expectedCount, backtrackCount = 0) {
+            const btnNorm = normalizeTitle(btnText);
+            const candNorm = normalizeTitle(candidateName);
+
+            let score = 0;
+
+            if (btnNorm === candNorm) {
+                score += 1.0;
+            } else if (candNorm.startsWith(btnNorm) || btnNorm.startsWith(candNorm)) {
+                score += 0.8;
+            } else if (candNorm.includes(btnNorm) || btnNorm.includes(candNorm)) {
+                score += 0.6;
+            }
+
+            if (btnCount && expectedCount && parseInt(btnCount, 10) === parseInt(expectedCount, 10)) {
+                score += 0.3;
+            }
+
+            score -= (backtrackCount * 0.5);
+
+            return score;
+        }
+
+        // ── Action Extraction ────────────────────────────────────────────────
+        function extractPageActions(doc, pageType, url) {
+            const actions = [];
+            const form = doc.getElementById('pkglistform') || doc.querySelector('form');
+            if (!form) return actions;
+
+            const buttons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
+            buttons.forEach(btn => {
+                const btnName = btn.getAttribute('name');
+                if (!btnName) return;
+
+                const text = btn.value || btn.textContent || '';
+                const textLower = text.trim().toLowerCase();
+                
+                if (textLower.includes('back') || textLower.includes('cancel') || textLower.includes('home')) {
+                    return;
+                }
+
+                const card = btn.closest('.ui-card');
+                let title = '';
+                let challengeCount = 0;
+
+                if (card) {
+                    const header = card.querySelector('.ui.header, .header, h1, h2, h3, h4');
+                    title = header ? getCleanTitle(header) : '';
+                    const cardText = card.textContent;
+                    const countMatch = cardText.match(/Challenges\s*Count:\s*(\d+)/i) || cardText.match(/Count:\s*(\d+)/i);
+                    if (countMatch) challengeCount = parseInt(countMatch[1], 10);
+                } else {
+                    const row = btn.closest('tr');
+                    if (row) {
+                        const cells = row.querySelectorAll('td');
+                        title = cells[0] ? cells[0].textContent.trim() : '';
+                    } else {
+                        title = text;
+                    }
+                }
+
+                if (!title) title = text;
+
+                actions.push({
+                    type: 'POST',
+                    name: title,
+                    btnName: btnName,
+                    challengeCount: challengeCount
+                });
+            });
+
+            const links = form.querySelectorAll('a');
+            links.forEach(a => {
+                const href = a.getAttribute('href');
+                if (!href || href === '#' || href.startsWith('javascript:')) return;
+
+                const text = getCleanTitle(a) || a.textContent.trim();
+                if (shouldSkipTitle(text)) return;
+
+                actions.push({
+                    type: 'GET',
+                    name: text,
+                    url: new URL(href, window.location.origin).toString()
+                });
+            });
+
+            return actions;
+        }
+
+        function findUnsolvedChallengeOnPage(doc) {
+            const rows = doc.querySelectorAll('.ui-datatable-data tr, tbody tr');
+            for (const row of rows) {
+                const text = row.textContent.toLowerCase();
+                const hasGreenCheck = row.querySelector('.ion-md-checkmark-circle, .green, .pi-check-circle, .completed') || 
+                                     text.includes('completed') || 
+                                     text.includes('solved') || 
+                                     row.querySelector('img[src*="check"]');
+                                     
+                if (hasGreenCheck) continue;
+
+                const btn = row.querySelector('button[type="submit"], input[type="submit"], a.ui.button');
+                if (btn) {
+                    const btnName = btn.getAttribute('name') || '';
+                    const btnText = btn.value || btn.textContent || '';
+                    if (btnText.toLowerCase().includes('solve') || btnText.toLowerCase().includes('view') || btnText.toLowerCase().includes('check')) {
+                        return {
+                            btnName: btnName,
+                            text: btnText.trim(),
+                            title: row.cells[0] ? row.cells[0].textContent.trim() : 'Challenge'
+                        };
+                    }
+                }
+            }
+            return null;
+        }
+
+        // ── ViewSolved Parsing ───────────────────────────────────────────────
+        function parseViewSolved(rawText) {
+            let tableHtml = rawText;
+            if (rawText.trimStart().startsWith('<?xml') || rawText.includes('<partial-response>')) {
+                tableHtml = extractFromPartialResponse(rawText);
+            }
+            const doc = new DOMParser().parseFromString(tableHtml, 'text/html');
+            const tbody = doc.getElementById('solcnt:tbl_data') ||
+                          doc.querySelector('[id$="tbl_data"]') ||
+                          doc.querySelector('.ui-datatable-data');
+            if (!tbody) return [];
+
+            let expectedRowCount = 0;
+            const scripts = doc.querySelectorAll('script');
+            for (const s of scripts) {
+                const m = s.textContent.match(/rowCount\s*:\s*(\d+)/i);
+                if (m) {
+                    expectedRowCount = parseInt(m[1], 10);
+                    break;
+                }
+            }
+
+            const results = [];
+            const trs = tbody.querySelectorAll('tr[data-ri]');
+            trs.forEach(tr => {
+                const cells = tr.querySelectorAll('td');
+                if (cells.length < 3) return;
+                const title = cells[0].textContent.trim();
+                if (shouldSkipTitle(title)) return;
+
+                const countEl = cells[1].querySelector('.ui.label, span');
+                const solvedCount = countEl ? parseInt(countEl.textContent.trim(), 10) : 0;
+                if (isNaN(solvedCount)) return;
+
+                results.push({ partName: title, solvedCount });
+            });
+
+            if (expectedRowCount > 0 && results.length !== expectedRowCount) {
+                console.warn(`FindIncomplete: Solved counts row count mismatch! Parsed ${results.length} rows, but expected ${expectedRowCount}`);
+            }
+
+            return results;
+        }
+
+        function extractFromPartialResponse(xml) {
+            const xmlDoc = new DOMParser().parseFromString(xml, 'text/xml');
+            const updates = xmlDoc.querySelectorAll('update');
+            for (const upd of updates) {
+                const id = upd.getAttribute('id') || '';
+                if (id.includes('tbl') || id.includes('solcnt')) {
+                    return upd.textContent;
+                }
+            }
+            return Array.from(xmlDoc.querySelectorAll('update'))
+                .map(u => u.textContent).join('');
+        }
+
+        function inferTotal(title, solvedCount) {
+            const t = title.toUpperCase();
+            if (t.includes('STARTER')) {
+                const partMatch = t.match(/PART(\d+)/);
+                const partNum = partMatch ? parseInt(partMatch[1], 10) : 0;
+                if (partNum === 1) return 55;
+                if (partNum === 2) return 25;
+                return 20;
+            }
+            if (t.includes('INTRO')) {
+                const partMatch = t.match(/PART(\d+)/);
+                const partNum = partMatch ? parseInt(partMatch[1], 10) : 0;
+                if (partNum === 1 || partNum === 5) return 30;
+                if (partNum === 4) return 15;
+                return 20;
+            }
+            if (t.includes('VIDEO')) return 15;
+            if (t.includes('ADDON') || t.includes('ADD-ON') || t.includes('ADD ON')) return 10;
+            if (t.includes('LAB')) return solvedCount > 0 ? Math.max(solvedCount, 10) : 10;
+            if (t.includes('FUNCTIONS PRACTICE') || t.includes('FUNCTION PRACTICE')) return 20;
+            return 10;
+        }
+
+        function getCleanTitle(titleEl) {
+            let text = "";
+            titleEl.childNodes.forEach(node => {
+                if (node.nodeType === 3) {
+                    text += node.textContent;
+                } else if (node.nodeType === 1 && (!node.classList || !node.classList.contains('label'))) {
+                    text += node.textContent;
+                }
+            });
+            return text.trim().replace(/\s+/g, ' ');
+        }
+
+        // ── Solved Counts Fetcher ────────────────────────────────────────────
+        async function getSolvedCounts() {
+            await queuedFetch('/faces/candidate/viewsolved.xhtml', { method: 'GET' });
+            const body = new URLSearchParams({
+                'solcnt': 'solcnt',
+                'solcnt:j_id_3k_input': 'tr',
+                'solcnt:j_id_3o': '',
+                'solcnt_SUBMIT': '1'
+            });
+            const html = await queuedFetch('/faces/candidate/viewsolved.xhtml', {
+                method: 'POST',
+                body: body.toString()
+            });
+            return parseViewSolved(html);
+        }
+
+        // ── Top-Level Page Mapping ───────────────────────────────────────────
+        async function buildTopLevelMap() {
+            const levelUrls = {
+                'Level 1': '/faces/candidate/lev1.xhtml',
+                'Level 2': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=2',
+                'Level 3': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=3',
+                'Level 4': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=4',
+                'Level 5': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=5',
+                'Level 6': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=6',
+                'Prime': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=100',
+                'LACS': '/faces/candidate/webinarcodetrack.xhtml',
+                'LAB': '/faces/candidate/labcodeprograms.xhtml?type=LAB'
+            };
+
+            const mapping = {};
+
+            const promises = Object.entries(levelUrls).map(async ([levelName, url]) => {
+                try {
+                    const html = await queuedFetch(url, { method: 'GET' });
+                    const doc = new DOMParser().parseFromString(html, 'text/html');
+                    const form = doc.getElementById('pkglistform') || doc.querySelector('form');
+                    if (form) {
+                        const cards = form.querySelectorAll('.ui-card');
+                        cards.forEach(card => {
+                            const header = card.querySelector('.ui.header, .header, h1, h2, h3, h4');
+                            if (header) {
+                                const name = getCleanTitle(header);
+                                if (name && !shouldSkipTitle(name)) {
+                                    mapping[name.toUpperCase()] = { levelName, levelUrl: url };
+                                }
+                            }
+                        });
+                        
+                        const rows = form.querySelectorAll('.ui-datatable-data tr[data-ri]');
+                        rows.forEach(tr => {
+                            const cells = tr.querySelectorAll('td');
+                            if (cells.length >= 2) {
+                                const title = cells[0].textContent.trim();
+                                if (title && !shouldSkipTitle(title)) {
+                                    mapping[title.toUpperCase()] = { levelName, levelUrl: url };
+                                }
+                            }
+                        });
+                    }
+                } catch (err) {
+                    console.error(`Failed to map level ${levelName}:`, err);
+                }
+            });
+
+            await Promise.all(promises);
+            return mapping;
+        }
+
+        function findLevelUrlForCandidate(candidateName, topLevelMap) {
+            const candNorm = normalizeTitle(candidateName);
+            let bestMatch = null;
+            let highestScore = 0;
+
+            for (const [trackName, info] of Object.entries(topLevelMap)) {
+                const trackNorm = normalizeTitle(trackName);
+                let score = 0;
+                if (candNorm === trackNorm) {
+                    score = 1.0;
+                } else if (candNorm.startsWith(trackNorm) || trackNorm.startsWith(candNorm)) {
+                    score = 0.8;
+                } else if (candNorm.includes(trackNorm) || trackNorm.includes(candNorm)) {
+                    score = 0.6;
+                }
+
+                const candWord = candNorm.split(' ')[0];
+                const trackWord = trackNorm.split(' ')[0];
+                if (candWord === trackWord && candWord.length > 1) {
+                    score += 0.2;
+                }
+
+                if (score > highestScore) {
+                    highestScore = score;
+                    bestMatch = info;
+                }
+            }
+
+            if (!bestMatch || highestScore < 0.3) {
+                if (candNorm.startsWith('JAVA')) return { levelName: 'Level 3', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=3' };
+                if (candNorm.startsWith('CPP') || candNorm.startsWith('C++')) return { levelName: 'Level 4', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=4' };
+                if (candNorm.startsWith('PYTHON')) return { levelName: 'Level 5', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=5' };
+                if (candNorm.startsWith('DATA STRUCTURES')) return { levelName: 'Level 6', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=6' };
+                if (candNorm.startsWith('PRIME')) return { levelName: 'Prime', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=100' };
+                if (candNorm.startsWith('LACS')) return { levelName: 'LACS', levelUrl: '/faces/candidate/webinarcodetrack.xhtml' };
+                if (candNorm.startsWith('LAB')) return { levelName: 'LAB', levelUrl: '/faces/candidate/labcodeprograms.xhtml?type=LAB' };
+                
+                return { levelName: 'Level 2', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=2' };
+            }
+
+            return bestMatch;
+        }
+
+        // ── Adaptive Hybrid Navigation Resolver ─────────────────────────────
+        async function navigateWithState(item) {
+            if (currentState !== STATE.IDLE && currentState !== STATE.ERROR) {
+                console.warn("FindIncomplete: Resolver already running.");
+                return;
+            }
+
+            activeController = new AbortController();
+            setState(STATE.TRAVERSING);
+            showProgressPanel(item.partName);
+
+            let stack = [];
+            let visitedPaths = new Set(); 
+
+            const initialUrl = item.levelUrl;
+            stack.push({
+                url: initialUrl,
+                viewState: null,
+                actions: [],
+                attemptedIndex: -1, 
+                pathNames: [item.levelName],
+                buttonPath: []
+            });
+
+            try {
+                while (stack.length > 0) {
+                    if (activeController.signal.aborted) throw new Error('Cancelled');
+
+                    const state = stack[stack.length - 1];
+                    updateProgressUI(state.pathNames.join(' ➔ '), state.url.split('/').pop().split('?')[0], stack.length, 0);
+
+                    if (state.attemptedIndex === -1) {
+                        let html;
+                        try {
+                            if (state.buttonPath.length === 0) {
+                                html = await queuedFetch(state.url, { method: 'GET' });
+                            } else {
+                                const lastBtn = state.buttonPath[state.buttonPath.length - 1];
+                                const body = new URLSearchParams({
+                                    'pkglistform': 'pkglistform',
+                                    'pkglistform_SUBMIT': '1',
+                                    'jakarta.faces.ViewState': state.viewState || '',
+                                    [lastBtn]: 'Show'
+                                });
+                                const postUrl = getPostUrl(state.url);
+                                html = await queuedFetch(postUrl, { method: 'POST', body: body.toString() });
+                            }
+                        } catch (err) {
+                            console.warn(`Failed to load page: ${state.url}`, err);
+                            stack.pop();
+                            continue;
+                        }
+
+                        const doc = new DOMParser().parseFromString(html, 'text/html');
+                        state.viewState = extractViewState(html);
+
+                        const detectedType = detectPageType(doc, state.url);
+                        updateProgressUI(state.pathNames.join(' ➔ '), detectedType, stack.length, 1.0);
+
+                        if (detectedType === PAGE_TYPE.FINAL_SOLVE_TARGET) {
+                            if (validateFinalTarget(doc, detectedType, item.partName)) {
+                                await completeNavigation(state, null, item);
+                                return;
+                            }
+                        }
+
+                        if (detectedType === PAGE_TYPE.QUESTION_SET_LIST) {
+                            const unsolved = findUnsolvedChallengeOnPage(doc);
+                            if (unsolved) {
+                                await completeNavigation(state, unsolved, item);
+                                return;
+                            }
+                            console.warn(`No unsolved challenges on ${state.pathNames.join(' -> ')}`);
+                            stack.pop();
+                            continue;
+                        }
+
+                        const rawActions = extractPageActions(doc, detectedType, state.url);
+                        const scoredActions = rawActions.map(act => {
+                            const matchScore = calculateConfidence(act.name, item.partName, act.challengeCount, item.totalCount, 0);
+                            return { ...act, score: matchScore };
+                        });
+
+                        scoredActions.sort((a, b) => b.score - a.score);
+
+                        state.actions = scoredActions.filter(act => act.score > 0);
+                        state.attemptedIndex = 0;
+
+                        if (state.actions.length === 0) {
+                            console.warn(`No valid candidate actions on ${state.pathNames.join(' -> ')}`);
+                            stack.pop();
+                            continue;
+                        }
+                    }
+
+                    if (state.attemptedIndex >= state.actions.length) {
+                        console.log(`Attempted all actions on ${state.pathNames.join(' -> ')}. Backtracking...`);
+                        stack.pop();
+                        continue;
+                    }
+
+                    const action = state.actions[state.attemptedIndex];
+                    state.attemptedIndex++;
+
+                    const nextPathNames = [...state.pathNames, action.name];
+                    const nextButtonPath = action.type === 'POST' ? [...state.buttonPath, action.btnName] : state.buttonPath;
+
+                    const pathHash = nextButtonPath.join('->');
+                    if (visitedPaths.has(pathHash)) {
+                        console.warn(`Loop detected for path: ${pathHash}. Skipping.`);
+                        continue;
+                    }
+                    visitedPaths.add(pathHash);
+
+                    stack.push({
+                        url: action.type === 'GET' ? action.url : state.url,
+                        viewState: state.viewState,
+                        actions: [],
+                        attemptedIndex: -1, 
+                        pathNames: nextPathNames,
+                        buttonPath: nextButtonPath
+                    });
+                }
+
+                throw new Error("No unresolved targets found after searching all branches.");
+
+            } catch (err) {
+                if (err.message === 'Cancelled') {
+                    setState(STATE.IDLE);
+                    hideProgressPanel();
+                    return;
+                }
+                setState(STATE.ERROR);
+                showStatus(`Resolution failed: ${err.message}`, '❌');
+                renderResolutionError(err.message);
+                setTimeout(hideStatus, 6000);
+            } finally {
+                activeController = null;
+            }
+        }
+
+        function validateFinalTarget(doc, pageType, candidateName) {
+            if (pageType === PAGE_TYPE.FINAL_SOLVE_TARGET) {
+                return true;
+            }
+            if (pageType === PAGE_TYPE.QUESTION_SET_LIST) {
+                const unsolved = findUnsolvedChallengeOnPage(doc);
+                if (unsolved) return true;
+            }
+            return false;
+        }
+
+        async function completeNavigation(finalState, unsolvedAction, item) {
+            setState(STATE.VALIDATING);
+            showStatus("Validating final target...", "✓");
+            updateProgressUI("Target verified!", "VALIDATING", 100, 1.0);
+
+            const form = document.createElement('form');
+            form.method = 'POST';
+            
+            const postUrl = getPostUrl(finalState.url);
+            form.action = postUrl;
+            form.style.display = 'none';
+
+            const params = {
+                'pkglistform': 'pkglistform',
+                'pkglistform_SUBMIT': '1',
+                'jakarta.faces.ViewState': finalState.viewState
+            };
+
+            if (unsolvedAction && unsolvedAction.btnName) {
+                params[unsolvedAction.btnName] = unsolvedAction.text || 'Solve';
+            } else {
+                const path = finalState.buttonPath || [];
+                const lastBtn = path[path.length - 1];
+                params[lastBtn] = 'Show';
+            }
+
+            for (const [key, value] of Object.entries(params)) {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = key;
+                input.value = value;
+                form.appendChild(input);
+            }
+
+            if (SETTINGS.enableAutoSolver && SETTINGS.enableAISolver) {
+                localStorage.setItem('autosolver_trigger_once', 'true');
+            }
+
+            document.body.appendChild(form);
+            
+            setState(STATE.COMPLETE);
+            showStatus("Redirecting browser...", "🚀");
+            await sleep(500);
+            
+            form.submit();
+        }
+
+        // ── Core Crawler Orchestration ───────────────────────────────────────
+        async function runDiscoveryFlow() {
+            if (currentState !== STATE.IDLE && currentState !== STATE.ERROR) return;
+            
+            setState(STATE.DISCOVERING);
+            renderScanningState();
+            
+            try {
+                showStatus('Building top-level map...', '🔍');
+                updateLoadingMessage('Building level mappings...');
+                const topLevelMap = await buildTopLevelMap();
+                
+                showStatus('Scraping viewsolved.xhtml...', '📊');
+                updateLoadingMessage('Discovering incomplete tracks...');
+                const solvedCounts = await getSolvedCounts();
+
+                const candidates = solvedCounts.map(item => {
+                    const levelInfo = findLevelUrlForCandidate(item.partName, topLevelMap);
+                    const total = inferTotal(item.partName, item.solvedCount);
+                    return {
+                        partName: item.partName,
+                        solvedCount: item.solvedCount,
+                        totalCount: total,
+                        ratio: item.solvedCount / total,
+                        levelName: levelInfo.levelName,
+                        levelUrl: levelInfo.levelUrl,
+                        status: 'ok'
+                    };
+                });
+
+                const cacheData = {
+                    candidates: candidates,
+                    topLevelMap: topLevelMap,
+                    timestamp: Date.now()
+                };
+                storage.setValue('find_incomplete_candidates_v3', JSON.stringify(cacheData));
+
+                setState(STATE.IDLE);
+                showStatus('Discovery complete! 🎉', '✅');
+                setTimeout(hideStatus, 3000);
+                renderList(candidates);
+            } catch (err) {
+                setState(STATE.ERROR);
+                showStatus(`Discovery failed: ${err.message}`, '❌');
+                renderErrorState(err.message);
+                setTimeout(hideStatus, 6000);
+            }
+        }
+
+        async function updateCandidatesSilently() {
+            try {
+                const rawCache = storage.getValue('find_incomplete_candidates_v3');
+                if (!rawCache) return;
+                const cache = JSON.parse(rawCache);
+                const topLevelMap = cache.topLevelMap || await buildTopLevelMap();
+
+                const solvedCounts = await getSolvedCounts();
+                const candidates = solvedCounts.map(item => {
+                    const levelInfo = findLevelUrlForCandidate(item.partName, topLevelMap);
+                    const total = inferTotal(item.partName, item.solvedCount);
+                    return {
+                        partName: item.partName,
+                        solvedCount: item.solvedCount,
+                        totalCount: total,
+                        ratio: item.solvedCount / total,
+                        levelName: levelInfo.levelName,
+                        levelUrl: levelInfo.levelUrl,
+                        status: 'ok'
+                    };
+                });
+
+                const cacheData = {
+                    candidates: candidates,
+                    topLevelMap: topLevelMap,
+                    timestamp: Date.now()
+                };
+                storage.setValue('find_incomplete_candidates_v3', JSON.stringify(cacheData));
+
+                if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
+                    renderList(candidates);
+                }
+            } catch (e) {
+                console.warn("Silent update failed:", e);
+            }
+        }
+
+        async function loadAndRenderTracks(forceRefresh = false) {
+            if (currentState !== STATE.IDLE && currentState !== STATE.ERROR) return;
+
+            let cache = null;
+            if (!forceRefresh) {
+                try {
+                    const rawCache = storage.getValue('find_incomplete_candidates_v3');
+                    if (rawCache) {
+                        cache = JSON.parse(rawCache);
+                    }
+                } catch (e) {
+                    console.error("Failed to parse cache:", e);
+                }
+            }
+
+            if (cache && cache.candidates && (Date.now() - cache.timestamp < 12 * 60 * 60 * 1000)) {
+                renderList(cache.candidates);
+                updateCandidatesSilently();
+                return;
+            }
+
+            await runDiscoveryFlow();
+        }
+
+        // ── UI Components ────────────────────────────────────────────────────
+        let dropdown = null;
+        let statusPanel = null;
+        let statusText = null;
+
+        let progressPanel = null;
+        let progressCandidate = null;
+        let progressPageName = null;
+        let progressPageType = null;
+        let progressConfidence = null;
+        let progressStackDepth = null;
+        let progressCancelBtn = null;
+
+        function ensureProgressPanel() {
+            if (progressPanel) return;
+            progressPanel = document.createElement('div');
+            progressPanel.id = 'find-inc-progress-panel';
+            progressPanel.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                z-index: 100001;
+                background: rgba(15, 15, 15, 0.98);
+                backdrop-filter: blur(25px);
+                -webkit-backdrop-filter: blur(25px);
+                border: 1px solid rgba(99, 179, 237, 0.4);
+                border-radius: 16px;
+                box-shadow: 0 30px 70px rgba(0,0,0,0.85);
+                padding: 24px;
+                min-width: 320px;
+                max-width: 420px;
+                color: #f4f4f5;
+                font-family: 'VT323', monospace;
+                display: none;
+                flex-direction: column;
+                gap: 12px;
+            `;
+
+            const title = document.createElement('div');
+            title.style.cssText = 'font-size: 20px; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px; color: #63b3ed; display: flex; align-items: center; gap: 8px;';
+            title.innerHTML = '<span>🔍 Finding Incomplete Target</span>';
+            progressPanel.appendChild(title);
+
+            const content = document.createElement('div');
+            content.style.cssText = 'display: flex; flex-direction: column; gap: 8px; font-size: 14px;';
+            content.innerHTML = `
+                <div>Candidate: <span id="fip-candidate" style="color: #ecc94b; font-weight: 600;">-</span></div>
+                <div>Searching: <span id="fip-page-name" style="color: #e2e8f0; font-weight: 600; word-break: break-all;">-</span></div>
+                <div>Page Type: <span id="fip-page-type" style="color: #a0aec0;">-</span></div>
+                <div>Confidence: <span id="fip-confidence" style="color: #48bb78; font-weight: 600;">-</span></div>
+                <div>Search Depth: <span id="fip-depth" style="color: #9f7aea;">-</span></div>
+            `;
+            progressPanel.appendChild(content);
+
+            const progressBg = document.createElement('div');
+            progressBg.style.cssText = 'width: 100%; height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; margin-top: 4px;';
+            const progressBar = document.createElement('div');
+            progressBar.id = 'fip-progress-bar';
+            progressBar.style.cssText = 'height: 100%; width: 0%; background: linear-gradient(90deg, #ecc94b, #48bb78); border-radius: 4px; transition: width 0.3s;';
+            progressBg.appendChild(progressBar);
+            progressPanel.appendChild(progressBg);
+
+            const btnContainer = document.createElement('div');
+            btnContainer.style.cssText = 'display: flex; justify-content: flex-end; margin-top: 8px;';
+            
+            progressCancelBtn = document.createElement('button');
+            progressCancelBtn.style.cssText = 'background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 16px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; transition: all 0.2s;';
+            progressCancelBtn.textContent = 'CANCEL';
+            progressCancelBtn.addEventListener('click', () => {
+                if (activeController) activeController.abort();
+                setState(STATE.IDLE);
+                hideProgressPanel();
+                showStatus('Search cancelled', 'ℹ️');
+                setTimeout(hideStatus, 3000);
+            });
+            btnContainer.appendChild(progressCancelBtn);
+            progressPanel.appendChild(btnContainer);
+
+            document.body.appendChild(progressPanel);
+
+            progressCandidate = progressPanel.querySelector('#fip-candidate');
+            progressPageName = progressPanel.querySelector('#fip-page-name');
+            progressPageType = progressPanel.querySelector('#fip-page-type');
+            progressConfidence = progressPanel.querySelector('#fip-confidence');
+            progressStackDepth = progressPanel.querySelector('#fip-depth');
+        }
+
+        function showProgressPanel(candidateName) {
+            ensureProgressPanel();
+            progressCandidate.textContent = candidateName;
+            progressPageName.textContent = 'Initializing...';
+            progressPageType.textContent = '-';
+            progressConfidence.textContent = '-';
+            progressStackDepth.textContent = '0';
+            progressCancelBtn.textContent = 'CANCEL';
+            const bar = progressPanel.querySelector('#fip-progress-bar');
+            bar.style.width = '5%';
+            bar.style.background = 'linear-gradient(90deg, #ecc94b, #48bb78)';
+            progressPanel.style.display = 'flex';
+        }
+
+        function updateProgressUI(pageName, pageType, depth, confidence) {
+            ensureProgressPanel();
+            if (pageName) progressPageName.textContent = pageName;
+            if (pageType) progressPageType.textContent = pageType;
+            if (depth !== undefined) progressStackDepth.textContent = depth;
+            if (confidence !== undefined) {
+                if (typeof confidence === 'number') {
+                    progressConfidence.textContent = `${Math.round(confidence * 100)}%`;
+                } else {
+                    progressConfidence.textContent = confidence;
+                }
+            }
+            const pct = Math.min(95, 10 + depth * 15);
+            progressPanel.querySelector('#fip-progress-bar').style.width = `${pct}%`;
+        }
+
+        function hideProgressPanel() {
+            if (progressPanel) {
+                progressPanel.style.display = 'none';
+            }
+        }
+
+        function renderResolutionError(msg) {
+            ensureProgressPanel();
+            progressPageName.textContent = 'Error occurred';
+            progressPageName.style.color = '#ef4444';
+            progressPageType.textContent = 'ERROR';
+            progressConfidence.textContent = '0%';
+            progressConfidence.style.color = '#ef4444';
+            progressCancelBtn.textContent = 'CLOSE';
+            const bar = progressPanel.querySelector('#fip-progress-bar');
+            bar.style.width = '100%';
+            bar.style.background = '#ef4444';
+        }
+
+        function ensureDropdown(parentEl) {
+            if (dropdown) return;
+            dropdown = document.createElement('div');
+            dropdown.id = 'find-incomplete-dropdown';
+            dropdown.style.cssText =
+                'position:absolute;z-index:100000;display:none;' +
+                'background:rgba(15,15,15,0.96);backdrop-filter:blur(20px);' +
+                '-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);' +
+                'border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,0.65);' +
+                'padding:14px;min-width:320px;max-width:380px;' +
+                "color:#f4f4f5;font-family:'VT323',monospace;font-size:15px;" +
+                'transition:opacity 0.25s, transform 0.25s;opacity:0;transform:translateY(-8px);';
+            document.body.appendChild(dropdown);
+        }
+
+        function showDropdown(btnEl) {
+            ensureDropdown(btnEl);
+            injectStyles();
+            
+            const rect = btnEl.getBoundingClientRect();
+            dropdown.style.top = `${rect.bottom + window.scrollY + 8}px`;
+            dropdown.style.left = `${Math.max(10, rect.left + window.scrollX - 180)}px`;
+            
+            dropdown.style.display = 'block';
+            dropdown.offsetHeight; 
+            dropdown.style.opacity = '1';
+            dropdown.style.transform = 'translateY(0)';
+        }
+
+        function hideDropdown() {
+            if (!dropdown) return;
+            dropdown.style.opacity = '0';
+            dropdown.style.transform = 'translateY(-8px)';
+            
+            if (currentState === STATE.DISCOVERING || currentState === STATE.TRAVERSING) {
+                if (activeController) activeController.abort();
+                setState(STATE.IDLE);
+                hideStatus();
+                hideProgressPanel();
+            }
+            
+            setTimeout(() => {
+                if (dropdown && dropdown.style.opacity === '0') {
+                    dropdown.style.display = 'none';
+                }
+            }, 250);
+        }
+
+        function renderList(candidates) {
+            if (!dropdown) return;
+            dropdown.innerHTML = '';
+
+            const incompleteList = candidates.filter(item => item.status === 'ok' && item.ratio < 1.0);
+            const failedList = candidates.filter(item => item.status === 'unknown');
+
+            incompleteList.sort((a, b) => a.ratio - b.ratio);
+
+            let totalSolved = 0;
+            let totalQuestions = 0;
+            candidates.forEach(p => {
+                if (p.status === 'ok') {
+                    totalSolved += p.solvedCount || 0;
+                    totalQuestions += p.totalCount || 0;
+                }
+            });
+            const remainingQuestions = totalQuestions - totalSolved;
+
+            const header = document.createElement('div');
+            header.style.cssText = 'font-weight: 700; font-size: 15px; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center;';
+            header.innerHTML = '<span>Incomplete Tracks</span>' + 
+                               `<span style="font-size: 10px; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 2px 6px; border-radius: 4px; white-space: nowrap;">` +
+                               `${incompleteList.length} Tracks | ${remainingQuestions} Qs Left</span>`;
+            dropdown.appendChild(header);
+
+            const listContainer = document.createElement('div');
+            listContainer.style.cssText = 'max-height: 280px; overflow-y: auto;';
+
+            if (incompleteList.length === 0 && failedList.length === 0) {
+                const msg = document.createElement('div');
+                msg.style.cssText = 'text-align: center; padding: 20px; color: #a1a1aa; font-style: italic;';
+                msg.innerHTML = 'All tracks completed! 🏆';
+                dropdown.appendChild(msg);
+            } else {
+                if (incompleteList.length > 0) {
+                    incompleteList.forEach(item => {
+                        const pct = Math.round(item.ratio * 100);
+                        const itemEl = document.createElement('div');
+                        itemEl.className = 'find-inc-item';
+                        itemEl.innerHTML = `
+                            <div class="find-inc-title">${item.partName}</div>
+                            <div class="find-inc-meta">
+                                <span>${item.levelName}</span>
+                                <span>${item.solvedCount} / ${item.totalCount} solved (${pct}%)</span>
+                            </div>
+                            <div class="find-inc-progress-bg">
+                                <div class="find-inc-progress-bar" style="width: ${pct}%"></div>
+                            </div>
+                        `;
+                        itemEl.addEventListener('click', () => {
+                            navigateWithState(item);
+                        });
+                        listContainer.appendChild(itemEl);
+                    });
+                }
+
+                if (failedList.length > 0) {
+                    const failHeader = document.createElement('div');
+                    failHeader.style.cssText = 'font-weight: 700; font-size: 13px; color: #f87171; margin: 14px 0 8px 0; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; display: flex; justify-content: space-between; align-items: center;';
+                    failHeader.innerHTML = '<span>⚠️ Couldn\'t Verify (Crawl Failed)</span>';
+                    listContainer.appendChild(failHeader);
+
+                    failedList.forEach(item => {
+                        const itemEl = document.createElement('div');
+                        itemEl.className = 'find-inc-item find-inc-failed';
+                        itemEl.style.cssText = 'border-color: rgba(239, 68, 68, 0.15) !important; background: rgba(239, 68, 68, 0.02);';
+                        itemEl.innerHTML = `
+                            <div class="find-inc-title" style="color: #d1d5db;">${item.partName}</div>
+                            <div class="find-inc-meta" style="color: #ef4444; font-size: 10px;">
+                                <span>${item.levelName}</span>
+                                <span>Crawl failed: ${item.error || 'Unknown Error'}</span>
+                            </div>
+                        `;
+                        itemEl.addEventListener('click', () => {
+                            navigateWithState(item);
+                        });
+                        listContainer.appendChild(itemEl);
+                    });
+                }
+                
+                dropdown.appendChild(listContainer);
+            }
+
+            const refreshBtn = document.createElement('div');
+            refreshBtn.id = 'find-inc-refresh-btn';
+            refreshBtn.style.cssText = 'text-align: center; padding: 10px 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); color: #63b3ed; cursor: pointer; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;';
+            refreshBtn.innerHTML = '🔄 Force Re-Crawl & Refresh';
+            refreshBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                loadAndRenderTracks(true);
+            });
+            dropdown.appendChild(refreshBtn);
+        }
+
+        function renderScanningState() {
+            if (!dropdown) return;
+            dropdown.innerHTML = `
+                <div style="text-align: center; padding: 30px 15px;">
+                    <div style="font-size: 24px; margin-bottom: 12px; animation: spin 2s linear infinite; display: inline-block;">🔄</div>
+                    <div id="find-inc-loading-msg" style="font-size: 13px; color: #a1a1aa;">Starting scan...</div>
+                    <div style="margin-top: 12px; font-size: 10px; color: #71717a;">Please wait, rate-limiting is active to ensure safety.</div>
+                </div>
+            `;
+        }
+
+        function updateLoadingMessage(msg) {
+            const el = document.getElementById('find-inc-loading-msg');
+            if (el) el.textContent = msg;
+        }
+
+        function renderErrorState(errStr) {
+            if (!dropdown) return;
+            dropdown.innerHTML = `
+                <div style="text-align: center; padding: 20px 15px;">
+                    <div style="font-size: 24px; margin-bottom: 12px;">❌</div>
+                    <div style="font-size: 13px; color: #f87171; font-weight: 600;">Scan Failed</div>
+                    <div style="font-size: 12px; color: #a1a1aa; margin-top: 4px; overflow-wrap: break-word;">${errStr}</div>
+                    <div id="find-inc-retry-btn" style="margin-top: 15px; display: inline-block; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600;">
+                        Try Again
+                    </div>
+                </div>
+            `;
+            const btn = document.getElementById('find-inc-retry-btn');
+            if (btn) {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    loadAndRenderTracks(true);
+                });
+            }
+        }
+
+        function ensureStatusPanel() {
+            if (statusPanel) return;
+            statusPanel = document.createElement('div');
+            statusPanel.id = 'find-incomplete-status';
+            statusPanel.style.cssText =
+                'position:fixed;bottom:92px;left:24px;z-index:99997;' +
+                'min-width:260px;max-width:380px;padding:12px 16px;' +
+                'background:rgba(15,15,15,0.95);backdrop-filter:blur(18px);' +
+                '-webkit-backdrop-filter:blur(18px);border-radius:14px;' +
+                'border:1px solid rgba(99,179,237,0.3);' +
+                'box-shadow:0 16px 48px rgba(0,0,0,0.65);' +
+                "font-family:'VT323',monospace;font-size:16px;color:#e4e4e7;" +
+                'display:none;transition:opacity 0.2s;';
+            statusText = document.createElement('span');
+            statusPanel.appendChild(statusText);
+            document.body.appendChild(statusPanel);
+        }
+
+        function showStatus(msg, icon) {
+            ensureStatusPanel();
+            statusText.textContent = (icon ? icon + '  ' : '') + msg;
+            statusPanel.style.display = 'block';
+            statusPanel.style.opacity = '1';
+        }
+
+        function hideStatus() {
+            if (!statusPanel) return;
+            statusPanel.style.opacity = '0';
+            setTimeout(() => {
+                if (statusPanel) statusPanel.style.display = 'none';
+            }, 200);
+        }
+
+        function injectStyles() {
+            if (document.getElementById('find-incomplete-styles')) return;
+            const style = document.createElement('style');
+            style.id = 'find-incomplete-styles';
+            style.textContent = `
+                @keyframes spin {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(360deg); }
+                }
+                .find-inc-item {
+                    display: flex;
+                    flex-direction: column;
+                    padding: 8px 12px;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    margin-bottom: 6px;
+                    transition: background 0.2s, transform 0.1s;
+                    border: 1px solid transparent;
+                }
+                .find-inc-item:hover {
+                    background: rgba(99, 179, 237, 0.1) !important;
+                    border-color: rgba(99, 179, 237, 0.2) !important;
+                    transform: translateY(-1px);
+                }
+                .find-inc-item:active {
+                    transform: translateY(0);
+                }
+                .find-inc-failed:hover {
+                    background: rgba(239, 68, 68, 0.08) !important;
+                    border-color: rgba(239, 68, 68, 0.25) !important;
+                }
+                .find-inc-title {
+                    font-weight: 600;
+                    font-size: 13px;
+                    color: #e4e4e7;
+                }
+                .find-inc-meta {
+                    font-size: 11px;
+                    color: #a1a1aa;
+                    margin-top: 2px;
+                    display: flex;
+                    justify-content: space-between;
+                }
+                .find-inc-progress-bg {
+                    width: 100%;
+                    height: 6px;
+                    background: rgba(255, 255, 255, 0.08);
+                    border-radius: 3px;
+                    margin-top: 6px;
+                    overflow: hidden;
+                }
+                .find-inc-progress-bar {
+                    height: 100%;
+                    background: linear-gradient(90deg, #3182ce, #63b3ed);
+                    border-radius: 3px;
+                    transition: width 0.3s ease;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        // ── Init & Cleanup ───────────────────────────────────────────────────
+        function injectMenuButton() {
+            if (!SETTINGS.enableFindIncomplete) return;
+            const menuList = document.querySelector(
+                '.ui-toolbar-group-right .ui-menu-list, ' +
+                '.ui-toolbar-group-right ul[role="menubar"]'
+            );
+            if (!menuList || document.getElementById('find-incomplete-btn')) return;
+
+            const li = document.createElement('li');
+            li.className = 'ui-menuitem ui-widget ui-corner-all';
+            li.setAttribute('role', 'none');
+            li.innerHTML =
+                '<a id="find-incomplete-btn" tabindex="-1" role="menuitem" ' +
+                'class="ui-menuitem-link ui-corner-all" href="#" ' +
+                'style="cursor:pointer;white-space:nowrap;">' +
+                '<span class="ui-menuitem-icon ui-icon pi pi-fw pi-search ui-menuitem-icon-left" ' +
+                'aria-hidden="true"></span>' +
+                '<span class="ui-menuitem-text">Find Incomplete</span>' +
+                '</a>';
+
+            const anchor = li.querySelector('a');
+            anchor.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
+                    hideDropdown();
+                } else {
+                    showDropdown(anchor);
+                    loadAndRenderTracks();
+                }
+            });
+
+            const lastItem = menuList.lastElementChild;
+            menuList.insertBefore(li, lastItem);
+        }
+
+        function init() {
+            if (!SETTINGS.enableFindIncomplete) return;
+            injectMenuButton();
+
+            const obs = new MutationObserver(() => {
+                if (!document.getElementById('find-incomplete-btn')) {
+                    injectMenuButton();
+                }
+            });
+            if (document.body) {
+                obs.observe(document.body, { childList: true, subtree: false });
+            }
+
+            document.addEventListener('click', (e) => {
+                if (dropdown && dropdown.style.display === 'block' && 
+                    !dropdown.contains(e.target) && 
+                    e.target.id !== 'find-incomplete-btn' && 
+                    !e.target.closest('#find-incomplete-btn')) {
+                    hideDropdown();
+                }
+            });
+        }
+
+        return {
+            init,
+            loadAndRenderTracks,
+            getState: () => currentState,
+            cancel: () => {
+                if (activeController) activeController.abort();
+                setState(STATE.IDLE);
+                hideStatus();
+                hideDropdown();
+                hideProgressPanel();
+            }
+        };
+    })();
+
+
+
+
+
+    // Initialize FindIncompleteModule when DOM is ready AND script is enabled
+    onScriptEnabled(() => {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                setTimeout(FindIncompleteModule.init, 800);
+            });
+        } else {
+            setTimeout(FindIncompleteModule.init, 600);
+        }
+
+        // Expose for manual control from browser console
+        window.FindIncompleteModule = FindIncompleteModule;
+    });
+
+})();                 
