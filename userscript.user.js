@@ -7658,27 +7658,13 @@ SOLVING APPROACH:
         // ── State Machine ────────────────────────────────────────────────────
         const STATE = Object.freeze({
             IDLE: 'IDLE',
-            DISCOVERING: 'DISCOVERING',
-            MATCHING: 'MATCHING',
-            TRAVERSING: 'TRAVERSING',
-            VALIDATING: 'VALIDATING',
-            SOLVING: 'SOLVING',
+            SCANNING: 'SCANNING',
+            NAVIGATING: 'NAVIGATING',
             COMPLETE: 'COMPLETE',
             ERROR: 'ERROR'
         });
         let currentState = STATE.IDLE;
         let activeController = null;
-
-        // ── Page Types ───────────────────────────────────────────────────────
-        const PAGE_TYPE = Object.freeze({
-            TRACKS_HOME: 'TRACKS_HOME',
-            LEVEL_LANDING: 'LEVEL_LANDING',
-            TRACK_SECTION_LIST: 'TRACK_SECTION_LIST',
-            PART_CHALLENGE_LIST: 'PART_CHALLENGE_LIST',
-            QUESTION_SET_LIST: 'QUESTION_SET_LIST',
-            FINAL_SOLVE_TARGET: 'FINAL_SOLVE_TARGET',
-            UNKNOWN: 'UNKNOWN'
-        });
 
         // ── JSF ViewState & Sequential Request Queue ─────────────────────────
         let currentViewState = null;
@@ -7860,189 +7846,7 @@ SOLVING APPROACH:
             return SKIP_PATTERNS.some(p => p.test(title));
         }
 
-        // ── Page Type Detector ───────────────────────────────────────────────
-        function detectPageType(doc, url) {
-            const path = url.split('?')[0];
-            
-            if (doc.getElementById('codeForm') || doc.querySelector('[id$="codeForm"]') || doc.getElementById('codeForm:submitBtn') || doc.querySelector('.ui-editor')) {
-                return PAGE_TYPE.FINAL_SOLVE_TARGET;
-            }
-
-            if (path.includes('trackshome.xhtml')) {
-                return PAGE_TYPE.TRACKS_HOME;
-            }
-
-            const breadcrumb = doc.querySelector('.ui-breadcrumb');
-            if (breadcrumb) {
-                const items = Array.from(breadcrumb.querySelectorAll('.ui-breadcrumb-items li'));
-                if (items.length > 0) {
-                    const lastText = items[items.length - 1].textContent.trim().toUpperCase();
-                    if (lastText.includes('LEVEL') && doc.getElementById('pkglistform')) {
-                        return PAGE_TYPE.LEVEL_LANDING;
-                    }
-                }
-            }
-
-            if (doc.getElementById('solcnt:tbl')) {
-                return PAGE_TYPE.UNKNOWN;
-            }
-
-            const form = doc.getElementById('pkglistform') || doc.querySelector('form[id="pkglistform"]');
-            if (form) {
-                const dataGrid = form.querySelector('.ui-datagrid');
-                const dataTable = form.querySelector('.ui-datatable');
-                
-                const solves = form.querySelectorAll('input[type="submit"][value*="Solve"], button[type="submit"]:not([name*="pkglistform"])');
-                if (solves.length > 0) {
-                    return PAGE_TYPE.QUESTION_SET_LIST;
-                }
-
-                if (dataTable || dataGrid) {
-                    const text = form.textContent;
-                    if (text.includes('PART') || text.includes('Part') || text.includes('Set') || text.includes('SET')) {
-                        return PAGE_TYPE.PART_CHALLENGE_LIST;
-                    }
-                    return PAGE_TYPE.TRACK_SECTION_LIST;
-                }
-            }
-
-            if (url.includes('codeprogramgroup.xhtml')) {
-                if (url.includes('lev=')) return PAGE_TYPE.LEVEL_LANDING;
-                return PAGE_TYPE.TRACK_SECTION_LIST;
-            }
-            if (url.includes('webinarcodetrack.xhtml') || url.includes('labcodeprograms.xhtml')) {
-                return PAGE_TYPE.LEVEL_LANDING;
-            }
-
-            return PAGE_TYPE.UNKNOWN;
-        }
-
-        // ── Semantic Title Normalization and Matching ────────────────────────
-        function normalizeTitle(str) {
-            if (!str) return '';
-            return str.toUpperCase()
-                .replace(/[^A-Z0-9\s-]/g, '')
-                .replace(/\s+/g, ' ')
-                .trim();
-        }
-
-        function calculateConfidence(btnText, candidateName, btnCount, expectedCount, backtrackCount = 0) {
-            const btnNorm = normalizeTitle(btnText);
-            const candNorm = normalizeTitle(candidateName);
-
-            let score = 0;
-
-            if (btnNorm === candNorm) {
-                score += 1.0;
-            } else if (candNorm.startsWith(btnNorm) || btnNorm.startsWith(candNorm)) {
-                score += 0.8;
-            } else if (candNorm.includes(btnNorm) || btnNorm.includes(candNorm)) {
-                score += 0.6;
-            }
-
-            if (btnCount && expectedCount && parseInt(btnCount, 10) === parseInt(expectedCount, 10)) {
-                score += 0.3;
-            }
-
-            score -= (backtrackCount * 0.5);
-
-            return score;
-        }
-
-        // ── Action Extraction ────────────────────────────────────────────────
-        function extractPageActions(doc, pageType, url) {
-            const actions = [];
-            const form = doc.getElementById('pkglistform') || doc.querySelector('form');
-            if (!form) return actions;
-
-            const buttons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
-            buttons.forEach(btn => {
-                const btnName = btn.getAttribute('name');
-                if (!btnName) return;
-
-                const text = btn.value || btn.textContent || '';
-                const textLower = text.trim().toLowerCase();
-                
-                if (textLower.includes('back') || textLower.includes('cancel') || textLower.includes('home')) {
-                    return;
-                }
-
-                const card = btn.closest('.ui-card');
-                let title = '';
-                let challengeCount = 0;
-
-                if (card) {
-                    const header = card.querySelector('.ui.header, .header, h1, h2, h3, h4');
-                    title = header ? getCleanTitle(header) : '';
-                    const cardText = card.textContent;
-                    const countMatch = cardText.match(/Challenges\s*Count:\s*(\d+)/i) || cardText.match(/Count:\s*(\d+)/i);
-                    if (countMatch) challengeCount = parseInt(countMatch[1], 10);
-                } else {
-                    const row = btn.closest('tr');
-                    if (row) {
-                        const cells = row.querySelectorAll('td');
-                        title = cells[0] ? cells[0].textContent.trim() : '';
-                    } else {
-                        title = text;
-                    }
-                }
-
-                if (!title) title = text;
-
-                actions.push({
-                    type: 'POST',
-                    name: title,
-                    btnName: btnName,
-                    challengeCount: challengeCount
-                });
-            });
-
-            const links = form.querySelectorAll('a');
-            links.forEach(a => {
-                const href = a.getAttribute('href');
-                if (!href || href === '#' || href.startsWith('javascript:')) return;
-
-                const text = getCleanTitle(a) || a.textContent.trim();
-                if (shouldSkipTitle(text)) return;
-
-                actions.push({
-                    type: 'GET',
-                    name: text,
-                    url: new URL(href, window.location.origin).toString()
-                });
-            });
-
-            return actions;
-        }
-
-        function findUnsolvedChallengeOnPage(doc) {
-            const rows = doc.querySelectorAll('.ui-datatable-data tr, tbody tr');
-            for (const row of rows) {
-                const text = row.textContent.toLowerCase();
-                const hasGreenCheck = row.querySelector('.ion-md-checkmark-circle, .green, .pi-check-circle, .completed') || 
-                                     text.includes('completed') || 
-                                     text.includes('solved') || 
-                                     row.querySelector('img[src*="check"]');
-                                     
-                if (hasGreenCheck) continue;
-
-                const btn = row.querySelector('button[type="submit"], input[type="submit"], a.ui.button');
-                if (btn) {
-                    const btnName = btn.getAttribute('name') || '';
-                    const btnText = btn.value || btn.textContent || '';
-                    if (btnText.toLowerCase().includes('solve') || btnText.toLowerCase().includes('view') || btnText.toLowerCase().includes('check')) {
-                        return {
-                            btnName: btnName,
-                            text: btnText.trim(),
-                            title: row.cells[0] ? row.cells[0].textContent.trim() : 'Challenge'
-                        };
-                    }
-                }
-            }
-            return null;
-        }
-
-        // ── ViewSolved Parsing ───────────────────────────────────────────────
+        // ── Parsing Helpers ──────────────────────────────────────────────────
         function parseViewSolved(rawText) {
             let tableHtml = rawText;
             if (rawText.trimStart().startsWith('<?xml') || rawText.includes('<partial-response>')) {
@@ -8054,6 +7858,7 @@ SOLVING APPROACH:
                           doc.querySelector('.ui-datatable-data');
             if (!tbody) return [];
 
+            // Row count verification
             let expectedRowCount = 0;
             const scripts = doc.querySelectorAll('script');
             for (const s of scripts) {
@@ -8099,6 +7904,26 @@ SOLVING APPROACH:
                 .map(u => u.textContent).join('');
         }
 
+        function countItemsOnPage(html) {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const rows = doc.querySelectorAll('.ui-datatable-data tr[data-ri]');
+            if (rows.length > 0) return rows.length;
+
+            const gridCols = doc.querySelectorAll('.ui-datagrid-column');
+            if (gridCols.length > 0) return gridCols.length;
+
+            const cards = doc.querySelectorAll('form .ui-card, #pkglistform .ui-card, [id$="form"] .ui-card');
+            if (cards.length > 0) return cards.length;
+
+            const buttons = doc.querySelectorAll('input[type="submit"][value*="Check"], button[type="submit"]:not([name*="pkglistform"])');
+            if (buttons.length > 0) return buttons.length;
+
+            const trs = doc.querySelectorAll('tbody tr');
+            if (trs.length > 0) return trs.length;
+
+            return 0;
+        }
+
         function inferTotal(title, solvedCount) {
             const t = title.toUpperCase();
             if (t.includes('STARTER')) {
@@ -8134,6 +7959,158 @@ SOLVING APPROACH:
             return text.trim().replace(/\s+/g, ' ');
         }
 
+        function parseTotalCountFromPartPage(html) {
+            const matches = [...html.matchAll(/Challenges\s*Count:\s*(\d+)/gi)];
+            if (matches.length > 0) {
+                let sum = 0;
+                for (const match of matches) {
+                    sum += parseInt(match[1], 10);
+                }
+                return sum;
+            }
+            return 0;
+        }
+
+        // ── Recursive Deep Crawler ───────────────────────────────────────────
+        async function crawlPage(url, buttonNameToPress, parentViewState, pathNames, buttonPath, statusCallback) {
+            if (activeController && activeController.signal.aborted) throw new Error('Cancelled');
+            
+            const currentPathName = pathNames.join(' ➔ ');
+            if (currentPathName) {
+                statusCallback(`Scraping: ${currentPathName}...`);
+            }
+
+            let html;
+            try {
+                if (!buttonNameToPress) {
+                    html = await queuedFetch(url, { method: 'GET' });
+                } else {
+                    const body = new URLSearchParams({
+                        'pkglistform': 'pkglistform',
+                        'pkglistform_SUBMIT': '1',
+                        'jakarta.faces.ViewState': parentViewState || '',
+                        [buttonNameToPress]: 'Show'
+                    });
+                    const postUrl = getPostUrl(url);
+                    html = await queuedFetch(postUrl, { method: 'POST', body: body.toString() });
+                }
+            } catch (err) {
+                // Retry once with a fresh GET of the clean page URL
+                console.warn(`Fetch failed for ${url} (${buttonNameToPress}). Retrying with fresh page GET:`, err);
+                try {
+                    const cleanUrl = getPostUrl(url);
+                    const freshHtml = await queuedFetch(cleanUrl, { method: 'GET' }, 1);
+                    const freshState = extractViewState(freshHtml);
+                    if (buttonNameToPress) {
+                        const body = new URLSearchParams({
+                            'pkglistform': 'pkglistform',
+                            'pkglistform_SUBMIT': '1',
+                            'jakarta.faces.ViewState': freshState || '',
+                            [buttonNameToPress]: 'Show'
+                        });
+                        html = await queuedFetch(cleanUrl, { method: 'POST', body: body.toString() }, 1);
+                    } else {
+                        html = freshHtml;
+                    }
+                } catch (retryErr) {
+                    console.error(`Crawl retry failed for ${url} (${buttonNameToPress}):`, retryErr);
+                    // Return as status: unknown
+                    const failedName = pathNames[pathNames.length - 1] || 'Unknown Page';
+                    return [{
+                        partName: failedName,
+                        buttonPath: buttonPath,
+                        totalCount: 10,
+                        status: 'unknown',
+                        error: retryErr.message
+                    }];
+                }
+            }
+
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const form = doc.getElementById('pkglistform') || doc.querySelector('form');
+            
+            // If there's no form/pkglistform, it's a final challenges page
+            if (!form) {
+                const finalName = pathNames[pathNames.length - 1] || 'Unknown Part';
+                const count = parseTotalCountFromPartPage(html) || countItemsOnPage(html) || inferTotal(finalName, 0) || 10;
+                return [{
+                    partName: finalName,
+                    buttonPath: buttonPath,
+                    totalCount: count,
+                    status: 'ok'
+                }];
+            }
+
+            const thisPageState = extractViewState(html);
+
+            // Find all Show buttons on this page
+            const showButtons = [];
+            const cards = form.querySelectorAll('.ui-card');
+            cards.forEach(card => {
+                const header = card.querySelector('.ui.header, .header, h1, h2, h3, h4');
+                const btn = card.querySelector('button[type="submit"], input[type="submit"]');
+                if (header && btn) {
+                    const name = getCleanTitle(header);
+                    const btnName = btn.getAttribute('name');
+                    if (name && btnName && btn.textContent.trim().toLowerCase().includes('show')) {
+                        showButtons.push({ name, btnName });
+                    }
+                }
+            });
+
+            if (showButtons.length === 0) {
+                const rows = form.querySelectorAll('.ui-datatable-data tr[data-ri]');
+                rows.forEach(tr => {
+                    const cells = tr.querySelectorAll('td');
+                    if (cells.length >= 2) {
+                        const title = cells[0].textContent.trim();
+                        const btn = cells[cells.length - 1].querySelector('button[type="submit"], input[type="submit"]');
+                        if (title && btn) {
+                            const btnName = btn.getAttribute('name');
+                            if (btnName && btn.textContent.trim().toLowerCase().includes('show')) {
+                                showButtons.push({ name: title, btnName });
+                            }
+                        }
+                    }
+                });
+            }
+
+            // If there are no intermediate Show buttons, it is the final page itself!
+            if (showButtons.length === 0) {
+                const finalName = pathNames[pathNames.length - 1] || 'Unknown Part';
+                const count = parseTotalCountFromPartPage(html) || countItemsOnPage(html) || inferTotal(finalName, 0) || 10;
+                return [{
+                    partName: finalName,
+                    buttonPath: buttonPath,
+                    totalCount: count,
+                    status: 'ok'
+                }];
+            }
+
+            // Recurse into each found Show button
+            let results = [];
+            for (const btn of showButtons) {
+                if (shouldSkipTitle(btn.name)) continue;
+
+                // Loop prevention: check if this track/package name is already in the parent pathNames
+                if (pathNames.includes(btn.name)) {
+                    console.warn(`FindIncomplete: Loop detected for "${btn.name}" under path: ${currentPathName}. Skipping recursion.`);
+                    continue;
+                }
+
+                const nextResults = await crawlPage(
+                    url,
+                    btn.btnName,
+                    thisPageState,
+                    [...pathNames, btn.name],
+                    [...buttonPath, btn.btnName],
+                    statusCallback
+                );
+                results = results.concat(nextResults);
+            }
+            return results;
+        }
+
         // ── Solved Counts Fetcher ────────────────────────────────────────────
         async function getSolvedCounts() {
             await queuedFetch('/faces/candidate/viewsolved.xhtml', { method: 'GET' });
@@ -8150,394 +8127,132 @@ SOLVING APPROACH:
             return parseViewSolved(html);
         }
 
-        // ── Top-Level Page Mapping ───────────────────────────────────────────
-        async function buildTopLevelMap() {
-            const levelUrls = {
-                'Level 1': '/faces/candidate/lev1.xhtml',
-                'Level 2': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=2',
-                'Level 3': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=3',
-                'Level 4': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=4',
-                'Level 5': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=5',
-                'Level 6': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=6',
-                'Prime': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=100',
-                'LACS': '/faces/candidate/webinarcodetrack.xhtml',
-                'LAB': '/faces/candidate/labcodeprograms.xhtml?type=LAB'
-            };
+        // ── Core Crawler Orchestration ───────────────────────────────────────
+        const LEVEL_URLS = {
+            'Level 1': '/faces/candidate/lev1.xhtml',
+            'Level 2': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=2',
+            'Level 3': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=3',
+            'Level 4': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=4',
+            'Level 5': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=5',
+            'Level 6': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=6',
+            'Prime': '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=100',
+            'LACS': '/faces/candidate/webinarcodetrack.xhtml',
+            'LAB': '/faces/candidate/labcodeprograms.xhtml?type=LAB'
+        };
 
-            const mapping = {};
-
-            const promises = Object.entries(levelUrls).map(async ([levelName, url]) => {
-                try {
-                    const html = await queuedFetch(url, { method: 'GET' });
-                    const doc = new DOMParser().parseFromString(html, 'text/html');
-                    const form = doc.getElementById('pkglistform') || doc.querySelector('form');
-                    if (form) {
-                        const cards = form.querySelectorAll('.ui-card');
-                        cards.forEach(card => {
-                            const header = card.querySelector('.ui.header, .header, h1, h2, h3, h4');
-                            if (header) {
-                                const name = getCleanTitle(header);
-                                if (name && !shouldSkipTitle(name)) {
-                                    mapping[name.toUpperCase()] = { levelName, levelUrl: url };
-                                }
-                            }
-                        });
-                        
-                        const rows = form.querySelectorAll('.ui-datatable-data tr[data-ri]');
-                        rows.forEach(tr => {
-                            const cells = tr.querySelectorAll('td');
-                            if (cells.length >= 2) {
-                                const title = cells[0].textContent.trim();
-                                if (title && !shouldSkipTitle(title)) {
-                                    mapping[title.toUpperCase()] = { levelName, levelUrl: url };
-                                }
-                            }
-                        });
-                    }
-                } catch (err) {
-                    console.error(`Failed to map level ${levelName}:`, err);
-                }
-            });
-
-            await Promise.all(promises);
-            return mapping;
-        }
-
-        function findLevelUrlForCandidate(candidateName, topLevelMap) {
-            const candNorm = normalizeTitle(candidateName);
-            let bestMatch = null;
-            let highestScore = 0;
-
-            for (const [trackName, info] of Object.entries(topLevelMap)) {
-                const trackNorm = normalizeTitle(trackName);
-                let score = 0;
-                if (candNorm === trackNorm) {
-                    score = 1.0;
-                } else if (candNorm.startsWith(trackNorm) || trackNorm.startsWith(candNorm)) {
-                    score = 0.8;
-                } else if (candNorm.includes(trackNorm) || trackNorm.includes(candNorm)) {
-                    score = 0.6;
-                }
-
-                const candWord = candNorm.split(' ')[0];
-                const trackWord = trackNorm.split(' ')[0];
-                if (candWord === trackWord && candWord.length > 1) {
-                    score += 0.2;
-                }
-
-                if (score > highestScore) {
-                    highestScore = score;
-                    bestMatch = info;
-                }
-            }
-
-            if (!bestMatch || highestScore < 0.3) {
-                if (candNorm.startsWith('JAVA')) return { levelName: 'Level 3', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=3' };
-                if (candNorm.startsWith('CPP') || candNorm.startsWith('C++')) return { levelName: 'Level 4', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=4' };
-                if (candNorm.startsWith('PYTHON')) return { levelName: 'Level 5', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=5' };
-                if (candNorm.startsWith('DATA STRUCTURES')) return { levelName: 'Level 6', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=6' };
-                if (candNorm.startsWith('PRIME')) return { levelName: 'Prime', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=100' };
-                if (candNorm.startsWith('LACS')) return { levelName: 'LACS', levelUrl: '/faces/candidate/webinarcodetrack.xhtml' };
-                if (candNorm.startsWith('LAB')) return { levelName: 'LAB', levelUrl: '/faces/candidate/labcodeprograms.xhtml?type=LAB' };
-                
-                return { levelName: 'Level 2', levelUrl: '/faces/candidate/codeprogramgroup.xhtml?gt=CODETRACK&lev=2' };
-            }
-
-            return bestMatch;
-        }
-
-        // ── Adaptive Hybrid Navigation Resolver ─────────────────────────────
-        async function navigateWithState(item) {
-            if (currentState !== STATE.IDLE && currentState !== STATE.ERROR) {
-                console.warn("FindIncomplete: Resolver already running.");
-                return;
-            }
+        async function runFullCrawl() {
+            if (currentState === STATE.SCANNING) return;
+            setState(STATE.SCANNING);
+            showStatus('Starting full scan...', '🔍');
+            renderScanningState();
 
             activeController = new AbortController();
-            setState(STATE.TRAVERSING);
-            showProgressPanel(item.partName);
-
-            let stack = [];
-            let visitedPaths = new Set(); 
-
-            const initialUrl = item.levelUrl;
-            stack.push({
-                url: initialUrl,
-                viewState: null,
-                actions: [],
-                attemptedIndex: -1, 
-                pathNames: [item.levelName],
-                buttonPath: []
-            });
 
             try {
-                while (stack.length > 0) {
-                    if (activeController.signal.aborted) throw new Error('Cancelled');
+                let allParts = [];
+                const levels = Object.keys(LEVEL_URLS);
 
-                    const state = stack[stack.length - 1];
-                    updateProgressUI(state.pathNames.join(' ➔ '), state.url.split('/').pop().split('?')[0], stack.length, 0);
+                for (let i = 0; i < levels.length; i++) {
+                    const levelName = levels[i];
+                    const levelUrl = LEVEL_URLS[levelName];
+                    showStatus(`Scanning ${levelName}...`, '🔍');
+                    updateLoadingMessage(`Scanning ${levelName}...`);
 
-                    if (state.attemptedIndex === -1) {
-                        let html;
-                        try {
-                            if (state.buttonPath.length === 0) {
-                                html = await queuedFetch(state.url, { method: 'GET' });
-                            } else {
-                                const lastBtn = state.buttonPath[state.buttonPath.length - 1];
-                                const body = new URLSearchParams({
-                                    'pkglistform': 'pkglistform',
-                                    'pkglistform_SUBMIT': '1',
-                                    'jakarta.faces.ViewState': state.viewState || '',
-                                    [lastBtn]: 'Show'
-                                });
-                                const postUrl = getPostUrl(state.url);
-                                html = await queuedFetch(postUrl, { method: 'POST', body: body.toString() });
-                            }
-                        } catch (err) {
-                            console.warn(`Failed to load page: ${state.url}`, err);
-                            stack.pop();
-                            continue;
+                    const levelParts = await crawlPage(
+                        levelUrl,
+                        null,
+                        null,
+                        [levelName],
+                        [],
+                        (msg) => {
+                            showStatus(msg, '🔍');
+                            updateLoadingMessage(msg);
                         }
+                    );
 
-                        const doc = new DOMParser().parseFromString(html, 'text/html');
-                        state.viewState = extractViewState(html);
-
-                        const detectedType = detectPageType(doc, state.url);
-                        updateProgressUI(state.pathNames.join(' ➔ '), detectedType, stack.length, 1.0);
-
-                        if (detectedType === PAGE_TYPE.FINAL_SOLVE_TARGET) {
-                            if (validateFinalTarget(doc, detectedType, item.partName)) {
-                                await completeNavigation(state, null, item);
-                                return;
-                            }
-                        }
-
-                        if (detectedType === PAGE_TYPE.QUESTION_SET_LIST) {
-                            const unsolved = findUnsolvedChallengeOnPage(doc);
-                            if (unsolved) {
-                                await completeNavigation(state, unsolved, item);
-                                return;
-                            }
-                            console.warn(`No unsolved challenges on ${state.pathNames.join(' -> ')}`);
-                            stack.pop();
-                            continue;
-                        }
-
-                        const rawActions = extractPageActions(doc, detectedType, state.url);
-                        const scoredActions = rawActions.map(act => {
-                            const matchScore = calculateConfidence(act.name, item.partName, act.challengeCount, item.totalCount, 0);
-                            return { ...act, score: matchScore };
-                        });
-
-                        scoredActions.sort((a, b) => b.score - a.score);
-
-                        state.actions = scoredActions.filter(act => act.score > 0);
-                        state.attemptedIndex = 0;
-
-                        if (state.actions.length === 0) {
-                            console.warn(`No valid candidate actions on ${state.pathNames.join(' -> ')}`);
-                            stack.pop();
-                            continue;
-                        }
-                    }
-
-                    if (state.attemptedIndex >= state.actions.length) {
-                        console.log(`Attempted all actions on ${state.pathNames.join(' -> ')}. Backtracking...`);
-                        stack.pop();
-                        continue;
-                    }
-
-                    const action = state.actions[state.attemptedIndex];
-                    state.attemptedIndex++;
-
-                    const nextPathNames = [...state.pathNames, action.name];
-                    const nextButtonPath = action.type === 'POST' ? [...state.buttonPath, action.btnName] : state.buttonPath;
-
-                    const pathHash = nextButtonPath.join('->');
-                    if (visitedPaths.has(pathHash)) {
-                        console.warn(`Loop detected for path: ${pathHash}. Skipping.`);
-                        continue;
-                    }
-                    visitedPaths.add(pathHash);
-
-                    stack.push({
-                        url: action.type === 'GET' ? action.url : state.url,
-                        viewState: state.viewState,
-                        actions: [],
-                        attemptedIndex: -1, 
-                        pathNames: nextPathNames,
-                        buttonPath: nextButtonPath
+                    // Add metadata fields to each resolved part
+                    levelParts.forEach(p => {
+                        p.levelName = levelName;
+                        p.levelUrl = levelUrl;
                     });
+
+                    allParts = allParts.concat(levelParts);
                 }
 
-                throw new Error("No unresolved targets found after searching all branches.");
+                showStatus('Fetching solved counts...', '📊');
+                updateLoadingMessage('Fetching solved counts...');
+                const solvedCounts = await getSolvedCounts();
+
+                // Map solved counts to parsed parts
+                allParts.forEach(part => {
+                    if (part.status === 'ok') {
+                        const solvedInfo = solvedCounts.find(s => s.partName === part.partName);
+                        part.solvedCount = solvedInfo ? solvedInfo.solvedCount : 0;
+                        part.ratio = part.totalCount > 0 ? (part.solvedCount / part.totalCount) : 1.0;
+                    } else {
+                        part.solvedCount = 0;
+                        part.ratio = 0;
+                    }
+                });
+
+                const cacheData = {
+                    parts: allParts,
+                    timestamp: Date.now()
+                };
+                storage.setValue('find_incomplete_cache_v2', JSON.stringify(cacheData));
+
+                setState(STATE.IDLE);
+                showStatus('Scan completed! 🎉', '✅');
+                setTimeout(hideStatus, 3000);
+                renderList(allParts);
 
             } catch (err) {
                 if (err.message === 'Cancelled') {
                     setState(STATE.IDLE);
-                    hideProgressPanel();
+                    hideStatus();
                     return;
                 }
                 setState(STATE.ERROR);
-                showStatus(`Resolution failed: ${err.message}`, '❌');
-                renderResolutionError(err.message);
+                showStatus(`Scan failed: ${err.message}`, '❌');
+                renderErrorState(err.message);
                 setTimeout(hideStatus, 6000);
             } finally {
                 activeController = null;
             }
         }
 
-        function validateFinalTarget(doc, pageType, candidateName) {
-            if (pageType === PAGE_TYPE.FINAL_SOLVE_TARGET) {
-                return true;
-            }
-            if (pageType === PAGE_TYPE.QUESTION_SET_LIST) {
-                const unsolved = findUnsolvedChallengeOnPage(doc);
-                if (unsolved) return true;
-            }
-            return false;
-        }
-
-        async function completeNavigation(finalState, unsolvedAction, item) {
-            setState(STATE.VALIDATING);
-            showStatus("Validating final target...", "✓");
-            updateProgressUI("Target verified!", "VALIDATING", 100, 1.0);
-
-            const form = document.createElement('form');
-            form.method = 'POST';
-            
-            const postUrl = getPostUrl(finalState.url);
-            form.action = postUrl;
-            form.style.display = 'none';
-
-            const params = {
-                'pkglistform': 'pkglistform',
-                'pkglistform_SUBMIT': '1',
-                'jakarta.faces.ViewState': finalState.viewState
-            };
-
-            if (unsolvedAction && unsolvedAction.btnName) {
-                params[unsolvedAction.btnName] = unsolvedAction.text || 'Solve';
-            } else {
-                const path = finalState.buttonPath || [];
-                const lastBtn = path[path.length - 1];
-                params[lastBtn] = 'Show';
-            }
-
-            for (const [key, value] of Object.entries(params)) {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = key;
-                input.value = value;
-                form.appendChild(input);
-            }
-
-            if (SETTINGS.enableAutoSolver && SETTINGS.enableAISolver) {
-                localStorage.setItem('autosolver_trigger_once', 'true');
-            }
-
-            document.body.appendChild(form);
-            
-            setState(STATE.COMPLETE);
-            showStatus("Redirecting browser...", "🚀");
-            await sleep(500);
-            
-            form.submit();
-        }
-
-        // ── Core Crawler Orchestration ───────────────────────────────────────
-        async function runDiscoveryFlow() {
-            if (currentState !== STATE.IDLE && currentState !== STATE.ERROR) return;
-            
-            setState(STATE.DISCOVERING);
-            renderScanningState();
-            
+        async function updateSolvedCountsSilently(cachedParts) {
             try {
-                showStatus('Building top-level map...', '🔍');
-                updateLoadingMessage('Building level mappings...');
-                const topLevelMap = await buildTopLevelMap();
+                const solvedCounts = await getSolvedCounts();
+                cachedParts.forEach(part => {
+                    if (part.status === 'ok') {
+                        const solvedInfo = solvedCounts.find(s => s.partName === part.partName);
+                        part.solvedCount = solvedInfo ? solvedInfo.solvedCount : 0;
+                        part.ratio = part.totalCount > 0 ? (part.solvedCount / part.totalCount) : 1.0;
+                    }
+                });
                 
-                showStatus('Scraping viewsolved.xhtml...', '📊');
-                updateLoadingMessage('Discovering incomplete tracks...');
-                const solvedCounts = await getSolvedCounts();
-
-                const candidates = solvedCounts.map(item => {
-                    const levelInfo = findLevelUrlForCandidate(item.partName, topLevelMap);
-                    const total = inferTotal(item.partName, item.solvedCount);
-                    return {
-                        partName: item.partName,
-                        solvedCount: item.solvedCount,
-                        totalCount: total,
-                        ratio: item.solvedCount / total,
-                        levelName: levelInfo.levelName,
-                        levelUrl: levelInfo.levelUrl,
-                        status: 'ok'
-                    };
-                });
-
                 const cacheData = {
-                    candidates: candidates,
-                    topLevelMap: topLevelMap,
+                    parts: cachedParts,
                     timestamp: Date.now()
                 };
-                storage.setValue('find_incomplete_candidates_v3', JSON.stringify(cacheData));
-
-                setState(STATE.IDLE);
-                showStatus('Discovery complete! 🎉', '✅');
-                setTimeout(hideStatus, 3000);
-                renderList(candidates);
-            } catch (err) {
-                setState(STATE.ERROR);
-                showStatus(`Discovery failed: ${err.message}`, '❌');
-                renderErrorState(err.message);
-                setTimeout(hideStatus, 6000);
-            }
-        }
-
-        async function updateCandidatesSilently() {
-            try {
-                const rawCache = storage.getValue('find_incomplete_candidates_v3');
-                if (!rawCache) return;
-                const cache = JSON.parse(rawCache);
-                const topLevelMap = cache.topLevelMap || await buildTopLevelMap();
-
-                const solvedCounts = await getSolvedCounts();
-                const candidates = solvedCounts.map(item => {
-                    const levelInfo = findLevelUrlForCandidate(item.partName, topLevelMap);
-                    const total = inferTotal(item.partName, item.solvedCount);
-                    return {
-                        partName: item.partName,
-                        solvedCount: item.solvedCount,
-                        totalCount: total,
-                        ratio: item.solvedCount / total,
-                        levelName: levelInfo.levelName,
-                        levelUrl: levelInfo.levelUrl,
-                        status: 'ok'
-                    };
-                });
-
-                const cacheData = {
-                    candidates: candidates,
-                    topLevelMap: topLevelMap,
-                    timestamp: Date.now()
-                };
-                storage.setValue('find_incomplete_candidates_v3', JSON.stringify(cacheData));
-
+                storage.setValue('find_incomplete_cache_v2', JSON.stringify(cacheData));
+                
                 if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
-                    renderList(candidates);
+                    renderList(cachedParts);
                 }
             } catch (e) {
-                console.warn("Silent update failed:", e);
+                console.warn("Silent solved counts update failed:", e);
             }
         }
 
         async function loadAndRenderTracks(forceRefresh = false) {
-            if (currentState !== STATE.IDLE && currentState !== STATE.ERROR) return;
+            if (currentState === STATE.SCANNING) return;
 
             let cache = null;
             if (!forceRefresh) {
                 try {
-                    const rawCache = storage.getValue('find_incomplete_candidates_v3');
+                    const rawCache = storage.getValue('find_incomplete_cache_v2');
                     if (rawCache) {
                         cache = JSON.parse(rawCache);
                     }
@@ -8546,151 +8261,81 @@ SOLVING APPROACH:
                 }
             }
 
-            if (cache && cache.candidates && (Date.now() - cache.timestamp < 12 * 60 * 60 * 1000)) {
-                renderList(cache.candidates);
-                updateCandidatesSilently();
+            if (cache && cache.parts && (Date.now() - cache.timestamp < 24 * 60 * 60 * 1000)) {
+                renderList(cache.parts);
+                updateSolvedCountsSilently(cache.parts);
                 return;
             }
 
-            await runDiscoveryFlow();
+            await runFullCrawl();
+        }
+
+        // ── Sequential Navigation ────────────────────────────────────────────
+        async function startNavigation(item) {
+            if (currentState === STATE.NAVIGATING) return;
+            setState(STATE.NAVIGATING);
+            showStatus(`Navigating to ${item.partName}...`, '🚀');
+            hideDropdown();
+            
+            try {
+                const levUrl = item.levelUrl;
+                const postUrl = getPostUrl(levUrl);
+                
+                // Step 1: GET levelUrl to get initial ViewState
+                const html = await queuedFetch(levUrl, { method: 'GET' });
+                let freshState = extractViewState(html);
+                if (!freshState) throw new Error('Could not retrieve ViewState token');
+
+                // Step 2: POST each intermediate button in buttonPath except the last one
+                const path = item.buttonPath || [];
+                for (let i = 0; i < path.length - 1; i++) {
+                    const btn = path[i];
+                    const body = new URLSearchParams({
+                        'pkglistform': 'pkglistform',
+                        'pkglistform_SUBMIT': '1',
+                        'jakarta.faces.ViewState': freshState,
+                        [btn]: 'Show'
+                    });
+                    const resHtml = await queuedFetch(postUrl, { method: 'POST', body: body.toString() });
+                    freshState = extractViewState(resHtml);
+                    if (!freshState) throw new Error('Could not retrieve ViewState token at step ' + i);
+                }
+
+                // Step 3: Create a form in the main page and submit it to navigate the browser!
+                const lastBtn = path[path.length - 1];
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = postUrl;
+                form.style.display = 'none';
+
+                const params = {
+                    'pkglistform': 'pkglistform',
+                    'pkglistform_SUBMIT': '1',
+                    'jakarta.faces.ViewState': freshState,
+                    [lastBtn]: 'Show'
+                };
+
+                for (const [key, value] of Object.entries(params)) {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = key;
+                    input.value = value;
+                    form.appendChild(input);
+                }
+
+                document.body.appendChild(form);
+                form.submit();
+            } catch (err) {
+                setState(STATE.ERROR);
+                showStatus(`Navigation failed: ${err.message}`, '❌');
+                setTimeout(hideStatus, 5000);
+            }
         }
 
         // ── UI Components ────────────────────────────────────────────────────
         let dropdown = null;
         let statusPanel = null;
         let statusText = null;
-
-        let progressPanel = null;
-        let progressCandidate = null;
-        let progressPageName = null;
-        let progressPageType = null;
-        let progressConfidence = null;
-        let progressStackDepth = null;
-        let progressCancelBtn = null;
-
-        function ensureProgressPanel() {
-            if (progressPanel) return;
-            progressPanel = document.createElement('div');
-            progressPanel.id = 'find-inc-progress-panel';
-            progressPanel.style.cssText = `
-                position: fixed;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                z-index: 100001;
-                background: rgba(15, 15, 15, 0.98);
-                backdrop-filter: blur(25px);
-                -webkit-backdrop-filter: blur(25px);
-                border: 1px solid rgba(99, 179, 237, 0.4);
-                border-radius: 16px;
-                box-shadow: 0 30px 70px rgba(0,0,0,0.85);
-                padding: 24px;
-                min-width: 320px;
-                max-width: 420px;
-                color: #f4f4f5;
-                font-family: 'VT323', monospace;
-                display: none;
-                flex-direction: column;
-                gap: 12px;
-            `;
-
-            const title = document.createElement('div');
-            title.style.cssText = 'font-size: 20px; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px; color: #63b3ed; display: flex; align-items: center; gap: 8px;';
-            title.innerHTML = '<span>🔍 Finding Incomplete Target</span>';
-            progressPanel.appendChild(title);
-
-            const content = document.createElement('div');
-            content.style.cssText = 'display: flex; flex-direction: column; gap: 8px; font-size: 14px;';
-            content.innerHTML = `
-                <div>Candidate: <span id="fip-candidate" style="color: #ecc94b; font-weight: 600;">-</span></div>
-                <div>Searching: <span id="fip-page-name" style="color: #e2e8f0; font-weight: 600; word-break: break-all;">-</span></div>
-                <div>Page Type: <span id="fip-page-type" style="color: #a0aec0;">-</span></div>
-                <div>Confidence: <span id="fip-confidence" style="color: #48bb78; font-weight: 600;">-</span></div>
-                <div>Search Depth: <span id="fip-depth" style="color: #9f7aea;">-</span></div>
-            `;
-            progressPanel.appendChild(content);
-
-            const progressBg = document.createElement('div');
-            progressBg.style.cssText = 'width: 100%; height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; margin-top: 4px;';
-            const progressBar = document.createElement('div');
-            progressBar.id = 'fip-progress-bar';
-            progressBar.style.cssText = 'height: 100%; width: 0%; background: linear-gradient(90deg, #ecc94b, #48bb78); border-radius: 4px; transition: width 0.3s;';
-            progressBg.appendChild(progressBar);
-            progressPanel.appendChild(progressBg);
-
-            const btnContainer = document.createElement('div');
-            btnContainer.style.cssText = 'display: flex; justify-content: flex-end; margin-top: 8px;';
-            
-            progressCancelBtn = document.createElement('button');
-            progressCancelBtn.style.cssText = 'background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 16px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; transition: all 0.2s;';
-            progressCancelBtn.textContent = 'CANCEL';
-            progressCancelBtn.addEventListener('click', () => {
-                if (activeController) activeController.abort();
-                setState(STATE.IDLE);
-                hideProgressPanel();
-                showStatus('Search cancelled', 'ℹ️');
-                setTimeout(hideStatus, 3000);
-            });
-            btnContainer.appendChild(progressCancelBtn);
-            progressPanel.appendChild(btnContainer);
-
-            document.body.appendChild(progressPanel);
-
-            progressCandidate = progressPanel.querySelector('#fip-candidate');
-            progressPageName = progressPanel.querySelector('#fip-page-name');
-            progressPageType = progressPanel.querySelector('#fip-page-type');
-            progressConfidence = progressPanel.querySelector('#fip-confidence');
-            progressStackDepth = progressPanel.querySelector('#fip-depth');
-        }
-
-        function showProgressPanel(candidateName) {
-            ensureProgressPanel();
-            progressCandidate.textContent = candidateName;
-            progressPageName.textContent = 'Initializing...';
-            progressPageType.textContent = '-';
-            progressConfidence.textContent = '-';
-            progressStackDepth.textContent = '0';
-            progressCancelBtn.textContent = 'CANCEL';
-            const bar = progressPanel.querySelector('#fip-progress-bar');
-            bar.style.width = '5%';
-            bar.style.background = 'linear-gradient(90deg, #ecc94b, #48bb78)';
-            progressPanel.style.display = 'flex';
-        }
-
-        function updateProgressUI(pageName, pageType, depth, confidence) {
-            ensureProgressPanel();
-            if (pageName) progressPageName.textContent = pageName;
-            if (pageType) progressPageType.textContent = pageType;
-            if (depth !== undefined) progressStackDepth.textContent = depth;
-            if (confidence !== undefined) {
-                if (typeof confidence === 'number') {
-                    progressConfidence.textContent = `${Math.round(confidence * 100)}%`;
-                } else {
-                    progressConfidence.textContent = confidence;
-                }
-            }
-            const pct = Math.min(95, 10 + depth * 15);
-            progressPanel.querySelector('#fip-progress-bar').style.width = `${pct}%`;
-        }
-
-        function hideProgressPanel() {
-            if (progressPanel) {
-                progressPanel.style.display = 'none';
-            }
-        }
-
-        function renderResolutionError(msg) {
-            ensureProgressPanel();
-            progressPageName.textContent = 'Error occurred';
-            progressPageName.style.color = '#ef4444';
-            progressPageType.textContent = 'ERROR';
-            progressConfidence.textContent = '0%';
-            progressConfidence.style.color = '#ef4444';
-            progressCancelBtn.textContent = 'CLOSE';
-            const bar = progressPanel.querySelector('#fip-progress-bar');
-            bar.style.width = '100%';
-            bar.style.background = '#ef4444';
-        }
 
         function ensureDropdown(parentEl) {
             if (dropdown) return;
@@ -8716,7 +8361,7 @@ SOLVING APPROACH:
             dropdown.style.left = `${Math.max(10, rect.left + window.scrollX - 180)}px`;
             
             dropdown.style.display = 'block';
-            dropdown.offsetHeight; 
+            dropdown.offsetHeight; // trigger reflow
             dropdown.style.opacity = '1';
             dropdown.style.transform = 'translateY(0)';
         }
@@ -8726,11 +8371,10 @@ SOLVING APPROACH:
             dropdown.style.opacity = '0';
             dropdown.style.transform = 'translateY(-8px)';
             
-            if (currentState === STATE.DISCOVERING || currentState === STATE.TRAVERSING) {
+            if (currentState === STATE.SCANNING) {
                 if (activeController) activeController.abort();
                 setState(STATE.IDLE);
                 hideStatus();
-                hideProgressPanel();
             }
             
             setTimeout(() => {
@@ -8740,18 +8384,21 @@ SOLVING APPROACH:
             }, 250);
         }
 
-        function renderList(candidates) {
+        function renderList(parts) {
             if (!dropdown) return;
             dropdown.innerHTML = '';
 
-            const incompleteList = candidates.filter(item => item.status === 'ok' && item.ratio < 1.0);
-            const failedList = candidates.filter(item => item.status === 'unknown');
+            // Filter parts
+            const incompleteList = parts.filter(item => item.status === 'ok' && item.ratio < 1.0);
+            const failedList = parts.filter(item => item.status === 'unknown');
 
+            // Sort incomplete list by ratio ascending
             incompleteList.sort((a, b) => a.ratio - b.ratio);
 
+            // Compute total solved and total questions across all successfully scanned parts
             let totalSolved = 0;
             let totalQuestions = 0;
-            candidates.forEach(p => {
+            parts.forEach(p => {
                 if (p.status === 'ok') {
                     totalSolved += p.solvedCount || 0;
                     totalQuestions += p.totalCount || 0;
@@ -8791,12 +8438,13 @@ SOLVING APPROACH:
                             </div>
                         `;
                         itemEl.addEventListener('click', () => {
-                            navigateWithState(item);
+                            startNavigation(item);
                         });
                         listContainer.appendChild(itemEl);
                     });
                 }
 
+                // VISIBLY SEPARATE "COULDN'T VERIFY" SECTION
                 if (failedList.length > 0) {
                     const failHeader = document.createElement('div');
                     failHeader.style.cssText = 'font-weight: 700; font-size: 13px; color: #f87171; margin: 14px 0 8px 0; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; display: flex; justify-content: space-between; align-items: center;';
@@ -8815,7 +8463,7 @@ SOLVING APPROACH:
                             </div>
                         `;
                         itemEl.addEventListener('click', () => {
-                            navigateWithState(item);
+                            startNavigation(item);
                         });
                         listContainer.appendChild(itemEl);
                     });
@@ -8966,6 +8614,10 @@ SOLVING APPROACH:
             document.head.appendChild(style);
         }
 
+        function setState(s) {
+            currentState = s;
+        }
+
         // ── Init & Cleanup ───────────────────────────────────────────────────
         function injectMenuButton() {
             if (!SETTINGS.enableFindIncomplete) return;
@@ -9035,11 +8687,9 @@ SOLVING APPROACH:
                 setState(STATE.IDLE);
                 hideStatus();
                 hideDropdown();
-                hideProgressPanel();
             }
         };
     })();
-
 
 
 
