@@ -1,558 +1,356 @@
-# Anti-Cheat Bypass Userscript
-
 <p align="center">
-  <img src="assets/KillCode.jpeg" alt="KillCode Script Icon" width="120">
+  <img src="assets/KillCode.jpeg" alt="KillCode" width="500">
 </p>
 
-Tampermonkey/Greasemonkey userscript for SkillRack. Bypasses anti-cheat restrictions and generates AI solutions using your own ChatGPT account — no API key needed.
+# Anti-Cheat Bypass
 
-## ⚠️ Important Warnings
+Tampermonkey userscript for [skillrack.com](https://skillrack.com). Kills tab-switch detection, restores clipboard, solves captchas, and generates code solutions using your ChatGPT account — no API key, no payment.
 
-> **⚠️ Disable the script during an actual test. It may cause unintended behaviour.**
+**Version:** `5.0f` · **Matches:** `*.skillrack.com/*`
 
-> **⚠️ Don't navigate while the captcha solver is running. If it loops, close and reopen the tab.**
-
----
-
-## Version 5.0f (Latest)
-
-### 🆕 v5.0f — Free ChatGPT AI via openai-oauth
-
-The script integrates with [openai-oauth](https://github.com/EvanZhouDev/openai-oauth), which reuses the same OAuth tokens as OpenAI's Codex CLI to call `chatgpt.com/backend-api/codex` — the same compute OpenAI charges API credits for, accessed through your free ChatGPT account.
-
-#### Two Modes
-
-| Mode | How it works | Requires |
-|------|-------------|----------|
-| **Direct Browser** | `GM_xmlhttpRequest` → `chatgpt.com/backend-api/codex` using your stored OAuth token | Chrome extension + sign-in |
-| **Local Proxy Fallback** | Routes through `npx openai-oauth` on your machine at `127.0.0.1:10531` | Node.js + terminal |
-
-The script tries direct first. On any failure (401, 403, network), it falls back to the local proxy automatically.
+> ⚠️ **CRITICAL DISCLAIMER & WARNING:**
+>
+> - **Educational Purpose Only**: This project is strictly for research and educational purposes. We take absolutely no responsibility for any actions you take, academic penalties you receive, or account bans you experience. You agree to use this entirely at your own risk.
+> - **Account Ban Risk**: Accessing the private Codex endpoint directly violates OpenAI's terms of service. **OpenAI can and will ban your account if they detect unauthorized automated usage.**
+> - **USE A SECONDARY CHATGPT ACCOUNT**: Do **NOT** use your primary personal, academic, or work account. Create a secondary throwaway account to use with this script.
+> - **Bypass Disclaimer**: Bypassing anti-cheat systems violates SkillRack's Terms of Use and your institution's academic honor codes.
+>
+> **Reverse-Engineering & Open-Source Context**: 
+> OpenAI's official Codex CLI client is open-sourced under the Apache-2.0 License. [Thibault "Tibo" Sottiaux](https://x.com/thsottiaux) (Product Lead on the OpenAI Codex team) has publicly confirmed that users are allowed to use their accounts in custom or alternate agentic harnesses built on top of the open Codex repository. 
+> 
+> Specifically, following competitor harness restrictions in January 2026, Sottiaux [stated on X](https://x.com/thsottiaux/status/2009714843587342393) that OpenAI is *"100% invested in supporting a flourishing ecosystem of agentic coding tools"* and confirmed builders can build on the Codex repo directly. Sottiaux later [confirmed](https://x.com/thsottiaux/status/2009742187484065881) that they are actively working to allow Codex users to use their subscriptions in alternative harnesses like OpenCode directly. In May 2026, Sottiaux [shared](https://x.com/thsottiaux/status/2058071172361998482) that ~10% of their production traffic runs on third-party developer harnesses (like the Pi harness and OpenCode). We reverse-engineered the OAuth handshake (which listens on port `1455` for login callback parameters) and client endpoints directly from the open source codebase to build a local API bridge. However, utilizing this bridge to automate academic platforms or bypass proctored checks is unauthorized.
+>
+> <p align="center">
+>   <img src="assets/Proof-Of-Harness.png" alt="OpenAI Codex Alternate Harness Confirmation" width="600">
+> </p>
 
 ---
 
-### 🔧 Setup: ChatGPT Provider
+## What it does
 
-#### Step 1 — Install the browser extension
+| Feature | How |
+|---------|-----|
+| Tab switch detection | Spoofs `document.visibilityState` → always `visible` |
+| Copy / paste / cut | Intercepts clipboard events before jQuery handlers run |
+| Fullscreen enforcement | Intercepts `requestFullscreen()`, spoofs `fullscreenElement` |
+| Multi-monitor detection | Spoofs `screen.left`, `screen.top`, `screen.isExtended` |
+| Heartbeat / telemetry | Blocks XHR + Fetch to proctoring endpoints, returns fake 200s |
+| ACE editor restrictions | Blocks `bte` command registration, overrides `cs()` diff check |
+| Drag & drop | Strips `ondragstart`/`ondrop`/`onselectstart` from all elements |
+| Captcha | Tesseract.js OCR on the math captcha image (auto-retry on fail) |
+| AI solution | Generates code using one of 7 providers, fills the ACE editor |
+| Auto Solver | Fully automated: captcha → AI → run → next problem |
 
-- **Chrome**: [Sign in with ChatGPT](https://chromewebstore.google.com/detail/sign-in-with-chatgpt/odbgboachaefbbbdiffcefhpkekhfcna)
-- **Firefox**: [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/sign-in-with-chatgpt/)
+---
 
-The extension's only host permission is `http://localhost:1455/*`. It relays OpenAI's OAuth callback — no credentials go to any third-party server.
+## Install
 
-#### Step 2 — Sign in
+1. Install [Tampermonkey](https://www.tampermonkey.net/) (Chrome/Firefox/Edge)
+2. Click → **[Install Script](https://raw.githubusercontent.com/Vishnu-tppr/skillrack-script/refs/heads/main/Anti-Cheat%20Bypass%205.0.user.js)**
+3. Tampermonkey will open the install page — click **Install**
+4. Open SkillRack. Accept the disclaimer on first load.
 
-1. Open Settings (⚙️ bottom-right), select **"🤖 ChatGPT (openai-oauth)"** as provider.
-2. Click **"Sign in with ChatGPT"**.
-3. Complete the OAuth popup. Token is stored in IndexedDB, encrypted with WebCrypto.
+The script auto-updates from GitHub (`@updateURL` is set in the header).
 
-#### Step 3 — (Optional) Local proxy
+---
 
-If the direct call is blocked, run the proxy in a terminal:
+## Free AI via ChatGPT — no API key needed
+
+This is the main reason to use this script. OpenAI charges ~$15/M tokens for API access. ChatGPT accounts get the same compute for free. The script uses your ChatGPT OAuth token to call `chatgpt.com/backend-api/codex` directly — the exact same model, zero cost.
+
+It works in two modes. The script tries Mode 1 first and falls back automatically:
+
+```
+Mode 1: GM_xmlhttpRequest → chatgpt.com/backend-api/codex (browser-only)
+         ↓ 401 / 403 / network error
+Mode 2: http://127.0.0.1:10531/v1 (local npx openai-oauth proxy)
+         ↓ proxy not running
+Error: "Sign in or start npx openai-oauth"
+```
+
+### Setup (browser-only, no terminal)
+
+**Step 1 — Install the "Sign in with ChatGPT" extension**
+
+This extension intercepts OpenAI's OAuth callback at the browser level. No server required.
+
+- Chrome: [Chrome Web Store](https://chromewebstore.google.com/detail/sign-in-with-chatgpt/odbgboachaefbbbdiffcefhpkekhfcna)
+- Firefox: [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/sign-in-with-chatgpt/)
+- Or load unpacked from `chrome-extension/` (developer mode)
+
+Host permissions: `http://localhost:1455/*` only. Nothing leaves your device.
+
+**Step 2 — Sign in**
+
+<p align="left">
+  <img src="assets/sign-in-with-chatgpt-button.png" alt="Sign in with ChatGPT button" width="220">
+</p>
+
+1. Open SkillRack → click ⚙️ (bottom-right)
+2. Set **AI Provider** → **ChatGPT (openai-oauth)**
+3. Click **Sign in with ChatGPT**
+4. Login at OpenAI's page → extension intercepts the callback → shows "Continue to skillrack.com" → click Continue
+5. Token saved in `localStorage` as `oai_oauth_session`
+
+Done. No terminal, no API key.
+
+**Step 3 — (Optional) Local proxy fallback**
+
+If the direct call gets blocked (Cloudflare, token expiry, etc.):
 
 ```bash
 npx openai-oauth@latest
 ```
 
-Starts an OpenAI-compatible endpoint at `http://127.0.0.1:10531/v1`. Models available depend on your ChatGPT plan: `gpt-5.6-terra`, `gpt-5.6-sol`, `gpt-image-2`, etc.
+Starts OpenAI-compatible endpoint at `127.0.0.1:10531/v1`. Models depend on your ChatGPT plan: `gpt-5.6-terra`, `gpt-5.6-sol`, `gpt-5.5`, `gpt-5.4-mini`, `gpt-image-2`.
 
-Background mode:
-
+Background commands:
 ```bash
-npx openai-oauth --detach
+npx openai-oauth --detach    # run in background
 npx openai-oauth status
 npx openai-oauth logs --follow
 npx openai-oauth stop
+npx openai-oauth login       # sign in without starting server
 ```
 
-Sign in without starting the server:
+### How the OAuth flow works
 
-```bash
-npx openai-oauth login
+![openai-oauth package structure](assets/package-structure.png)
+
+```
+Script → OAuthLogin.initiateLogin() → PKCE auth URL → auth.openai.com
+  ↓
+User logs in
+  ↓
+OpenAI redirects → http://localhost:1455/auth/callback?code=...&state=...
+  ↓
+Extension (declarativeNetRequest) intercepts → chrome-extension://.../confirm.html
+  ↓
+User clicks "Continue to skillrack.com"
+  ↓
+Page reloads with ?code=...&state=...&oo2_cb=1
+  ↓
+Script exchanges code → https://auth.openai.com/oauth/token via GM_xmlhttpRequest
+  ↓
+Token stored in localStorage → used as Bearer on chatgpt.com/backend-api/codex
 ```
 
 ---
 
-#### How it works end-to-end
+## Other AI providers
 
-![openai-oauth SDK package structure](assets/package-structure.png)
+| Provider | Cost | Notes |
+|----------|------|-------|
+| **ChatGPT (openai-oauth)** | Free | Your own account, no key |
+| **DuckDuckGo AI** | Free | No account needed |
+| **Google Gemini** | Free tier | Needs API key from [AI Studio](https://aistudio.google.com/app/apikey) |
+| **OpenRouter** | Free + paid | 300+ models, [get key](https://openrouter.ai/keys) |
+| **G4F** | Free | [g4f.space](https://g4f.space) account |
+| **OpenAI direct** | Paid | Standard API key |
+| **YuppBridge** | Self-hosted | 200+ models via [YuppBridge](https://github.com/cloudWaddie/yuppbridge) |
 
-```
-Script (in browser)
-        ↓
-GM_xmlhttpRequest → chatgpt.com/backend-api/codex
-        ↓ (if 401/403/network error)
-Fallback → http://127.0.0.1:10531/v1/chat/completions
-        ↓ (if proxy not running)
-Error shown: "Sign in or start npx openai-oauth"
-```
+### DuckDuckGo (zero setup)
 
----
+Set provider to **DuckDuckGo AI**. Pick a model. That's it.
 
-### 🆕 v5.1 — Multiple Fill In the Blank & Stability
+Available: GPT-4o Mini, GPT-5 Mini, GPT-OSS 120B, Llama 4 Scout, Claude 3.5 Haiku, Mixtral Small 3.
 
-#### 🧩 Multiple Fill In the Blank (MFIB)
-- Parses templates with multiple blanks (`[BLANK_0]`, `[BLANK_1]`, etc.) mixed with static code.
-- Sends a structured JSON prompt; AI returns a JSON array of answers.
-- Autofills all inputs with proper browser events so the framework registers them.
+### OpenRouter
 
-#### 🔧 Code Editor Fixes
-- Refactored `window.ace` interception using a local variable closure. Fixes blank editor and `getSession is not a function` errors.
-- Falls back to native `<textarea>` if Ace fails to load.
-
-#### ⚡ AutoSolver (Run-Only)
-- Runs code against sample cases then moves to the next problem — no Save/Submit click needed.
-- Clears previous results and growl popups before each run to avoid stale detection.
-
-#### 🔌 OpenRouter Model Updates
-- Default: `google/gemini-2.0-flash:free`
-- Fallback: `openrouter/free` (auto-selects any active free model on rate limits)
+Fetches models dynamically from the API. 6-hour cache. Search by name, filter free-only. Default model: `google/gemini-2.0-flash:free`. Fallback: `openrouter/free`.
 
 ---
 
-## Version 5.0
+## Settings panel
 
-#### 🔄 Pre/Post Code Support
-- When **disabled**: full code (pre + middle + post) sent to AI.
-- When **enabled**: only middle code sent (useful for function-fill tasks).
+Click ⚙️ bottom-right. All settings persist in `localStorage`.
 
-#### 📋 YuppBridge (200+ Models)
-Self-hosted OpenAI-compatible proxy backed by Yupp AI.
+**Bypasses**
+| Setting | Default |
+|---------|---------|
+| Tab Detection Bypass | ✅ |
+| Copy/Paste Bypass | ✅ |
+| Fullscreen Bypass | ✅ |
+| Multi-Monitor Bypass | ✅ |
+| Block Telemetry | ✅ |
 
-- Requires your own instance: [YuppBridge GitHub](https://github.com/cloudWaddie/yuppbridge)
-- Dynamic model loading with search and 6-hour cache
-- Endpoints: `/health`, `/v1/models`, `/v1/chat/completions`, `/dashboard`, `/api/v1/credits`, `/metrics`
-- Models: GPT-4o, Claude, Gemini, Llama, Mistral, DeepSeek, Qwen, and more
+**Editor**
+| Setting | Default |
+|---------|---------|
+| Drag & Drop | ✅ |
+| Text Selection | ✅ |
+| Context Menu | ✅ |
 
-#### 🦆 DuckDuckGo AI (FREE)
-No account, no API key. Uses a Cloudflare Workers proxy to bypass CSP.
+**Captcha**
+| Setting | Default |
+|---------|---------|
+| Auto-Solve Captcha | ✅ |
+| Username (for captcha parsing) | empty |
 
-Available models: GPT-4o Mini, GPT-5 Mini, GPT-OSS 120B, Llama 4 Scout, Claude 3.5 Haiku, Mixtral Small 3.
+Set username if yours has `+` and numbers — e.g. `abcd123+21@xyz.com`.
 
----
-
-## Previous Updates (v4.6–4.9)
-
-#### 🔄 Mandatory Update Check
-Compares your version against GitHub on load. Shows a blocking dialog if you're behind — click "Update Now" to go to the script URL.
-
-#### ⚖️ First-Time Disclaimer
-One-time modal on first run. Must accept before the script initialises. Covers academic penalties, account termination, and legal consequences.
-
-#### 🚫 Remote Kill Switch
-Checks `kill.txt` on GitHub. If `false`, shows "Script Disabled" and stops. Used for emergencies and maintenance.
-
----
-
-## Settings Panel
-
-Click the **⚙️ gear button** (bottom-right) to open settings. All changes save to localStorage and take effect on page reload.
-
-### Anti-Cheat Bypasses
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Tab Detection Bypass | Prevent tab switch detection | ✅ On |
-| Copy/Paste Bypass | Enable clipboard in code editor | ✅ On |
-| Fullscreen Bypass | Skip fullscreen enforcement | ✅ On |
-| Multi-Monitor Bypass | Block monitor detection | ✅ On |
-| Block Telemetry | Block heartbeat requests | ✅ On |
-
-### Editor Features
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Drag & Drop | Enable drag & drop text | ✅ On |
-| Text Selection | Enable text selection | ✅ On |
-| Context Menu | Enable right-click menu | ✅ On |
-
-### Captcha Solver
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Auto-Solve Captcha | Automatically solve math captcha | ✅ On |
-| Username (optional) | For captcha parsing (e.g. `abc+21@xyz`) | (empty) |
-
-### AI Solution Generator
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Enable AI Solver | Show AI solution button | ❌ Off |
-| ⚡ Auto Solver | Auto-solve & submit (experimental) | ❌ Off |
-| AI Provider | 7 providers (see below) | Gemini |
-| Gemini API Key | Google Gemini API key | (empty) |
-| OpenAI API Key | OpenAI API key | (empty) |
-| OpenRouter API Key | OpenRouter API key | (empty) |
-| OpenRouter Model | Dynamic model selector with search | Gemini 2.0 Flash |
-| G4F API Key | G4F API key | (empty) |
-| G4F Model | Dynamic model selection | Auto |
-| DuckDuckGo Model | 6 free models | GPT-4o Mini |
-| DuckDuckGo API URL | Custom proxy URL | (default) |
-| YuppBridge API URL | Self-hosted YuppBridge URL | (empty) |
-| YuppBridge API Key | YuppBridge API key | (empty) |
-| YuppBridge Model | 200+ models | gpt-4o |
-| ChatGPT (openai-oauth) | Sign in with ChatGPT — free AI | Sign In button |
-
----
-
-## AI Providers
-
-### 🤖 ChatGPT via openai-oauth — FREE ⭐
-
-![Sign in with ChatGPT button](assets/sign-in-with-chatgpt-button.png)
-
-1. Install [Sign in with ChatGPT](https://chromewebstore.google.com/detail/sign-in-with-chatgpt/odbgboachaefbbbdiffcefhpkekhfcna)
-2. Set provider to **"🤖 ChatGPT (openai-oauth)"**
-3. Click **"Sign in with ChatGPT"** — OAuth flow, token stored locally
-4. Done. Script calls `chatgpt.com/backend-api/codex` directly.
-
-> Optional: run `npx openai-oauth@latest` in a terminal for automatic fallback to `http://127.0.0.1:10531`.
-
-Models: `gpt-5.6-terra`, `gpt-5.6-sol`, `gpt-5.5`, `gpt-5.4-mini`, `gpt-image-2` (varies by plan).
-
-### Google Gemini (Free)
-1. [Get API key](https://aistudio.google.com/app/apikey)
-2. Paste under "Gemini API Key" in settings
-
-### OpenAI (Paid)
-1. [Get API key](https://platform.openai.com/api-keys)
-2. Paste under "OpenAI API Key", set provider to "OpenAI (ChatGPT)"
-
-### OpenRouter (Free & Paid) ⭐
-1. [Get API key](https://openrouter.ai/keys)
-2. Paste under "OpenRouter API Key", set provider to "OpenRouter (Multi-Model)"
-3. Browse models — check "Show free only" to filter
-
-Popular free models:
-
-| Model | Provider | Notes |
-|-------|----------|-------|
-| Gemini 2.0 Flash | Google | Fast, general |
-| DeepSeek R1 | DeepSeek | Reasoning |
-| Qwen3 Coder 480B | Qwen | Coding |
-| Llama 3.3 70B | Meta | General |
-| Claude 3 Haiku | Anthropic | Fast |
-
-### G4F (g4f.space)
-1. [Get API key](https://g4f.space)
-2. Paste under "G4F API Key", set provider to "G4F"
-3. Pick a model or use "Auto"
-
-### DuckDuckGo AI — FREE, no key needed ⭐
-Set provider to "🦆 DuckDuckGo AI (FREE!)" and pick a model. That's it.
-
-| Model | Provider |
-|-------|----------|
-| GPT-4o Mini | OpenAI |
-| GPT-5 Mini | OpenAI |
-| GPT-OSS 120B | OpenAI |
-| Llama 4 Scout | Meta |
-| Claude 3.5 Haiku | Anthropic |
-| Mixtral Small 3 | Mistral AI |
-
-Self-host the proxy: clone `duckduckgo-api`, run `npm install && wrangler deploy`, update the URL in settings.
-
-### YuppBridge (200+ Models, Self-Hosted) ⭐ Power Users
-
-1. Deploy from [YuppBridge GitHub](https://github.com/cloudWaddie/yuppbridge)
-2. Set provider to "🌉 YuppBridge (200+ Models)"
-3. Enter your URL and API key
-4. Click 🔄 to load models, ❤️ for health check
-
-Endpoints: `/health`, `/v1/models`, `/v1/chat/completions`, `/dashboard`, `/api/v1/credits`, `/metrics`, `/api/v1/config/reload`
-
-Popular models: gpt-4o, gpt-4o-mini, claude-3-opus, claude-3-sonnet, gemini-1.5-pro, llama-3-70b, mistral-large, deepseek-coder.
-
----
-
-## AI Solution Generator
-
-- Works on tutorial pages (fills middle code) and code track pages (full solution)
-- Purple "🤖 AI Solution" button appears next to Save/Run
-- Supports 7 providers (see above)
-
-Dynamic OpenRouter model loading (v4.5+): fetches from API, caches 6 hours, groups by provider, lets you search and filter free-only models.
+**AI**
+| Setting | Default |
+|---------|---------|
+| Enable AI Solver | ❌ |
+| Auto Solver | ❌ |
+| Provider | Gemini |
 
 ---
 
 ## Auto Solver
 
-⚠️ **Experimental — use at your own risk**
+⚠️ Experimental.
 
-Enable "Enable AI Solver" + "⚡ Auto Solver" in settings. The solver:
+With **AI Solver** + **Auto Solver** both enabled:
 
-1. Waits for captcha (if present)
-2. Clicks AI Solution, waits for generation
-3. Runs code, reads result
-4. Proceeds to next problem on success, retries on failure (configurable)
+1. Waits for captcha to clear
+2. Clicks the purple "🤖 AI Solution" button
+3. Waits for generation, pastes into editor
+4. Clicks Run
+5. On success → next problem. On failure → retries (configurable max).
 
-**Click STOP at any time to halt.**
-
----
-
-## Auto Captcha Solver
-
-Credit: [adithyagenie](https://github.com/adithyagenie/skillrack-captcha-solver)
-
-Uses Tesseract.js OCR. Inverts image colors for better accuracy. Dynamic captcha image detection — works across different pages. If your username has `+` and numbers (e.g. `abcd123+21@xyz`), set it in settings for parsing.
+Click **STOP** to halt at any time.
 
 ---
 
-## Bypass Details
+## Captcha solver
 
-### 1. Tab Switch Detection
-- `document.visibilityState` always returns `'visible'`
-- `document.hidden` always returns `false`
-- `visibilitychange` listeners blocked
+Uses Tesseract.js (loaded via `@require`). Inverts the captcha image for better OCR accuracy. Detects the captcha image dynamically — works across different SkillRack page layouts.
 
-### 2. Copy/Paste/Cut
-- Clipboard events intercepted at capture phase (runs before jQuery)
-- Ctrl+C/V/X/Z work in the code editor
-- `$.fn.bind()` and `$.fn.on()` patched to drop clipboard bindings
-- Native Clipboard API restored
-
-### 3. Drag & Drop
-- `ondragstart`, `ondrop`, `onselectstart` removed from `<body>` and all elements
-- Runs on load and on a periodic timer
-
-### 4. Text Selection
-- CSS: `user-select: text !important` on all elements
-- `selectstart` prevention blocked
-- Right-click context menu restored
-
-### 5. ACE Editor
-
-| What SkillRack does | How it's bypassed |
-|---------------------|-------------------|
-| `commands.addCommand({name:'bte', bindKey:'ctrl-c\|ctrl-v\|...'})` | Blocks command registration |
-| `commands.on("exec",...)` paste block | Filters exec handlers |
-| `container.addEventListener("drop",...)` | Adds working drop handler at capture phase |
-| Anti-bulk-paste (30+ char reset) | Intercepts `setValue()` and change handlers |
-| `cs()` diff check | Overrides to always sync |
-
-### 6. Fullscreen
-- `requestFullscreen()` and `exitFullscreen()` intercepted
-- `document.fullscreenElement` always returns a truthy value
-
-### 7. Multi-Monitor Detection
-- `window.screen.left/top` spoofed to 0, `isExtended` to false
-- Mouse movement normalised
-
-### 8. Heartbeat / Telemetry
-- XHR and Fetch intercepted
-- Proctoring endpoint requests blocked, fake 200 responses returned
+First run takes a few seconds while Tesseract initialises. Subsequent runs are fast.
 
 ---
 
-## Installation
+## ACE editor bypass details
 
-1. Install [Tampermonkey](https://www.tampermonkey.net/) or [Greasemonkey](https://www.greasespot.net/)
-2. Create a new userscript
-3. Paste the contents of `Anti-Cheat Bypass 5.0.user.js`
-4. Save and enable
-5. Accept the disclaimer on first run
-6. Set up your AI provider in Settings
+SkillRack uses multiple layers to block copy/paste in the code editor:
+
+| What SkillRack does | What the script does |
+|---------------------|----------------------|
+| `commands.addCommand({name:'bte', bindKey:'ctrl-c\|ctrl-v\|...'})` | Blocks `addCommand` calls with key `bte` |
+| `commands.on("exec", ...)` paste block | Drops exec handlers that reference paste |
+| `container.addEventListener("drop", ...)` | Adds working drop handler at capture phase |
+| Anti-bulk-paste (resets editor if 30+ chars pasted) | Intercepts `setValue()` and change handlers |
+| `cs()` diff check | Overrides to always sync code |
+
+The script intercepts `ace.edit()` before SkillRack's code runs (`@run-at document-start`), so all of this happens before restrictions are applied.
 
 ---
 
-## How It Works
+## MFIB — Multiple Fill In the Blank
 
-### Startup flow
+Some SkillRack problems have multiple inline blanks (`[BLANK_0]`, `[BLANK_1]`, ...) mixed with static code.
 
-```
-Script loads
-     ↓
-Kill switch check (GitHub kill.txt)
-     ↓ enabled
-Update check
-     ↓ up to date
-Disclaimer (first run only)
-     ↓ accepted
-All features initialised
-```
+The script:
+1. Parses the template, identifies each blank
+2. Sends a structured JSON prompt to the AI
+3. Parses the JSON array response
+4. Fills each input field with proper browser events (so the React/Angular framework registers the change)
 
-### ChatGPT (openai-oauth) flow
+---
+
+## Startup sequence
 
 ```
-"Sign in with ChatGPT" clicked
-        ↓
-OAuth popup → chatgpt.com login
-        ↓
-Extension relays callback → token saved in IndexedDB (encrypted)
-        ↓
-AI Solution requested
-        ↓
-GM_xmlhttpRequest → chatgpt.com/backend-api/codex/responses
-        ↓ on failure
-Fallback → http://127.0.0.1:10531 (npx openai-oauth)
+document-start: all event interceptors installed
+  ↓
+Kill switch check: fetches kill.txt from GitHub
+  ↓ (if true)
+Update check: compares @version against GitHub
+  ↓ (if current)
+Disclaimer modal (first run only, saved in localStorage)
+  ↓ (accepted)
+UI initialised: settings panel, AI button, captcha solver
 ```
 
-### Event interception
+---
 
-```
-User presses Ctrl+V
-        ↓
-Capture phase (our handler runs first)
-  → stopImmediatePropagation()
-  → clipboard action proceeds
-        ↓
-Bubbling phase (site jQuery handlers)
-  → never reached
-```
+## Kill switch
 
-### ACE editor override
+The script checks `kill.txt` in this repo on every load.
 
-```
-Site: txtCode.commands.addCommand({name:'bte', bindKey:'ctrl-c|ctrl-v'...})
-        ↓
-Script intercepts ace.edit() first
-        ↓
-Blocks 'bte' registration
-        ↓
-Shortcuts work normally
-```
+- `true` → runs normally
+- `false` → shows "Script Disabled" and stops
 
-### Dynamic model loading (OpenRouter)
-
-```
-Settings opened
-        ↓
-Fetch from OpenRouter API
-        ↓
-Cache 6 hours
-        ↓
-Group by provider (free first)
-        ↓
-Search & filter enabled
-```
+Used for emergencies (e.g. if SkillRack patches something that breaks the bypass badly).
 
 ---
 
 ## Troubleshooting
 
-### Script not loading
-- Check if you accepted the disclaimer
-- Check browser console for kill switch messages
-- Make sure you're on the latest version
+**Clipboard still blocked**
+Check console for "Blocked" — means a jQuery handler ran before the script. Confirm `@run-at document-start` is set in Tampermonkey's script settings.
 
-### Clipboard not working
-- Check console for "Blocked" messages
-- Confirm `@run-at document-start` is set
-- Refresh after enabling
+**ACE editor blank / `getSession is not a function`**
+Usually means the editor loaded before the interception. Try force-refreshing (Ctrl+Shift+R).
 
-### ACE editor bypass not working
-- Check console for bypass status messages
-- Editor might load dynamically — try increasing timeouts
+**Captcha not solving**
+Wait 3-5 seconds on first run (Tesseract download). If it loops, close and reopen the tab.
 
-### Captcha solver not working
-- Wait for Tesseract.js to load (first run takes a few seconds)
-- Check console for "Captcha elements not found"
-- If looping, close and reopen the tab
+**ChatGPT provider not working**
+- Extension not installed? → [Chrome](https://chromewebstore.google.com/detail/sign-in-with-chatgpt/odbgboachaefbbbdiffcefhpkekhfcna) / [Firefox](https://addons.mozilla.org/firefox/addon/sign-in-with-chatgpt/)
+- Token expired? → re-sign in from Settings
+- Getting 403? → OpenAI may have patched the endpoint. [File an issue](https://github.com/Vishnu-tppr/Skillrack-Script/issues).
+- Still blocked? → run `npx openai-oauth@latest` as proxy fallback
 
-### AI Solution not appearing
-- Check API key is set (or signed in for ChatGPT provider)
-- Check that the problem description is visible on the page
-- Look for errors in browser console
-
-### OpenRouter models not loading
-- Click 🔄 refresh
-- Check internet connection
-- 6-hour cache — wait or force refresh
-
-### Auto Solver stuck
-- Click **STOP**
-- Check console for errors
-- Increase delay settings
-
-### ChatGPT (openai-oauth) not working
-- Confirm [Sign in with ChatGPT](https://chromewebstore.google.com/detail/sign-in-with-chatgpt/odbgboachaefbbbdiffcefhpkekhfcna) is installed
-- Re-sign in from Settings if token expired
-- Optional: run `npx openai-oauth@latest` as proxy fallback
-- Check console for `[openai-oauth]` errors
-- `403` or CORS error = OpenAI patched the endpoint. File an issue.
-
----
-
-## Remote Kill Switch
-
-`kill.txt` on GitHub controls the switch:
-- `true` — script runs normally
-- `false` — script disabled, shows message
-
-Used for emergencies, maintenance, and security incidents.
+**OpenRouter models not loading**
+Click the 🔄 button in the model selector. Models cache for 6 hours.
 
 ---
 
 ## Disclaimer
 
-⚠️ **Read before use:**
+This script is provided as-is. Using it may violate SkillRack's terms of service and your institution's academic integrity policies. You are responsible for how you use it.
 
-- Provided "AS IS" with no warranty.
-- The author is **not responsible** for academic penalties, account suspension, legal consequences, or damage to your record.
-- Bypassing anti-cheat may violate your institution's academic integrity policies.
-- You are **solely responsible** for how you use this.
-- For educational purposes only.
-- The openai-oauth integration is unofficial and **not affiliated with OpenAI**. You must comply with OpenAI's [Terms of Use](https://openai.com/policies/terms-of-use/) and [Usage Policies](https://openai.com/policies/usage-policies/). Use only your own ChatGPT account.
+The ChatGPT integration uses [openai-oauth](https://github.com/EvanZhouDev/openai-oauth), an unofficial community project. It is not affiliated with or endorsed by OpenAI. You must comply with OpenAI's [Terms of Use](https://openai.com/policies/terms-of-use/).
 
-**⚠️ Disable during actual tests and exams.**
+**Disable this script during actual tests.**
 
 ---
 
 ## Changelog
 
 ### v5.0f
-- 🤖 ChatGPT (openai-oauth) provider — free AI via your own account
-- ⚡ Direct browser mode via `GM_xmlhttpRequest` to `chatgpt.com/backend-api/codex`
-- 🔄 Auto-fallback to `npx openai-oauth` proxy on failure
-- 🎨 Extension footer with GitHub credit (@vishnu-tppr)
+- ChatGPT provider via openai-oauth (browser-only, no API key)
+- `GM_xmlhttpRequest` direct call to `chatgpt.com/backend-api/codex`
+- Auto-fallback to `npx openai-oauth` proxy on 401/403
 
 ### v5.1
-- ✨ Multiple Fill In the Blank (MFIB) — JSON prompt/response
-- 🔧 `window.ace` interception rewritten (fixes blank editor)
-- ⚡ Run-only AutoSolver with stale result prevention
-- 🔌 OpenRouter: Gemini 2.0 Flash default, `openrouter/free` fallback
+- Multiple Fill In the Blank (MFIB) with JSON prompt/response
+- `window.ace` interception rewritten (fixes blank editor bug)
+- Run-only AutoSolver (no Submit click)
+- OpenRouter: `gemini-2.0-flash:free` default, `openrouter/free` fallback
 
 ### v5.0
-- 🔧 C/C++ language tag and comment stripping fixed
-- 🛡️ Code similarity checks and empty response validation
-- 📋 YuppBridge provider (200+ models)
-- 🦆 DuckDuckGo AI provider (completely free)
+- C/C++ language tag and comment stripping
+- Code similarity check before submit
+- YuppBridge provider (200+ models)
+- DuckDuckGo AI provider (free, no key)
 
 ### v4.6
-- ✨ Mandatory update check
-- ✨ First-time disclaimer
-- ✨ Remote kill switch
-- 🔧 Startup flow refactor
+- Mandatory update check with blocking dialog
+- First-time disclaimer
+- Remote kill switch via `kill.txt`
 
 ### v4.5
-- ✨ Dynamic OpenRouter model loading
-- ✨ Model search and free-only filter
-- ✨ 6-hour model cache
-- 🔧 Auto Solver stop button fixed
+- Dynamic OpenRouter model loading (API-fetched, 6h cache)
+- Free-only model filter
+- Auto Solver stop button
 
 ### v4.4
-- ✨ G4F provider
-- ✨ Auto Solver (experimental)
-- 🔧 Various fixes
-
-### v4.3
-- ✨ OpenRouter integration (30+ models)
-- ✨ Custom model ID support
-
-### v4.2
-- ✨ Captcha solver improvements
-- 🔧 Dynamic captcha image detection
-
-### v4.1
-- ✨ Settings panel
-- ✨ AI Solution Generator
-- ✨ Multi-provider support
+- G4F provider
+- Auto Solver (experimental)
 
 ---
 
-## License
-
-MIT
-
 ## Credits
 
-- **ToonTamilIndia** — main development
+- **[ToonTamilIndia](https://github.com/ToonTamilIndia)** — main development
 - **[adithyagenie](https://github.com/adithyagenie/skillrack-captcha-solver)** — captcha solver
 - **[EvanZhouDev/openai-oauth](https://github.com/EvanZhouDev/openai-oauth)** — openai-oauth SDK (Apache-2.0)
-- **[@vishnu-tppr](https://github.com/vishnu-tppr)** — ChatGPT integration & reverse engineering
+- **[vishnu-tppr](https://github.com/vishnu-tppr)** — ChatGPT integration & reverse engineering
+
+---
+
+MIT License

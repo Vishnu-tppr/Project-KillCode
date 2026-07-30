@@ -1,6 +1,18 @@
 # Ignore the bundled openai-oauth subpackage — tracked separately upstream
 openai-oauth/
 
+# Dev & helper scripts / data files
+icon_b64.txt
+icon_small_b64.txt
+bump_font_size.py
+swap_font.py
+transform_ui.py
+verify_ui.py
+implementation_plan.md
+skillrack_context.md
+level1_context.md
+userscript.user.js
+
 # OS noise
 .DS_Store
 Thumbs.db
