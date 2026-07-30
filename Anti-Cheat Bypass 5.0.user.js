@@ -8,22 +8,116 @@
 // @match        https://skillrack.com/*
 // @require      https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js
 // @require      https://js.puter.com/v2/
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        GM_deleteValue
+// @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
+// @connect      integrate.api.nvidia.com
+// @connect      127.0.0.1
+// @connect      localhost
+// @connect      api.openai.com
+// @connect      auth.openai.com
+// @connect      chatgpt.com
 // @run-at       document-start
-// @downloadURL https://raw.githubusercontent.com/ToonTamilIndia/skillrack-userscript/refs/heads/main/userscript.user.js
-// @updateURL https://raw.githubusercontent.com/ToonTamilIndia/skillrack-userscript/refs/heads/main/userscript.user.js
+// @downloadURL https://raw.githubusercontent.com/Vishnu-tppr/skillrack-script/refs/heads/main/Anti-Cheat%20Bypass%205.0.user.js
+// @updateURL https://raw.githubusercontent.com/Vishnu-tppr/skillrack-script/refs/heads/main/Anti-Cheat%20Bypass%205.0.user.js
 // ==/UserScript==
 
-(function () {
+// 1. Sandbox bridge
+if (typeof GM_xmlhttpRequest !== 'undefined') {
+    // Expose required libraries to the webpage context
+    if (typeof unsafeWindow !== 'undefined') {
+        if (typeof Tesseract !== 'undefined') unsafeWindow.Tesseract = Tesseract;
+        if (typeof puter !== 'undefined') unsafeWindow.puter = puter;
+    }
+
+    // Listen for requests from the webpage context
+    window.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'GM_XHR_REQUEST') {
+            const { id, options } = event.data;
+            GM_xmlhttpRequest({
+                method: options.method || 'GET',
+                url: options.url,
+                headers: options.headers,
+                data: options.data,
+                onload: function (response) {
+                    window.postMessage({
+                        type: 'GM_XHR_RESPONSE',
+                        id: id,
+                        status: response.status,
+                        statusText: response.statusText,
+                        responseText: response.responseText,
+                        responseHeaders: response.responseHeaders
+                    }, '*');
+                },
+                onerror: function (err) {
+                    window.postMessage({
+                        type: 'GM_XHR_RESPONSE',
+                        id: id,
+                        error: err.error || 'Network error'
+                    }, '*');
+                }
+            });
+        }
+    });
+
+    // Inject the main code into the webpage context
+    const script = document.createElement('script');
+    script.textContent = `(${mainCode.toString()})();`;
+    (document.head || document.documentElement).appendChild(script);
+    script.remove();
+}
+
+function mainCode() {
     'use strict';
+
+    // A wrapper around GM_xmlhttpRequest via message bridge
+    const gmFetch = (url, options = {}) => {
+        return new Promise((resolve, reject) => {
+            const requestId = Math.random().toString(36).substr(2, 9);
+            
+            const handleMessage = (event) => {
+                if (event.data && event.data.type === 'GM_XHR_RESPONSE' && event.data.id === requestId) {
+                    window.removeEventListener('message', handleMessage);
+                    if (event.data.error) {
+                        reject(new Error(event.data.error));
+                    } else {
+                        resolve({
+                            ok: event.data.status >= 200 && event.data.status < 300,
+                            status: event.data.status,
+                            statusText: event.data.statusText,
+                            headers: {
+                                get: (name) => {
+                                    const headersText = event.data.responseHeaders || '';
+                                    const match = new RegExp('^' + name + ':\\s*(.*)$', 'mi').exec(headersText);
+                                    return match ? match[1].trim() : null;
+                                }
+                            },
+                            json: async () => JSON.parse(event.data.responseText),
+                            text: async () => event.data.responseText
+                        });
+                    }
+                }
+            };
+            
+            window.addEventListener('message', handleMessage);
+            
+            window.postMessage({
+                type: 'GM_XHR_REQUEST',
+                id: requestId,
+                options: {
+                    method: options.method,
+                    url: url,
+                    headers: options.headers,
+                    data: options.body
+                }
+            }, '*');
+        });
+    };
 
     // ============================================
     // SCRIPT VERSION & REMOTE URLS
     // ============================================
     const SCRIPT_VERSION = '5.0';
-    const REMOTE_SCRIPT_URL = 'https://raw.githubusercontent.com/ToonTamilIndia/skillrack-userscript/refs/heads/main/userscript.user.js';
+    const REMOTE_SCRIPT_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/skillrack-script/refs/heads/main/Anti-Cheat%20Bypass%205.0.user.js';
     const KILL_SWITCH_URL = 'https://raw.githubusercontent.com/Aron-2005/solid-octo-doodle/refs/heads/main/kill.txt';
     const DISCLAIMER_ACCEPTED_KEY = 'skillrack_bypass_disclaimer_accepted';
     const SCRIPT_DISABLED_KEY = 'skillrack_bypass_disabled_by_killswitch';
@@ -473,13 +567,15 @@
         geminiApiKey: "",
         geminiModel: "gemini-2.5-flash",
         openaiApiKey: "",
-        openaiModel: "gpt-4o-mini",
+        openaiModel: "gpt-5.4-mini",        // oauth / apikey mode default
+        openaiAuthMode: "chatgpt",            // 'chatgpt' | 'oauth' | 'apikey'
+        openaiOAuthBaseUrl: "http://127.0.0.1:10531/v1",
         openrouterApiKey: "",
         openrouterModel: "qwen/qwen3-coder:free",
         puterModel: "gpt-5.4-nano",
         puterCustomModel: "",
         puterEnableReasoning: false,
-        puterReasoningEffort: "low",
+        puterReasoningEffort: "low", 
 
         // ========== G4F SETTINGS (NEW) ==========
         g4fApiKey: "",
@@ -500,6 +596,11 @@
         yuppbridgeModel: "gpt-4o",
         // ================================================
 
+        // ========== NVIDIA NIM SETTINGS ==========
+        nvidiaApiKey: "",
+        nvidiaModel: "deepseek-ai/deepseek-v4-pro",
+        // =========================================
+
         // ========== AUTO SOLVER SETTINGS ==========
         enableAutoSolver: false,
         autoSolverMaxRetries: 3,
@@ -514,16 +615,29 @@
     // Load settings from localStorage or use defaults
     const loadSettings = () => {
         try {
-            let saved = null;
-            if (typeof GM_getValue !== 'undefined') {
-                saved = GM_getValue('skillrack_bypass_settings', null);
-            }
-            if (!saved) {
-                saved = localStorage.getItem('skillrack_bypass_settings');
-            }
+            const saved = localStorage.getItem('skillrack_bypass_settings');
             if (saved) {
-                const merged = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+                const parsed = JSON.parse(saved);
+                const merged = { ...DEFAULT_SETTINGS, ...parsed };
+                // Migrate: old default was 1 which made retry loop never fire — bump to 5
                 if (merged.autoSolverMaxRetries < 2) merged.autoSolverMaxRetries = 5;
+                // Migrate: if user has no authMode, migrate based on existing settings
+                if (!parsed.openaiAuthMode) {
+                    if (parsed.openaiApiKey) {
+                        merged.openaiAuthMode = 'apikey';
+                    } else {
+                        merged.openaiAuthMode = 'chatgpt';
+                    }
+                }
+                // Migrate: legacy 'extension'/'oauth' mode → new 'chatgpt' mode
+                if (merged.openaiAuthMode === 'extension' || merged.openaiAuthMode === 'oauth') {
+                    merged.openaiAuthMode = 'chatgpt';
+                }
+                // In chatgpt mode, if the saved model is an apikey-only id, switch to Codex default
+                const APIKEY_ONLY_MODEL_IDS = /^(gpt-4o|gpt-4|gpt-3\.5|o1|o3|o4)/;
+                if (merged.openaiAuthMode === 'chatgpt' && APIKEY_ONLY_MODEL_IDS.test(merged.openaiModel)) {
+                    merged.openaiModel = 'gpt-5.4-mini';
+                }
                 return merged;
             }
         } catch (e) {
@@ -534,11 +648,7 @@
 
     const saveSettings = (settings) => {
         try {
-            const str = JSON.stringify(settings);
-            if (typeof GM_setValue !== 'undefined') {
-                GM_setValue('skillrack_bypass_settings', str);
-            }
-            localStorage.setItem('skillrack_bypass_settings', str);
+            localStorage.setItem('skillrack_bypass_settings', JSON.stringify(settings));
         } catch (e) {
             console.log('Failed to save settings:', e);
         }
@@ -722,31 +832,436 @@
     })();
 
     // ============================================
+    // OAUTH LOGIN MODULE (PKCE — no terminal needed)
+    // Uses the 'Sign in with ChatGPT' Chrome extension as OAuth callback bridge.
+    // Stores tokens in localStorage. Makes API calls directly to chatgpt.com via gmFetch.
+    // ============================================
+
+    const OAuthLogin = (function () {
+        'use strict';
+
+        const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
+        const REDIRECT_URI = 'http://localhost:1455/auth/callback';
+        const ISSUER = 'https://auth.openai.com';
+        const TOKEN_URL = `${ISSUER}/oauth/token`;
+        const AUTHORIZE_URL = `${ISSUER}/oauth/authorize`;
+        const SCOPE = 'openid profile email offline_access';
+        const EXT_STATE_PREFIX = 'oo2_';
+        const PENDING_KEY = 'oai_pending_login';
+        const SESSION_KEY = 'oai_oauth_session';
+
+        // ---- encoding helpers ----
+        function bytesToBase64Url(bytes) {
+            let binary = '';
+            for (const byte of bytes) binary += String.fromCharCode(byte);
+            return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+        }
+
+        function encodeBase64Url(str) {
+            return bytesToBase64Url(new TextEncoder().encode(str));
+        }
+
+        function randomUrlSafeString(byteLength) {
+            const bytes = new Uint8Array(byteLength);
+            crypto.getRandomValues(bytes);
+            return bytesToBase64Url(bytes);
+        }
+
+        async function sha256Base64Url(str) {
+            const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+            return bytesToBase64Url(new Uint8Array(digest));
+        }
+
+        // ---- extension detection ----
+        const EXT_ID = 'odbgboachaefbbbdiffcefhpkekhfcna'; // Web Store ID
+        const LOCAL_EXT_KEY = 'oai_local_ext_id';          // Storage key for unpacked dev-mode ID
+
+        async function fetchInstalledJson(extId) {
+            try {
+                const controller = new AbortController();
+                setTimeout(() => controller.abort(), 750);
+                const resp = await fetch(`chrome-extension://${extId}/src/installed.json`, { cache: 'no-store', signal: controller.signal });
+                if (!resp.ok) return false;
+                const data = await resp.json().catch(() => null);
+                return data?.installed === true;
+            } catch { return false; }
+        }
+
+        async function pingExtension(extId) {
+            return new Promise((resolve) => {
+                try {
+                    if (!chrome?.runtime?.sendMessage) { resolve(false); return; }
+                    const timer = setTimeout(() => resolve(false), 750);
+                    chrome.runtime.sendMessage(extId, { type: 'openai-oauth-ping' }, (response) => {
+                        clearTimeout(timer);
+                        if (chrome.runtime.lastError) { resolve(false); return; }
+                        resolve(response?.installed === true);
+                    });
+                } catch { resolve(false); }
+            });
+        }
+
+        async function isExtensionInstalled() {
+            // 1. Try Web Store ID via direct fetch (works when installed from store)
+            if (await fetchInstalledJson(EXT_ID)) return true;
+
+            // 2. Try stored local extension ID (works when loaded as unpacked)
+            const localId = localStorage.getItem(LOCAL_EXT_KEY);
+            if (localId && localId !== EXT_ID) {
+                if (await fetchInstalledJson(localId) || await pingExtension(localId)) return true;
+            }
+
+            // 3. Try chrome.runtime.sendMessage ping to Web Store ID
+            if (await pingExtension(EXT_ID)) return true;
+
+            return false;
+        }
+
+        // ---- session storage ----
+        function getSession() {
+            try {
+                const raw = localStorage.getItem(SESSION_KEY);
+                return raw ? JSON.parse(raw) : null;
+            } catch { return null; }
+        }
+
+        function setSession(session) {
+            try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch { }
+        }
+
+        function clearSession() {
+            try {
+                localStorage.removeItem(SESSION_KEY);
+                localStorage.removeItem(PENDING_KEY);
+                localStorage.removeItem('openai_oauth_models_cache');
+            } catch { }
+        }
+
+        function isSignedIn() {
+            const s = getSession();
+            if (!s?.accessToken) return false;
+            return true;
+        }
+
+        // ---- pending login (survives page reload) ----
+        function writePending(data) {
+            try { localStorage.setItem(PENDING_KEY, JSON.stringify(data)); } catch { }
+        }
+
+        function readPending() {
+            try {
+                const raw = localStorage.getItem(PENDING_KEY);
+                return raw ? JSON.parse(raw) : null;
+            } catch { return null; }
+        }
+
+        function clearPending() {
+            try { localStorage.removeItem(PENDING_KEY); } catch { }
+        }
+
+        // ---- token refresh ----
+        async function refreshTokens(refreshToken) {
+            const resp = await gmFetch(TOKEN_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    grant_type: 'refresh_token',
+                    refresh_token: refreshToken,
+                    client_id: CLIENT_ID
+                })
+            });
+            if (!resp.ok) throw new Error(`Token refresh failed: HTTP ${resp.status}`);
+            const data = await resp.json();
+            if (!data.access_token) throw new Error('No access_token in refresh response');
+            return data;
+        }
+
+        // Returns a valid access token, refreshing if necessary
+        async function getAccessToken() {
+            const s = getSession();
+            if (!s?.accessToken) return null;
+
+            // Refresh if token is expiring within 5 minutes
+            if (s.expiresAt) {
+                const expiresAt = new Date(s.expiresAt).getTime();
+                if (expiresAt - Date.now() < 5 * 60 * 1000 && s.refreshToken) {
+                    try {
+                        const newTokens = await refreshTokens(s.refreshToken);
+                        const newSession = {
+                            ...s,
+                            accessToken: newTokens.access_token,
+                            refreshToken: newTokens.refresh_token || s.refreshToken,
+                            expiresAt: newTokens.expires_in
+                                ? new Date(Date.now() + newTokens.expires_in * 1000).toISOString()
+                                : undefined
+                        };
+                        setSession(newSession);
+                        return newSession.accessToken;
+                    } catch (e) {
+                        console.warn('[OAuthLogin] Token refresh failed:', e);
+                    }
+                }
+            }
+
+            return s.accessToken;
+        }
+
+        // ---- encode the state for the Chrome extension ----
+        function createExtensionState(callbackUrl) {
+            const payload = {
+                type: 'openai-oauth-callback',
+                version: 1,
+                nonce: randomUrlSafeString(24),
+                callbackUrl
+            };
+            return `${EXT_STATE_PREFIX}${encodeBase64Url(JSON.stringify(payload))}`;
+        }
+
+        // ---- initiate login ----
+        // Opens OAuth in a POPUP window — the current SkillRack tab never navigates away.
+        // Flow:
+        //   1. Popup → auth.openai.com (user logs in)
+        //   2. OpenAI → localhost:1455/auth/callback
+        //   3. Chrome extension intercepts → redirects to callbackUrl (this page + ?oo2_cb=1)
+        //   4. This page's handleCallbackIfPresent() exchanges code → stores tokens
+        //   5. Popup closes, Settings UI refreshes automatically
+        async function initiateLogin() {
+            const isInstalled = await isExtensionInstalled();
+            if (!isInstalled) {
+                return { status: 'needs-extension', installUrl: `https://chromewebstore.google.com/detail/sign-in-with-chatgpt/${EXT_ID}` };
+            }
+
+            const codeVerifier = randomUrlSafeString(48);
+            const codeChallenge = await sha256Base64Url(codeVerifier);
+
+            // The extension will redirect the popup to THIS url after intercepting localhost:1455
+            const callbackUrl = window.location.href.split('?')[0] + '?oo2_cb=1';
+            const state = createExtensionState(callbackUrl);
+
+            const authUrl = new URL(AUTHORIZE_URL);
+            authUrl.searchParams.set('response_type', 'code');
+            authUrl.searchParams.set('client_id', CLIENT_ID);
+            authUrl.searchParams.set('redirect_uri', REDIRECT_URI);
+            authUrl.searchParams.set('scope', SCOPE);
+            authUrl.searchParams.set('state', state);
+            authUrl.searchParams.set('code_challenge', codeChallenge);
+            authUrl.searchParams.set('code_challenge_method', 'S256');
+            authUrl.searchParams.set('id_token_add_organizations', 'true');
+            authUrl.searchParams.set('codex_cli_simplified_flow', 'true');
+
+            // Save PKCE state so handleCallbackIfPresent() can finish the exchange
+            writePending({ state, codeVerifier, redirectUri: REDIRECT_URI, callbackUrl });
+
+            // Open a small, centred popup — current page stays intact
+            const pw = 520, ph = 640;
+            const pl = Math.round(window.screenX + (window.outerWidth  - pw) / 2);
+            const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
+            const popup = window.open(
+                authUrl.toString(),
+                'openai_oauth_login',
+                `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes`
+            );
+
+            if (!popup) {
+                // Popup blocked — fall back to same-tab redirect
+                window.location.href = authUrl.toString();
+            }
+
+            return { status: 'started', popup };
+        }
+
+        // ---- handle OAuth callback (call this on every page load) ----
+        async function handleCallbackIfPresent() {
+            const params = new URLSearchParams(window.location.search);
+            const isCallback = params.get('oo2_cb') === '1';
+            const code = params.get('code');
+            const oauthError = params.get('error');
+
+            if (!isCallback || (!code && !oauthError)) return false;
+
+            // Clean URL immediately
+            const cleanUrl = window.location.pathname;
+            history.replaceState(null, '', cleanUrl);
+
+            if (oauthError) {
+                clearPending();
+                throw new Error(`OAuth error: ${params.get('error_description') || oauthError}`);
+            }
+
+            const pending = readPending();
+            const callbackState = params.get('state');
+
+            if (!pending || pending.state !== callbackState) {
+                clearPending();
+                throw new Error('OAuth state mismatch — possible CSRF. Please try signing in again.');
+            }
+
+            // Exchange code for tokens via gmFetch (bypasses CORS)
+            const resp = await gmFetch(TOKEN_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    grant_type: 'authorization_code',
+                    code,
+                    redirect_uri: pending.redirectUri,
+                    client_id: CLIENT_ID,
+                    code_verifier: pending.codeVerifier
+                }).toString()
+            });
+
+            if (!resp.ok) {
+                let detail = '';
+                try { const err = await resp.json(); detail = err.error_description || err.error || ''; } catch { }
+                clearPending();
+                throw new Error(`Token exchange failed: HTTP ${resp.status}${detail ? ': ' + detail : ''}`);
+            }
+
+            const tokens = await resp.json();
+            if (!tokens.access_token) {
+                clearPending();
+                throw new Error('Token exchange response missing access_token');
+            }
+
+            // Derive account ID from id_token JWT
+            let accountId = 'unknown';
+            try {
+                const idToken = tokens.id_token || tokens.access_token;
+                const parts = idToken.split('.');
+                if (parts[1]) {
+                    const claims = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+                    const auth = claims['https://api.openai.com/auth'] || {};
+                    accountId = auth.chatgpt_account_id || claims.chatgpt_account_id || claims.sub || 'unknown';
+                }
+            } catch { }
+
+            const session = {
+                accessToken: tokens.access_token,
+                refreshToken: tokens.refresh_token,
+                idToken: tokens.id_token,
+                accountId,
+                expiresAt: tokens.expires_in
+                    ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
+                    : undefined
+            };
+            setSession(session);
+            clearPending();
+            return true;
+        }
+
+        function logout() {
+            clearSession();
+        }
+
+        return {
+            isSignedIn,
+            isExtensionInstalled,
+            getSession,
+            getAccessToken,
+            initiateLogin,
+            handleCallbackIfPresent,
+            logout,
+            EXT_ID
+        };
+    })();
+
+    // ---- Handle OAuth callback immediately on page load ----
+    if (window.location.search.includes('oo2_cb=1')) {
+        OAuthLogin.handleCallbackIfPresent().then(handled => {
+            if (!handled) return;
+            console.log('[OAuthLogin] ✅ Signed in with ChatGPT successfully!');
+
+            if (window.opener && !window.opener.closed) {
+                // ── POPUP PATH ──
+                // Tokens are now in localStorage (same origin as main window).
+                // Just close the popup — the main window's poll loop will pick up the session.
+                window.close();
+            } else {
+                // ── SAME-TAB FALLBACK ──
+                // Popup was blocked, so we redirected the current tab.
+                // Show a green toast so the user knows it worked.
+                const toast = document.createElement('div');
+                toast.style.cssText = [
+                    'position:fixed', 'top:20px', 'left:50%',
+                    'transform:translateX(-50%)',
+                    'background:#22c55e', 'color:#000',
+                    'padding:12px 28px', 'border-radius:10px',
+                    'font-size:16px', 'font-weight:bold',
+                    'z-index:999999',
+                    'box-shadow:0 4px 20px rgba(34,197,94,0.4)',
+                    'font-family:sans-serif'
+                ].join(';');
+                toast.textContent = '✅ Signed in with ChatGPT!';
+                const attach = () => { document.body.appendChild(toast); setTimeout(() => toast.remove(), 3500); };
+                if (document.body) attach();
+                else document.addEventListener('DOMContentLoaded', attach);
+            }
+        }).catch(err => {
+            console.error('[OAuthLogin] Callback error:', err);
+            // If we're in a popup, close it on error too so it doesn't hang
+            if (window.opener && !window.opener.closed) window.close();
+        });
+    }
+
+    // ============================================
     // OPENAI PROVIDER MODULE (DYNAMIC MODEL LOADING)
     // ============================================
 
     const OpenAIProvider = (function () {
         'use strict';
 
+        // ---- shared config ----
         const CONFIG = {
-            API_URL: 'https://api.openai.com/v1/models',
-            CACHE_KEY: 'openai_models_cache',
-            CACHE_TTL: 6 * 60 * 60 * 1000, // 6 hours cache
-            DEFAULT_MODEL: 'gpt-4o-mini'
+            // API key mode endpoint
+            APIKEY_MODELS_URL: 'https://api.openai.com/v1/models',
+            APIKEY_CHAT_URL: 'https://api.openai.com/v1/chat/completions',
+            // Direct ChatGPT Codex endpoint (used when signed in via OAuthLogin)
+            CHATGPT_CODEX_URL: 'https://chatgpt.com/backend-api/codex',
+            // Separate caches for each mode
+            CACHE_KEY_APIKEY: 'openai_models_cache',
+            CACHE_KEY_OAUTH: 'openai_oauth_models_cache',
+            CACHE_TTL_APIKEY: 6 * 60 * 60 * 1000,   // 6 hours
+            CACHE_TTL_OAUTH: 20 * 60 * 1000,          // 20 min
+            DEFAULT_MODEL_APIKEY: 'gpt-4o-mini',
+            DEFAULT_MODEL_CHATGPT: 'gpt-5.4-mini',
+            // Image-only model IDs to exclude from chat dropdown
+            IMAGE_MODEL_IDS: new Set(['gpt-image-2', 'dall-e-3', 'dall-e-2'])
         };
 
-        function getApiKey() {
-            return SETTINGS.openaiApiKey || null;
+        // Codex / ChatGPT-plan fallback models
+        const OAUTH_FALLBACK_MODELS = [
+            { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', category: 'GPT-5 (Codex)', ownedBy: 'openai' },
+            { id: 'gpt-5.6-sol',   name: 'GPT-5.6 Sol',   category: 'GPT-5 (Codex)', ownedBy: 'openai' },
+            { id: 'gpt-5.5',       name: 'GPT-5.5',        category: 'GPT-5 (Codex)', ownedBy: 'openai' },
+            { id: 'gpt-5.4',       name: 'GPT-5.4',        category: 'GPT-5 (Codex)', ownedBy: 'openai' },
+            { id: 'gpt-5.4-mini',  name: 'GPT-5.4 Mini',   category: 'GPT-5 (Codex)', ownedBy: 'openai' },
+            { id: 'gpt-5.4-nano',  name: 'GPT-5.4 Nano',   category: 'GPT-5 (Codex)', ownedBy: 'openai' },
+        ];
+
+        // ---- helpers ----
+        function getOAuthBaseUrl() {
+            return (SETTINGS.openaiOAuthBaseUrl || 'http://127.0.0.1:10531/v1').replace(/\/$/, '');
         }
+
+        function isChatGPTMode() {
+            const m = SETTINGS.openaiAuthMode;
+            // 'chatgpt' is the new mode, 'extension'/'oauth' are legacy names for the same thing
+            return m === 'chatgpt' || m === 'oauth' || m === 'extension';
+        }
+
+        // isOAuthMode kept for compatibility with legacy code paths that check it
+        function isOAuthMode() { return isChatGPTMode(); }
+        function isExtensionMode() { return false; }
+
 
         function normalizeModel(rawModel) {
             const id = rawModel.id || '';
-
-            // Categorize models
             let category = 'Other';
             let displayName = id;
 
-            if (id.startsWith('gpt-4o')) {
+            if (id.startsWith('gpt-5')) {
+                category = 'GPT-5 (Codex)';
+                displayName = id.replace('gpt-', 'GPT-').replace(/-/g, ' ');
+            } else if (id.startsWith('gpt-4o')) {
                 category = 'GPT-4o';
                 displayName = id.replace('gpt-4o', 'GPT-4o').replace(/-/g, ' ');
             } else if (id.startsWith('gpt-4')) {
@@ -755,10 +1270,10 @@
             } else if (id.startsWith('gpt-3.5')) {
                 category = 'GPT-3.5';
                 displayName = id.replace('gpt-3.5', 'GPT-3.5').replace(/-/g, ' ');
-            } else if (id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4')) {
+            } else if (/^(o1|o3|o4)/.test(id)) {
                 category = 'Reasoning (o-series)';
                 displayName = id.toUpperCase().replace(/-/g, ' ');
-            } else if (id.includes('davinci') || id.includes('curie') || id.includes('babbage') || id.includes('ada')) {
+            } else if (/davinci|curie|babbage|ada/.test(id)) {
                 category = 'Legacy';
             }
 
@@ -770,45 +1285,161 @@
             };
         }
 
-        function getCachedModels() {
+        function isChatCapable(model) {
+            const id = (model.id || '').toLowerCase();
+            // Exclude known image-only / non-chat model IDs
+            if (CONFIG.IMAGE_MODEL_IDS.has(id)) return false;
+            const excludePats = ['image', 'embed', 'tts', 'whisper', 'dall-e', 'realtime', 'audio', 'moderation'];
+            return !excludePats.some(p => id.includes(p));
+        }
+
+        // ---- cache helpers ----
+        function getCachedModels(key, ttl) {
             try {
-                const cached = localStorage.getItem(CONFIG.CACHE_KEY);
-                if (cached) {
-                    const { models, timestamp } = JSON.parse(cached);
-                    if (Date.now() - timestamp < CONFIG.CACHE_TTL) {
-                        return models;
-                    }
-                }
-            } catch (e) {
-                console.log('[OpenAI] Cache read error:', e);
-            }
+                const raw = localStorage.getItem(key);
+                if (!raw) return null;
+                const { models, timestamp } = JSON.parse(raw);
+                if (Date.now() - timestamp < ttl) return models;
+            } catch (e) { /* ignore */ }
             return null;
         }
 
-        function setCachedModels(models) {
+        function setCachedModels(key, models) {
             try {
-                localStorage.setItem(CONFIG.CACHE_KEY, JSON.stringify({
-                    models: models,
-                    timestamp: Date.now()
-                }));
-            } catch (e) {
-                console.log('[OpenAI] Cache write error:', e);
-            }
+                localStorage.setItem(key, JSON.stringify({ models, timestamp: Date.now() }));
+            } catch (e) { /* ignore */ }
         }
 
         function clearCache() {
-            localStorage.removeItem(CONFIG.CACHE_KEY);
+            localStorage.removeItem(CONFIG.CACHE_KEY_APIKEY);
+            localStorage.removeItem(CONFIG.CACHE_KEY_OAUTH);
+            localStorage.removeItem('openai_extension_models_cache');
         }
 
-        async function fetchModels(forceRefresh = false) {
-            const apiKey = getApiKey();
+        // ---- model fetching ----
+        async function fetchExtensionModels(forceRefresh = false) {
+            if (!ExtensionBridge.isAvailable()) {
+                return OAUTH_FALLBACK_MODELS.slice();
+            }
+            if (!forceRefresh) {
+                const cached = getCachedModels('openai_extension_models_cache', 20 * 60 * 1000);
+                if (cached) return cached;
+            }
+            try {
+                const models = await ExtensionBridge.listModels();
+                if (Array.isArray(models) && models.length > 0) {
+                    setCachedModels('openai_extension_models_cache', models);
+                    return models;
+                }
+            } catch (e) {
+                console.warn('[OpenAI-Extension] Model fetch error:', e);
+            }
+            return OAUTH_FALLBACK_MODELS.slice();
+        }
+
+        async function fetchChatGPTModels(forceRefresh = false) {
+            if (!forceRefresh) {
+                const cached = getCachedModels(CONFIG.CACHE_KEY_OAUTH, CONFIG.CACHE_TTL_OAUTH);
+                if (cached) {
+                    console.log('[openai-oauth] Using cached models:', cached.length);
+                    return cached;
+                }
+            }
+
+            const session = OAuthLogin.getSession();
+            if (session && session.accessToken) {
+                // ── DIRECT BROWSER CALL FIRST ──
+                try {
+                    const clientVersion = "0.144.1";
+                    const response = await gmFetch(`https://chatgpt.com/backend-api/codex/models?client_version=${clientVersion}`, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Authorization': `Bearer ${session.accessToken}`,
+                            'chatgpt-account-id': session.accountId || ''
+                        }
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        const rawModels = Array.isArray(data.models) ? data.models : (Array.isArray(data.data) ? data.data : []);
+                        const models = rawModels
+                            .map(m => {
+                                const norm = normalizeModel({ id: m.slug || m.id, ...m });
+                                return {
+                                    ...norm,
+                                    useResponsesLite: m.use_responses_lite ?? false
+                                };
+                            })
+                            .filter(m => m.id)
+                            .sort((a, b) => {
+                                const ord = ['GPT-5 (Codex)', 'GPT-4o', 'Reasoning (o-series)', 'GPT-4', 'GPT-3.5', 'Other'];
+                                const ai = ord.indexOf(a.category), bi = ord.indexOf(b.category);
+                                if (ai !== bi) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+                                return a.name.localeCompare(b.name);
+                            });
+
+                        if (models.length > 0) {
+                            setCachedModels(CONFIG.CACHE_KEY_OAUTH, models);
+                            console.log('[openai-oauth] Direct fetched', models.length, 'models from OpenAI');
+                            return models;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[openai-oauth] Direct model fetch failed:', e);
+                }
+            }
+
+            // ── LOCAL PROXY FALLBACK ──
+            const PROXY_URL = getOAuthBaseUrl(); // default: http://127.0.0.1:10531/v1
+            try {
+                const response = await gmFetch(`${PROXY_URL}/models`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json', 'Authorization': 'Bearer openai-oauth' }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const rawModels = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
+                    const models = rawModels
+                        .filter(m => m && m.id && isChatCapable(m))
+                        .map(m => {
+                            const norm = normalizeModel(m);
+                            return {
+                                ...norm,
+                                useResponsesLite: m.use_responses_lite ?? m.useResponsesLite ?? false
+                            };
+                        })
+                        .sort((a, b) => {
+                            const ord = ['GPT-5 (Codex)', 'GPT-4o', 'Reasoning (o-series)', 'GPT-4', 'GPT-3.5', 'Other'];
+                            const ai = ord.indexOf(a.category), bi = ord.indexOf(b.category);
+                            if (ai !== bi) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+                            return a.name.localeCompare(b.name);
+                        });
+
+                    if (models.length > 0) {
+                        setCachedModels(CONFIG.CACHE_KEY_OAUTH, models);
+                        console.log('[openai-oauth] Fetched', models.length, 'models from proxy');
+                        return models;
+                    }
+                }
+            } catch {
+                console.warn('[openai-oauth] Proxy not reachable at', PROXY_URL);
+            }
+
+            console.warn('[openai-oauth] Both direct call and proxy offline — using fallback model list');
+            return OAUTH_FALLBACK_MODELS.slice();
+        }
+
+        async function fetchApiKeyModels(forceRefresh = false) {
+            const apiKey = SETTINGS.openaiApiKey;
             if (!apiKey) {
                 console.log('[OpenAI] No API key, using fallback models');
-                return getFallbackModels();
+                return getApiKeyFallbackModels();
             }
 
             if (!forceRefresh) {
-                const cached = getCachedModels();
+                const cached = getCachedModels(CONFIG.CACHE_KEY_APIKEY, CONFIG.CACHE_TTL_APIKEY);
                 if (cached) {
                     console.log('[OpenAI] Using cached models:', cached.length);
                     return cached;
@@ -816,7 +1447,8 @@
             }
 
             try {
-                const response = await fetch(CONFIG.API_URL, {
+                // Use gmFetch so api.openai.com works from HTTPS page context
+                const response = await gmFetch(CONFIG.APIKEY_MODELS_URL, {
                     method: 'GET',
                     headers: {
                         'Authorization': `Bearer ${apiKey}`,
@@ -824,44 +1456,43 @@
                     }
                 });
 
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
                 const data = await response.json();
                 const rawModels = data.data || [];
 
-                // Filter to only chat completion models
                 const chatModelPatterns = ['gpt-4', 'gpt-3.5', 'o1', 'o3', 'o4', 'chatgpt'];
-                const excludePatterns = ['instruct', 'vision', 'audio', 'realtime', 'tts', 'whisper', 'dall-e', 'embedding', 'moderation'];
+                const excludePatterns = ['instruct', 'audio', 'realtime', 'tts', 'whisper', 'dall-e', 'embedding', 'moderation'];
 
                 const models = rawModels
                     .filter(m => {
-                        const id = m.id.toLowerCase();
-                        const isChat = chatModelPatterns.some(p => id.includes(p));
-                        const isExcluded = excludePatterns.some(p => id.includes(p));
-                        return isChat && !isExcluded;
+                        const id = (m.id || '').toLowerCase();
+                        return chatModelPatterns.some(p => id.includes(p)) &&
+                               !excludePatterns.some(p => id.includes(p)) &&
+                               isChatCapable(m);
                     })
                     .map(normalizeModel)
                     .sort((a, b) => {
-                        // Sort by category priority, then by name
-                        const categoryOrder = ['GPT-4o', 'Reasoning (o-series)', 'GPT-4', 'GPT-3.5', 'Legacy', 'Other'];
-                        const aIdx = categoryOrder.indexOf(a.category);
-                        const bIdx = categoryOrder.indexOf(b.category);
-                        if (aIdx !== bIdx) return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
+                        const ord = ['GPT-4o', 'Reasoning (o-series)', 'GPT-4', 'GPT-3.5', 'Legacy', 'Other'];
+                        const ai = ord.indexOf(a.category), bi = ord.indexOf(b.category);
+                        if (ai !== bi) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
                         return a.name.localeCompare(b.name);
                     });
 
                 console.log('[OpenAI] Fetched models:', models.length);
-                setCachedModels(models);
+                setCachedModels(CONFIG.CACHE_KEY_APIKEY, models);
                 return models;
             } catch (error) {
                 console.error('[OpenAI] Fetch error:', error);
-                return getFallbackModels();
+                return getApiKeyFallbackModels();
             }
         }
 
-        function getFallbackModels() {
+        async function fetchModels(forceRefresh = false) {
+            return isChatGPTMode() ? fetchChatGPTModels(forceRefresh) : fetchApiKeyModels(forceRefresh);
+        }
+
+        function getApiKeyFallbackModels() {
             return [
                 { id: 'gpt-4o', name: 'GPT-4o', category: 'GPT-4o', ownedBy: 'openai' },
                 { id: 'gpt-4o-mini', name: 'GPT-4o Mini', category: 'GPT-4o', ownedBy: 'openai' },
@@ -876,11 +1507,11 @@
 
         function filterModels(models, query) {
             if (!query) return models;
-            const lowerQuery = query.toLowerCase();
+            const q = query.toLowerCase();
             return models.filter(m =>
-                m.id.toLowerCase().includes(lowerQuery) ||
-                m.name.toLowerCase().includes(lowerQuery) ||
-                m.category.toLowerCase().includes(lowerQuery)
+                (m.id || '').toLowerCase().includes(q) ||
+                (m.name || '').toLowerCase().includes(q) ||
+                (m.category || '').toLowerCase().includes(q)
             );
         }
 
@@ -893,13 +1524,211 @@
             return groups;
         }
 
+        // ---- unified completion (used by generateWithOpenAI) ----
+        async function generateCompletion(messages, options = {}) {
+            if (!Array.isArray(messages) || messages.length === 0) {
+                throw new Error('Messages array is required');
+            }
+
+            const model = options.model || SETTINGS.openaiModel || CONFIG.DEFAULT_MODEL_CHATGPT;
+            const temp = options.temperature ?? SETTINGS.aiTemperature;
+
+            // Some Codex / o-series models reject temperature; omit for gpt-5* and o-series
+            const skipTemp = /^(gpt-5|o1|o3|o4)/.test(model);
+            const payload = { model, messages, ...(skipTemp ? {} : { temperature: temp }) };
+
+            if (isChatGPTMode()) {
+                const session = OAuthLogin.getSession();
+                let directErrorMsg = 'Not signed in or session invalid.';
+                if (session && session.accessToken) {
+                    // Helper to extract text from Codex SSE stream
+                    const parseSseText = (sseText) => {
+                        let fullText = '';
+                        const lines = sseText.split('\n');
+                        for (let line of lines) {
+                            line = line.trim();
+                            if (line.startsWith('data:')) {
+                                const dataStr = line.slice(5).trim();
+                                if (dataStr === '[DONE]') continue;
+                                try {
+                                    const parsed = JSON.parse(dataStr);
+                                    // Case A: delta text content (streaming)
+                                    if (parsed.item && parsed.item.role === 'assistant' && Array.isArray(parsed.item.content)) {
+                                        for (const c of parsed.item.content) {
+                                            if (typeof c.text === 'string') {
+                                                fullText += c.text;
+                                            }
+                                        }
+                                    }
+                                    // Case B: final completed payload (contains full response output)
+                                    if (parsed.response && Array.isArray(parsed.response.output)) {
+                                        for (const out of parsed.response.output) {
+                                            if (out.role === 'assistant' && Array.isArray(out.content)) {
+                                                let itemText = '';
+                                                for (const c of out.content) {
+                                                    if (typeof c.text === 'string') {
+                                                        itemText += c.text;
+                                                    }
+                                                }
+                                                if (itemText) return itemText; // Complete text found
+                                            }
+                                        }
+                                    }
+                                } catch (e) {}
+                            }
+                        }
+                        return fullText;
+                    };
+
+                    // Format messages to Codex Input array structure
+                    const codexInput = messages.map(msg => {
+                        const role = msg.role === 'developer' || msg.role === 'system' ? 'system' : (msg.role === 'assistant' ? 'assistant' : 'user');
+                        return {
+                            role: role,
+                            content: [{ type: 'input_text', text: msg.content }]
+                        };
+                    });
+
+                    const codexPayload = {
+                        model: model,
+                        input: codexInput,
+                        stream: true,
+                        store: false,
+                        instructions: "",
+                        include: ["reasoning.encrypted_content"]
+                    };
+
+                    const directHeaders = {
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream',
+                        'Authorization': `Bearer ${session.accessToken}`,
+                        'chatgpt-account-id': session.accountId || '',
+                        'Origin': 'https://chatgpt.com',
+                        'Referer': 'https://chatgpt.com/'
+                    };
+
+                    // ── DIRECT BROWSER CALL FIRST ──
+                    try {
+                        const directResp = await gmFetch('https://chatgpt.com/backend-api/codex/responses', {
+                            method: 'POST',
+                            headers: directHeaders,
+                            body: JSON.stringify(codexPayload)
+                        });
+
+                        if (directResp.ok) {
+                            const sseText = await directResp.text();
+                            const fullText = parseSseText(sseText);
+                            if (fullText) {
+                                return fullText;
+                            }
+                            throw new Error('OpenAI returned an empty response stream.');
+                        } else {
+                            let detail = '';
+                            try {
+                                const errText = await directResp.text();
+                                try {
+                                    const parsed = JSON.parse(errText);
+                                    detail = parsed?.detail || parsed?.message || parsed?.error?.message || errText;
+                                } catch {
+                                    detail = errText;
+                                }
+                            } catch { }
+                            throw new Error(`Server returned HTTP ${directResp.status}${detail ? ': ' + detail : ''}`);
+                        }
+                    } catch (e) {
+                        directErrorMsg = e.message || String(e);
+                        console.warn('[openai-oauth] Direct responses call threw error:', e);
+                    }
+                }
+
+                // ── LOCAL PROXY FALLBACK ──
+                const PROXY_URL = getOAuthBaseUrl(); // http://127.0.0.1:10531/v1
+                let proxyResp;
+                try {
+                    proxyResp = await gmFetch(`${PROXY_URL}/chat/completions`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer openai-oauth'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                } catch (e) {
+                    throw new Error(
+                        '❌ OpenAI request failed.\n\n' +
+                        'Direct Browser Call failed:\n' +
+                        '   ' + directErrorMsg + '\n\n' +
+                        'Local Proxy Error:\n' +
+                        '   openai-oauth proxy is not running.\n' +
+                        '   To run the proxy locally, run: npx openai-oauth'
+                    );
+                }
+
+                if (proxyResp.status === 401 || proxyResp.status === 403) {
+                    throw new Error(
+                        '❌ Not signed in to ChatGPT.\n\n' +
+                        'Please sign in via the extension in the Settings (⚙) panel.'
+                    );
+                }
+
+                if (!proxyResp.ok) {
+                    let detail = '';
+                    try { const err = await proxyResp.json(); detail = err?.error?.message || ''; } catch { }
+                    throw new Error(`[openai-oauth] Proxy error: HTTP ${proxyResp.status}${detail ? ': ' + detail : ''}`);
+                }
+
+                const proxyData = await proxyResp.json();
+                const proxyContent = proxyData.choices?.[0]?.message?.content;
+                if (!proxyContent) throw new Error('[openai-oauth] Proxy returned an empty response');
+                return proxyContent;
+
+            } else {
+                // API key mode — route through gmFetch so @connect api.openai.com applies
+                const apiKey = SETTINGS.openaiApiKey;
+                if (!apiKey) {
+                    throw new Error('OpenAI API key not configured. Please add it in settings.');
+                }
+
+                let response;
+                try {
+                    response = await gmFetch(CONFIG.APIKEY_CHAT_URL, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                } catch (netErr) {
+                    throw new Error(`OpenAI network error: ${netErr.message}`);
+                }
+
+                if (!response.ok) {
+                    let errMsg = `OpenAI API request failed: HTTP ${response.status}`;
+                    try {
+                        const err = await response.json();
+                        if (err.error?.message) errMsg = err.error.message;
+                    } catch { }
+                    throw new Error(errMsg);
+                }
+
+                const data = await response.json();
+                return data.choices?.[0]?.message?.content || '';
+            }
+        }
+
         return {
             CONFIG,
             fetchModels,
             filterModels,
             groupModels,
             clearCache,
-            normalizeModel
+            normalizeModel,
+            generateCompletion,
+            isOAuthMode,
+            isChatGPTMode,
+            getOAuthBaseUrl,
+            OAUTH_FALLBACK_MODELS
         };
     })();
 
@@ -1971,6 +2800,363 @@
     };
 
     // ============================================
+    // NVIDIA NIM PROVIDER MODULE (DYNAMIC MODEL LOADING)
+    // ============================================
+
+    const NvidiaProvider = (function () {
+        'use strict';
+
+        const CONFIG = {
+            BASE_URL: 'https://integrate.api.nvidia.com/v1',
+            MODELS_URL: 'https://integrate.api.nvidia.com/v1/models',
+            CHAT_URL: 'https://integrate.api.nvidia.com/v1/chat/completions',
+            CACHE_KEY: 'nvidia_models_cache',
+            CACHE_TTL: 6 * 60 * 60 * 1000, // 6 hours
+            DEFAULT_MODEL: 'deepseek-ai/deepseek-v4-pro'
+        };
+
+        // Publisher → category mapping for grouping
+        const PUBLISHER_GROUP = {
+            'z-ai': 'Z.ai',
+            'nvidia': 'NVIDIA',
+            'deepseek-ai': 'DeepSeek',
+            'google': 'Google',
+            'mistralai': 'Mistral',
+            'moonshotai': 'Moonshot',
+            'minimaxai': 'MiniMax',
+            'qwen': 'Qwen',
+            'stepfun-ai': 'StepFun'
+        };
+
+        // Static fallback catalog — used when API key is absent or fetch fails
+        const FALLBACK_MODELS = [
+            { id: "abacusai/dracarys-llama-3.1-70b-instruct", name: "Dracarys Llama 3.1 70B Instruct", group: "Abacus", tags: "", context: "-" },
+            { id: "ai21labs/jamba-1.5-large-instruct", name: "Jamba 1.5 Large Instruct", group: "AI21", tags: "", context: "-" },
+            { id: "bytedance/seed-oss-36b-instruct", name: "Seed Oss 36B Instruct", group: "ByteDance", tags: "", context: "-" },
+            { id: "deepseek-ai/deepseek-v4-flash", name: "Deepseek V4 Flash", group: "DeepSeek", tags: "MoE, Coding, Agents", context: "1M" },
+            { id: "deepseek-ai/deepseek-v4-pro", name: "Deepseek V4 Pro", group: "DeepSeek", tags: "MoE, Coding", context: "1M" },
+            { id: "google/gemma-2-2b-it", name: "Gemma 2 2B It", group: "Google", tags: "", context: "-" },
+            { id: "meta/llama-3.1-70b-instruct", name: "Llama 3.1 70B Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-3.1-8b-instruct", name: "Llama 3.1 8B Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-3.2-11b-vision-instruct", name: "Llama 3.2 11B Vision Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-3.2-1b-instruct", name: "Llama 3.2 1B Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-3.2-3b-instruct", name: "Llama 3.2 3B Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-3.2-90b-vision-instruct", name: "Llama 3.2 90B Vision Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-4-maverick-17b-128e-instruct", name: "Llama 4 Maverick 17B 128E Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama2-70b", name: "Llama2 70B", group: "Meta", tags: "", context: "-" },
+            { id: "mistralai/ministral-14b-instruct-2512", name: "Ministral 14B Instruct 2512", group: "Mistral", tags: "", context: "-" },
+            { id: "mistralai/mistral-large-3-675b-instruct-2512", name: "Mistral Large 3 675B Instruct 2512", group: "Mistral", tags: "", context: "-" },
+            { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B", group: "Mistral", tags: "Text Gen, Coding, Agentic", context: "128K" },
+            { id: "mistralai/mistral-nemotron", name: "Mistral Nemotron", group: "Mistral", tags: "", context: "-" },
+            { id: "mistralai/mistral-small-4-119b-2603", name: "Mistral Small 4 119B 2603", group: "Mistral", tags: "Hybrid MoE, Multimodal", context: "256K" },
+            { id: "mistralai/mixtral-8x7b-instruct-v0.1", name: "Mixtral 8X7B Instruct V0.1", group: "Mistral", tags: "", context: "-" },
+            { id: "moonshotai/kimi-k2.6", name: "Kimi K2.6", group: "Moonshot", tags: "Multimodal MoE, Agentic", context: "-" },
+            { id: "nvidia/llama-3.1-nemotron-nano-vl-8b-v1", name: "Llama 3.1 Nemotron Nano Vl 8B V1", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/llama-3.3-nemotron-super-49b-v1", name: "Llama 3.3 Nemotron Super 49B V1", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/llama-3.3-nemotron-super-49b-v1.5", name: "Llama 3.3 Nemotron Super 49B V1.5", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/nemotron-3-nano-30b-a3b", name: "Nemotron 3 Nano 30B A3B", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", name: "Nemotron 3 Nano Omni 30B A3B Reasoning", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/nemotron-3-super-120b-a12b", name: "Nemotron 3 Super 120B A12B", group: "NVIDIA", tags: "MoE, Coding, Planning", context: "1M" },
+            { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "Nemotron 3 Ultra 550B A55B", group: "NVIDIA", tags: "Agent, MoE, Tool Calling", context: "1M" },
+            { id: "nvidia/nemotron-mini-4b-instruct", name: "Nemotron Mini 4B Instruct", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/nemotron-nano-12b-v2-vl", name: "Nemotron Nano 12B V2 Vl", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/nvidia-nemotron-nano-9b-v2", name: "Nvidia Nemotron Nano 9B V2", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/vila", name: "Vila", group: "NVIDIA", tags: "", context: "-" },
+            { id: "openai/gpt-oss-120b", name: "Gpt Oss 120B", group: "OpenAI", tags: "", context: "-" },
+            { id: "openai/gpt-oss-20b", name: "Gpt Oss 20B", group: "OpenAI", tags: "", context: "-" },
+            { id: "qwen/qwen3.5-122b-a10b", name: "Qwen3.5 122B A10B", group: "Qwen", tags: "", context: "-" },
+            { id: "sarvamai/sarvam-m", name: "Sarvam M", group: "Sarvam", tags: "", context: "-" },
+            { id: "stepfun-ai/step-3.5-flash", name: "Step 3.5 Flash", group: "StepFun", tags: "", context: "-" },
+            { id: "stepfun-ai/step-3.7-flash", name: "Step 3.7 Flash", group: "StepFun", tags: "", context: "-" },
+            { id: "stockmark/stockmark-2-100b-instruct", name: "Stockmark 2 100B Instruct", group: "Stockmark", tags: "", context: "-" },
+            { id: "upstage/solar-10.7b-instruct", name: "Solar 10.7B Instruct", group: "Upstage", tags: "", context: "-" },
+            { id: "z-ai/glm-5.2", name: "Glm 5.2", group: "Z.ai", tags: "Agentic, Coding, Reasoning", context: "16K" }
+        ];
+
+        function getApiKey() {
+            const key = (SETTINGS.nvidiaApiKey || '').trim();
+            return key || null;
+        }
+
+        // Basic key format validation — nvapi- prefix
+        function validateApiKey(key) {
+            if (!key) return false;
+            // NVIDIA NIM API keys start with "nvapi-"
+            return key.startsWith('nvapi-') && key.length > 20;
+        }
+
+        function normalizeModel(rawModel) {
+            const id = rawModel.id || '';
+            const publisher = id.split('/')[0] || 'other';
+            const group = PUBLISHER_GROUP[publisher.toLowerCase()] || 'Other';
+            const shortName = id.includes('/') ? id.split('/').pop() : id;
+
+            // Derive display name — prettify the model ID
+            const displayName = rawModel.name || shortName
+                .replace(/-/g, ' ')
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, c => c.toUpperCase());
+
+            return {
+                id,
+                name: displayName,
+                group,
+                ownedBy: rawModel.owned_by || publisher,
+                tags: '',
+                context: ''
+            };
+        }
+
+        function getCachedModels() {
+            try {
+                const cached = localStorage.getItem(CONFIG.CACHE_KEY);
+                if (!cached) return null;
+                const { models, timestamp } = JSON.parse(cached);
+                if (Date.now() - timestamp < CONFIG.CACHE_TTL) return models;
+                localStorage.removeItem(CONFIG.CACHE_KEY);
+            } catch (e) {
+                try { localStorage.removeItem(CONFIG.CACHE_KEY); } catch (_) {}
+            }
+            return null;
+        }
+
+        function setCachedModels(models) {
+            try {
+                localStorage.setItem(CONFIG.CACHE_KEY, JSON.stringify({ models, timestamp: Date.now() }));
+            } catch (e) {
+                console.warn('[NVIDIA] Cache write error:', e);
+            }
+        }
+
+        function clearCache() {
+            try { localStorage.removeItem(CONFIG.CACHE_KEY); } catch (e) {}
+        }
+
+        async function fetchModels(forceRefresh = false) {
+            const apiKey = getApiKey();
+
+            if (!forceRefresh) {
+                const cached = getCachedModels();
+                if (cached && cached.length > 0) {
+                    console.log('[NVIDIA] Using cached models:', cached.length);
+                    return cached;
+                }
+            }
+
+            if (!apiKey) {
+                console.log('[NVIDIA] No API key — using fallback catalog');
+                return FALLBACK_MODELS.slice();
+            }
+
+            if (!validateApiKey(apiKey)) {
+                console.warn('[NVIDIA] API key format invalid (should start with nvapi-)');
+                return FALLBACK_MODELS.slice();
+            }
+
+            console.log('[NVIDIA] Fetching models from API...');
+            let response;
+            try {
+                response = await gmFetch(CONFIG.MODELS_URL, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+            } catch (networkErr) {
+                console.warn('[NVIDIA] Network error while fetching models:', networkErr.message);
+                return FALLBACK_MODELS.slice();
+            }
+
+            if (!response.ok) {
+                let detail = '';
+                try {
+                    const errBody = await response.json();
+                    detail = errBody?.detail || errBody?.message || errBody?.error?.message || '';
+                } catch (_) {
+                    try { detail = await response.text(); } catch (_2) {}
+                }
+                if (response.status === 401) {
+                    console.warn('[NVIDIA] 401 Unauthorized — check your API key at build.nvidia.com');
+                } else if (response.status === 429) {
+                    console.warn('[NVIDIA] 429 Rate limit exceeded');
+                } else {
+                    console.warn(`[NVIDIA] Models API HTTP ${response.status}${detail ? ': ' + detail : ''} — using fallback`);
+                }
+                return FALLBACK_MODELS.slice();
+            }
+
+            let rawResponse;
+            try {
+                rawResponse = await response.json();
+            } catch (parseErr) {
+                console.warn('[NVIDIA] Failed to parse models JSON:', parseErr.message);
+                return FALLBACK_MODELS.slice();
+            }
+
+            // OpenAI-compatible: { data: [{id, owned_by}, ...] }
+            const modelArray = Array.isArray(rawResponse?.data)
+                ? rawResponse.data
+                : Array.isArray(rawResponse) ? rawResponse : [];
+
+            if (modelArray.length === 0) {
+                console.warn('[NVIDIA] Fetched 0 models — using fallback catalog');
+                return FALLBACK_MODELS.slice();
+            }
+
+            // Exclude non-chat models (embeddings, image, etc.)
+            const excludePatterns = /embed|vision|diffusion|tts|whisper|moderation|image|audio|clip|owl/i;
+                        // Filter to verified free-tier coding models
+            const VERIFIED_FREE_MODELS = new Set([
+                "abacusai/dracarys-llama-3.1-70b-instruct",
+                "ai21labs/jamba-1.5-large-instruct",
+                "bytedance/seed-oss-36b-instruct",
+                "deepseek-ai/deepseek-v4-flash",
+                "deepseek-ai/deepseek-v4-pro",
+                "google/gemma-2-2b-it",
+                "meta/llama-3.1-70b-instruct",
+                "meta/llama-3.1-8b-instruct",
+                "meta/llama-3.2-11b-vision-instruct",
+                "meta/llama-3.2-1b-instruct",
+                "meta/llama-3.2-3b-instruct",
+                "meta/llama-3.2-90b-vision-instruct",
+                "meta/llama-4-maverick-17b-128e-instruct",
+                "meta/llama2-70b",
+                "mistralai/ministral-14b-instruct-2512",
+                "mistralai/mistral-large-3-675b-instruct-2512",
+                "mistralai/mistral-medium-3.5-128b",
+                "mistralai/mistral-nemotron",
+                "mistralai/mistral-small-4-119b-2603",
+                "mistralai/mixtral-8x7b-instruct-v0.1",
+                "moonshotai/kimi-k2.6",
+                "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+                "nvidia/llama-3.3-nemotron-super-49b-v1",
+                "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                "nvidia/nemotron-3-nano-30b-a3b",
+                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+                "nvidia/nemotron-3-super-120b-a12b",
+                "nvidia/nemotron-3-ultra-550b-a55b",
+                "nvidia/nemotron-mini-4b-instruct",
+                "nvidia/nemotron-nano-12b-v2-vl",
+                "nvidia/nvidia-nemotron-nano-9b-v2",
+                "nvidia/vila",
+                "openai/gpt-oss-120b",
+                "openai/gpt-oss-20b",
+                "qwen/qwen3.5-122b-a10b",
+                "sarvamai/sarvam-m",
+                "stepfun-ai/step-3.5-flash",
+                "stepfun-ai/step-3.7-flash",
+                "stockmark/stockmark-2-100b-instruct",
+                "upstage/solar-10.7b-instruct",
+                "z-ai/glm-5.2"
+            ]);
+            const normalized = modelArray
+            .filter(m => m && m.id && VERIFIED_FREE_MODELS.has(m.id))
+                .map(m => normalizeModel(m))
+                .sort((a, b) => {
+                    if (a.group !== b.group) return a.group.localeCompare(b.group);
+                    return a.name.localeCompare(b.name);
+                });
+
+            // Merge tags/context from fallback catalog for known models
+            const fallbackMap = {};
+            FALLBACK_MODELS.forEach(m => { fallbackMap[m.id] = m; });
+            normalized.forEach(m => {
+                const fb = fallbackMap[m.id];
+                if (fb) {
+                    m.tags = fb.tags;
+                    m.context = fb.context;
+                }
+            });
+
+            console.log('[NVIDIA] Fetched models:', normalized.length);
+            setCachedModels(normalized);
+            return normalized;
+        }
+
+        function filterModels(models, query) {
+            if (!query || !Array.isArray(models)) return models || [];
+            const q = query.toLowerCase().trim();
+            if (!q) return models;
+            return models.filter(m =>
+                (m.id || '').toLowerCase().includes(q) ||
+                (m.name || '').toLowerCase().includes(q) ||
+                (m.group || '').toLowerCase().includes(q) ||
+                (m.tags || '').toLowerCase().includes(q)
+            );
+        }
+
+        function groupModels(models) {
+            const groups = {};
+            (models || []).forEach(m => {
+                const g = m.group || 'Other';
+                if (!groups[g]) groups[g] = [];
+                groups[g].push(m);
+            });
+            return groups;
+        }
+
+        return { CONFIG, fetchModels, filterModels, groupModels, clearCache, validateApiKey, FALLBACK_MODELS };
+    })();
+
+    // NVIDIA NIM completion helper
+    const generateWithNvidia = async (prompt) => {
+        const apiKey = (SETTINGS.nvidiaApiKey || '').trim();
+        if (!apiKey) {
+            throw new Error('NVIDIA NIM API key not configured. Get a free key at build.nvidia.com.');
+        }
+        if (!NvidiaProvider.validateApiKey(apiKey)) {
+            throw new Error('NVIDIA NIM API key appears invalid (should start with nvapi-). Check settings.');
+        }
+
+        const model = SETTINGS.nvidiaModel || NvidiaProvider.CONFIG.DEFAULT_MODEL;
+
+        let response;
+        try {
+            response = await gmFetch(NvidiaProvider.CONFIG.CHAT_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model: model,
+                    messages: [{ role: 'user', content: prompt }],
+                    temperature: SETTINGS.aiTemperature || 0.1,
+                    top_p: 1,
+                    max_tokens: 16384,
+                    stream: false
+                })
+            });
+        } catch (networkErr) {
+            throw new Error(`NVIDIA NIM network error: ${networkErr.message}`);
+        }
+
+        if (!response.ok) {
+            let detail = '';
+            try {
+                const errBody = await response.json();
+                detail = errBody?.detail || errBody?.message || errBody?.error?.message || '';
+            } catch (_) {
+                try { detail = await response.text(); } catch (_2) {}
+            }
+
+            if (response.status === 401) {
+                throw new Error('NVIDIA NIM: Invalid API key. Verify your key at build.nvidia.com.');
+            } else if (response.status === 429) {
+                throw new Error('NVIDIA NIM: Rate limit exceeded. Please wait before retrying.');
+            } else if (response.status === 500 || response.status === 503) {
+                throw new Error(`NVIDIA NIM: Service unavailable (${response.status}). Try again shortly.`);
+            } else {
+                throw new Error(`NVIDIA NIM HTTP ${response.status}${detail ? ': ' + detail : ''}`);
+            }
+        }
+
+        const data = await response.json();
+        return data?.choices?.[0]?.message?.content || '';
+    };
+
+    // ============================================
     // SETTINGS UI
     // ============================================
     const createSettingsUI = () => {
@@ -2070,16 +3256,16 @@
 
         const panelHeader = document.createElement('div');
         panelHeader.style.cssText = `
-            padding: 18px 20px 14px;
+            padding: 8px 20px 6px;
             border-bottom: 1px solid rgba(255,255,255,0.07);
             background: linear-gradient(135deg, rgba(239,68,68,0.12) 0%, rgba(15,15,15,0) 60%);
             border-radius: 18px 18px 0 0;
         `;
         panelHeader.innerHTML = `
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
-                <svg viewBox="0 0 24 24" width="22" height="22" style="flex-shrink:0;filter:drop-shadow(0 0 6px rgba(239,68,68,0.6));">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="#ef4444" style="flex-shrink:0;opacity:0.7;"><path d="M12 2c-5.52 0-10 4.48-10 10s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+                <small style="color:#6e6e77;font-size:13px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">Configure features &amp; AI providers</small>
             </div>
-            <small style="color:#71717a;font-size:15px;font-weight:500;letter-spacing:0.5px;text-transform:uppercase;">Configure features &amp; AI providers</small>
         `;
 
         const panelContent = document.createElement('div');
@@ -2463,12 +3649,13 @@
                 box-sizing: border-box;
             ">
                 <option value="gemini" ${SETTINGS.aiProvider === 'gemini' ? 'selected' : ''}>Google Gemini</option>
-                <option value="openai" ${SETTINGS.aiProvider === 'openai' ? 'selected' : ''}>OpenAI (ChatGPT)</option>
+                <option value="openai" ${SETTINGS.aiProvider === 'openai' ? 'selected' : ''}>OpenAI / ChatGPT OAuth</option>
                 <option value="openrouter" ${SETTINGS.aiProvider === 'openrouter' ? 'selected' : ''}>OpenRouter (Multi-Model)</option>
                 <option value="puter" ${SETTINGS.aiProvider === 'puter' ? 'selected' : ''}>Puter.js (Free, Unlimited)</option>
                 <option value="g4f" ${SETTINGS.aiProvider === 'g4f' ? 'selected' : ''}>G4F (g4f.space)</option>
                 <option value="duckduckgo" ${SETTINGS.aiProvider === 'duckduckgo' ? 'selected' : ''}>DuckDuckGo AI (FREE!)</option>
                 <option value="yuppbridge" ${SETTINGS.aiProvider === 'yuppbridge' ? 'selected' : ''}>YuppBridge (200+ Models)</option>
+                <option value="nvidia" ${SETTINGS.aiProvider === 'nvidia' ? 'selected' : ''}>NVIDIA NIM (Free Tier)</option>
             </select>
         `;
         const providerSelect = providerWrapper.querySelector('select');
@@ -2503,6 +3690,10 @@
             const yuppbridgeModelWrapper = document.getElementById('yuppbridge-model-wrapper');
             if (yuppbridgeModelWrapper) {
                 yuppbridgeModelWrapper.style.display = providerSelect.value === 'yuppbridge' ? 'block' : 'none';
+            }
+            const nvidiaModelWrapper = document.getElementById('nvidia-model-wrapper');
+            if (nvidiaModelWrapper) {
+                nvidiaModelWrapper.style.display = providerSelect.value === 'nvidia' ? 'block' : 'none';
             }
         });
         panelContent.appendChild(providerWrapper);
@@ -2646,142 +3837,403 @@
         panelContent.appendChild(createGeminiModelSelector());
         // ========================================================
 
-        panelContent.appendChild(createTextInput('openaiApiKey', 'OpenAI API Key', SETTINGS.openaiApiKey, 'Enter your OpenAI API key'));
-
-        // ========== DYNAMIC OPENAI MODEL SELECTOR ==========
-        const createOpenAIModelSelector = () => {
+        // ========== OPENAI / CHATGPT SETTINGS (EXTENSION / PROXY / API KEY) ==========
+        const createOpenAISettings = () => {
             const wrapper = document.createElement('div');
             wrapper.id = 'openai-model-wrapper';
             wrapper.style.cssText = `padding: 10px 0; border-bottom: 1px solid #333; display: ${SETTINGS.aiProvider === 'openai' ? 'block' : 'none'};`;
 
+            // Normalize legacy modes
+            const rawMode = SETTINGS.openaiAuthMode || 'chatgpt';
+            const currentMode = (rawMode === 'extension' || rawMode === 'oauth') ? 'chatgpt' : rawMode;
+            const currentApiKey = SETTINGS.openaiApiKey || '';
+
+            const CHATGPT_LOGO_SVG = `<svg width="18" height="18" viewBox="0 0 1412 1412" fill="currentColor" xmlns="http://www.w3.org/2000/svg" style="display:block;flex-shrink:0;"><path d="M597.462 0.857699C673.717 -4.5771 755.535 16.0618 820.557 55.7878C839.621 67.4347 853.532 77.8804 870.903 91.7881C915.947 83.6597 962.083 83.5966 1007.15 91.601C1108.64 109.677 1198.75 167.436 1257.54 252.101C1315.95 336.355 1338.56 440.326 1320.41 541.218C1348.4 575.095 1369.47 609.408 1385.5 650.519C1422.8 746.143 1420.65 852.641 1379.53 946.681C1345.7 1023.88 1287.62 1087.95 1214.08 1129.17C1193.85 1140.47 1177.72 1147.33 1156.35 1155.65C1150.8 1167.38 1146.43 1180.08 1140.53 1192.52C1124.33 1226.23 1103.33 1257.42 1078.21 1285.12C1009.53 1360.77 913.675 1406.14 811.622 1411.3C797.103 1412.74 770.195 1411.71 755.535 1410.39C669.671 1402.64 607.216 1373.41 541.228 1320.14C498.371 1327.97 454.491 1328.42 411.479 1321.49C309.519 1305.16 218.308 1248.8 158.127 1164.91C95.5192 1077.93 74.597 975.652 91.7694 870.624C63.5815 837.852 41.1539 800.536 25.4414 760.272C-11.0983 663.999 -8.18036 557.204 33.5617 463.069C77.8418 363.472 155.004 295.015 255.809 256.181C260.004 248.164 265.705 231.947 270.502 221.837C286.044 188.764 306.234 158.081 330.46 130.717C398.638 53.6473 494.725 6.91416 597.462 0.857699ZM803.624 1297.49C879.882 1292.64 946.234 1261.95 997.071 1204.28C1015.09 1183.82 1029.9 1160.75 1041.02 1135.85C1047.58 1121.23 1051.8 1106.22 1056.86 1091.08C1067.19 1060.2 1088.78 1058.15 1115.61 1048.88C1125.47 1045.52 1135.09 1041.52 1144.43 1036.9C1243.91 988.43 1304.38 884.819 1297.64 774.394C1294 716.163 1271.8 660.631 1234.27 615.946C1223.26 602.711 1208.28 591.435 1203.34 574.896C1197.16 554.244 1207.83 529.807 1210.67 506.759C1221.87 416.705 1187.69 326.959 1119.41 267.154C1064.95 219.454 993.758 195.357 921.517 200.173C909.062 200.932 896.689 202.63 884.487 205.252C858.307 210.809 839.711 217.803 816.524 196.759C802.123 183.693 793.783 175.007 777.726 163.451C738.141 135.075 691.432 118.286 642.835 114.967C634.456 114.329 619.975 113.369 611.816 114.357C536.156 118.188 468.827 147.965 417.756 204.614C399.016 225.371 383.578 248.884 371.981 274.328C368.409 282.286 365.23 290.414 362.455 298.682C357.28 314.179 354.556 330.003 342.859 342.026C330.473 354.758 314.132 357.158 297.998 362.604C288.467 365.803 279.144 369.592 270.084 373.948C170.322 421.514 108.992 524.42 114.64 634.77C117.764 693.592 139.719 749.855 177.266 795.249C188.357 808.68 203.749 820.374 208.712 836.975C214.929 857.779 204.623 882.481 201.669 905.586C190.625 994.243 223.634 1082.71 290.065 1142.47C341.827 1188.92 413.829 1216.16 483.523 1212.31C496.702 1211.71 509.821 1210.17 522.783 1207.71C549.917 1202.44 573.428 1193.61 595.85 1215.61C654.397 1273.04 720.807 1298.82 803.624 1297.49Z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M528.104 673.1C645.003 673.1 739.769 767.837 739.769 884.701C739.769 1001.56 645.003 1096.3 528.104 1096.3C411.204 1096.3 316.439 1001.56 316.439 884.701C316.439 767.837 411.204 673.1 528.104 673.1ZM526.618 785.954C472.886 785.954 429.327 829.499 429.327 883.216C429.327 936.932 472.886 980.478 526.618 980.478C580.351 980.478 623.91 936.932 623.91 883.216C623.91 829.499 580.351 785.954 526.618 785.954Z"/><path d="M974.454 335.733L1055.33 416.583L688.769 783.031L607.895 702.182L974.454 335.733Z"/><path d="M820.585 766.758L704.525 767.283L821.11 650.733L820.585 766.758Z"/><path d="M937.694 649.684L821.11 650.733L938.744 533.135L937.694 649.684Z"/><path d="M1054.8 532.611L938.744 533.135L1055.33 416.586L1054.8 532.611Z"/><path d="M1054.8 336.259L1055.33 416.583L974.454 335.733L1054.8 336.259Z"/></svg>`;
+
             wrapper.innerHTML = `
-                <div style="color: #fff; font-size: 17px; margin-bottom: 6px;">OpenAI Model</div>
-                <div style="display: flex; gap: 6px; margin-bottom: 6px;">
-                    <input type="text" id="openaiModelSearch" placeholder="Search models (e.g., gpt-4, o1, turbo)" style="
-                        flex: 1;
-                        padding: 8px;
-                        border: 1px solid #444;
-                        border-radius: 6px;
-                        background: #2d2d2d;
-                        color: #fff;
-                        font-size: 15px;
-                        box-sizing: border-box;
-                    ">
-                    <button id="openaiRefreshModels" title="Refresh models list" style="
-                        padding: 8px 12px;
-                        border: 1px solid #444;
-                        border-radius: 6px;
-                        background: #3d3d3d;
-                        color: #fff;
-                        cursor: pointer;
-                        font-size: 15px;
-                    "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
+                <div style="color: #fff; font-size: 17px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+                    ${CHATGPT_LOGO_SVG}
+                    OpenAI / ChatGPT
                 </div>
-                <select id="openaiModel" style="
-                    width: 100%;
-                    padding: 8px;
-                    border: 1px solid #444;
-                    border-radius: 6px;
-                    background: #000000;
-                    color: #ffffff;
-                    font-size: 15px;
-                    box-sizing: border-box;
-                    font-family: 'VT323', monospace;
-                ">
-                    <option value="gpt-4o-mini">Loading models...</option>
-                </select>
-                <div id="openaiModelStatus" style="color: #666; font-size: 14px; margin-top: 4px;"></div>
+                <div style="color: #666; font-size: 12px; margin-bottom: 12px; line-height: 1.5;">
+                    Turn your ChatGPT account into a free API &mdash; no API key needed.
+                </div>
+
+                <!-- Auth mode tabs -->
+                <div style="display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap;">
+                    <label id="oai-mode-chatgpt-label" style="display: flex; align-items: center; gap: 8px; padding: 6px 16px 6px 12px; border-radius: 100px; cursor: pointer; border: 2px solid ${currentMode === 'chatgpt' ? '#22c55e' : '#444'}; background: ${currentMode === 'chatgpt' ? '#0f2a0f' : '#2a2a2a'}; transition: all 0.2s; overflow: hidden;">
+                        <input type="radio" name="openaiAuthMode" id="oai-mode-chatgpt" value="chatgpt" ${currentMode === 'chatgpt' ? 'checked' : ''} style="margin: 0; flex-shrink: 0;">
+                        <img src="data:image/png;base64,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" alt="Sign in with ChatGPT" style="height: 28px; width: auto; display: block; border-radius: 100px; pointer-events: none;">
+                    </label>
+                    <label id="oai-mode-apikey-label" style="display: flex; align-items: center; gap: 6px; padding: 8px 18px; border-radius: 100px; cursor: pointer; border: 2px solid ${currentMode === 'apikey' ? '#a855f7' : '#444'}; background: ${currentMode === 'apikey' ? '#280d3d' : '#2a2a2a'}; color: ${currentMode === 'apikey' ? '#c084fc' : '#888'}; font-size: 15px; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                        <input type="radio" name="openaiAuthMode" id="oai-mode-apikey" value="apikey" ${currentMode === 'apikey' ? 'checked' : ''} style="margin: 0;">
+                        &#128273; API Key <span style="font-size: 11px; opacity: 0.7;">(Direct)</span>
+                    </label>
+                </div>
+
+                <!-- ===== CHATGPT SIGN-IN PANEL ===== -->
+                <div id="oai-chatgpt-panel" style="display: ${currentMode === 'chatgpt' ? 'block' : 'none'};">
+
+                    <!-- Account status card -->
+                    <div id="oai-account-card" style="border-radius: 12px; border: 1px solid #2a2a2a; background: #0d1117; padding: 16px 18px; margin-bottom: 14px;">
+                        <!-- Status row -->
+                        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <div id="oai-account-dot" style="width: 9px; height: 9px; border-radius: 50%; background: #555; flex-shrink: 0; box-shadow: 0 0 0 2px #1a1a1a;"></div>
+                                <div>
+                                    <div id="oai-account-status" style="color: #aaa; font-size: 13px; font-weight: 600; letter-spacing: 0.01em;">Checking&hellip;</div>
+                                    <div id="oai-account-sub" style="color: #555; font-size: 11px; margin-top: 2px;"></div>
+                                </div>
+                            </div>
+                            <button id="oai-logout-btn" style="
+                                padding: 6px 12px; border-radius: 6px; border: 1px solid #333;
+                                background: transparent; color: #666; cursor: pointer; font-size: 12px;
+                                display: none; transition: all 0.15s; letter-spacing: 0.02em;">
+                                Sign Out
+                            </button>
+                        </div>
+
+                        <!-- Official Sign in with ChatGPT image button -->
+                        <button id="oai-login-btn" style="
+                            display: flex; align-items: center; justify-content: center;
+                            width: 100%; padding: 0;
+                            border-radius: 100px;
+                            border: 1.5px solid #d1d5db;
+                            background: #ffffff;
+                            cursor: pointer;
+                            box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.04);
+                            transition: all 0.15s ease;
+                            user-select: none;
+                            overflow: hidden;">
+                            <img id="oai-login-btn-text" src="data:image/png;base64,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" alt="Sign in with ChatGPT" style="height:48px;width:auto;display:block;pointer-events:none;">
+                        </button>
+
+                        <!-- Proxy info (shown when signed in) -->
+                        <div id="oai-proxy-info" style="display: none; margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: #0f1923; border: 1px solid #1e3a5f;">
+                            <div style="color: #60a5fa; font-size: 11px; font-weight: 600; margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.05em;">Proxy Endpoint</div>
+                            <div style="color: #93c5fd; font-size: 12px; font-family: 'Courier New', monospace;">http://127.0.0.1:10531/v1</div>
+                        </div>
+                    </div>
+
+                    <!-- Extension install notice -->
+                    <div id="oai-ext-notice" style="display: none; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(245,158,11,0.25); background: rgba(20,16,0,0.6); margin-bottom: 12px; backdrop-filter: blur(4px);">
+                        <div style="color: #f59e0b; font-size: 12px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 5px;">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+                            Chrome Extension Required
+                        </div>
+                        <div style="color: #9ca3af; font-size: 12px; line-height: 1.7;">
+                            The <strong style="color:#e5e7eb;">"Sign in with ChatGPT"</strong> extension intercepts the login callback.<br>
+                            <strong style="color:#e5e7eb;">One-time setup:</strong>&nbsp;
+                            <a href="https://chromewebstore.google.com/detail/sign-in-with-chatgpt/odbgboachaefbbbdiffcefhpkekhfcna" target="_blank" style="color:#60a5fa; text-decoration: underline;">Install from Chrome Web Store &rarr;</a><br>
+                            Then come back and click <strong style="color:#e5e7eb;">Sign in with ChatGPT</strong>.
+                        </div>
+                    </div>
+
+                    <!-- ChatGPT model search + select -->
+                    <div style="margin-bottom: 4px;">
+                        <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+                            <input type="text" id="openaiModelSearch" placeholder="Search models (e.g., gpt-5, mini, nano)" style="flex: 1; padding: 8px; border: 1px solid #444; border-radius: 6px; background: #2d2d2d; color: #fff; font-size: 15px; box-sizing: border-box;">
+                            <button id="openaiRefreshModels" title="Refresh models" style="padding: 8px 12px; border: 1px solid #444; border-radius: 6px; background: #3d3d3d; color: #fff; cursor: pointer; font-size: 15px;">
+                                <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                            </button>
+                        </div>
+                        <select id="openaiModel" style="width: 100%; padding: 8px; border: 1px solid #444; border-radius: 6px; background: #000; color: #fff; font-size: 15px; box-sizing: border-box; font-family: 'VT323', monospace;">
+                            <option value="gpt-5.4-mini">Loading models&hellip;</option>
+                        </select>
+                        <div id="openaiModelStatus" style="color: #666; font-size: 12px; margin-top: 4px;"></div>
+                    </div>
+                </div>
+
+                <!-- ===== API KEY PANEL ===== -->
+                <div id="oai-apikey-panel" style="display: ${currentMode === 'apikey' ? 'block' : 'none'};">
+                    <div style="margin-bottom: 8px;">
+                        <label style="color: #aaa; font-size: 14px; display: block; margin-bottom: 4px;">OpenAI API Key</label>
+                        <input type="password" id="openaiApiKeyInput" value="${currentApiKey}" placeholder="sk-..." style="width: 100%; padding: 8px; border: 1px solid #444; border-radius: 6px; background: #1a1a1a; color: #fff; font-size: 15px; box-sizing: border-box;">
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+                        <input type="text" id="openaiModelSearchApikey" placeholder="Search models (e.g., gpt-4, o1, turbo)" style="flex: 1; padding: 8px; border: 1px solid #444; border-radius: 6px; background: #2d2d2d; color: #fff; font-size: 15px; box-sizing: border-box;">
+                        <button id="openaiRefreshModelsApikey" title="Refresh models" style="padding: 8px 12px; border: 1px solid #444; border-radius: 6px; background: #3d3d3d; color: #fff; cursor: pointer; font-size: 15px;">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                        </button>
+                    </div>
+                    <select id="openaiModelApikey" style="width: 100%; padding: 8px; border: 1px solid #444; border-radius: 6px; background: #000; color: #fff; font-size: 15px; box-sizing: border-box; font-family: 'VT323', monospace;">
+                        <option value="gpt-4o-mini">Loading models&hellip;</option>
+                    </select>
+                    <div id="openaiModelStatusApikey" style="color: #666; font-size: 12px; margin-top: 4px;"></div>
+                </div>
             `;
 
             setTimeout(() => {
-                const select = document.getElementById('openaiModel');
-                const searchInput = document.getElementById('openaiModelSearch');
-                const refreshBtn = document.getElementById('openaiRefreshModels');
-                const statusDiv = document.getElementById('openaiModelStatus');
+                // ---- element refs ----
+                const modeChatGPT = document.getElementById('oai-mode-chatgpt');
+                const modeApiKey  = document.getElementById('oai-mode-apikey');
+                const chatgptPanel = document.getElementById('oai-chatgpt-panel');
+                const apikeyPanel  = document.getElementById('oai-apikey-panel');
+                const labelChatGPT = document.getElementById('oai-mode-chatgpt-label');
+                const labelApikey  = document.getElementById('oai-mode-apikey-label');
 
-                let allModels = [];
+                const accountDot    = document.getElementById('oai-account-dot');
+                const accountStatus = document.getElementById('oai-account-status');
+                const accountSub    = document.getElementById('oai-account-sub');
+                const loginBtn      = document.getElementById('oai-login-btn');
+                const loginBtnText  = document.getElementById('oai-login-btn-text');
+                const logoutBtn     = document.getElementById('oai-logout-btn');
+                const extNotice     = document.getElementById('oai-ext-notice');
+                const proxyInfo     = document.getElementById('oai-proxy-info');
 
-                const populateSelect = (models) => {
+                const modelSelect  = document.getElementById('openaiModel');
+                const modelSearch  = document.getElementById('openaiModelSearch');
+                const refreshBtn   = document.getElementById('openaiRefreshModels');
+                const modelStatus  = document.getElementById('openaiModelStatus');
+
+                const apiKeyInput        = document.getElementById('openaiApiKeyInput');
+                const modelSelectApikey  = document.getElementById('openaiModelApikey');
+                const modelSearchApikey  = document.getElementById('openaiModelSearchApikey');
+                const refreshBtnApikey   = document.getElementById('openaiRefreshModelsApikey');
+                const modelStatusApikey  = document.getElementById('openaiModelStatusApikey');
+
+                let allModelsChatGPT = [];
+                let allModelsApikey  = [];
+
+                // ---- helpers ----
+                const populateModelSelect = (select, models, currentValue, statusEl) => {
                     if (!select) return;
-                    const currentValue = SETTINGS.openaiModel || 'gpt-4o-mini';
+                    const val = currentValue || SETTINGS.openaiModel;
                     select.innerHTML = '';
-
-                    // Group models by category
+                    const categoryOrder = ['GPT-5 (Codex)', 'GPT-4o', 'Reasoning (o-series)', 'GPT-4', 'GPT-3.5', 'Legacy', 'Other'];
                     const groups = OpenAIProvider.groupModels(models);
-                    const categoryOrder = ['GPT-4o', 'Reasoning (o-series)', 'GPT-4', 'GPT-3.5', 'Legacy', 'Other'];
-
-                    for (const category of categoryOrder) {
-                        const categoryModels = groups[category];
-                        if (!categoryModels || categoryModels.length === 0) continue;
-
+                    for (const cat of categoryOrder) {
+                        const catModels = groups[cat];
+                        if (!catModels || catModels.length === 0) continue;
                         const optgroup = document.createElement('optgroup');
-                        optgroup.label = `${category} (${categoryModels.length})`;
-                        categoryModels.forEach(model => {
-                            const option = document.createElement('option');
-                            option.value = model.id;
-                            option.textContent = model.name;
-                            option.selected = model.id === currentValue;
-                            optgroup.appendChild(option);
+                        optgroup.label = `${cat} (${catModels.length})`;
+                        catModels.forEach(m => {
+                            const opt = document.createElement('option');
+                            opt.value = m.id;
+                            opt.textContent = m.name;
+                            opt.selected = m.id === val;
+                            optgroup.appendChild(opt);
                         });
                         select.appendChild(optgroup);
                     }
-
-                    if (statusDiv) statusDiv.textContent = `${models.length} models available`;
+                    if (statusEl) statusEl.textContent = `${models.length} models available`;
                 };
 
-                const loadModels = async (forceRefresh = false) => {
-                    if (statusDiv) statusDiv.textContent = 'Loading models...';
-                    if (refreshBtn) {
-                        refreshBtn.disabled = true;
-                        refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;animation:bypassSpin 1s linear infinite"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>';
+                const applyMode = (mode) => {
+                    if (chatgptPanel) chatgptPanel.style.display = mode === 'chatgpt' ? 'block' : 'none';
+                    if (apikeyPanel)  apikeyPanel.style.display  = mode === 'apikey'  ? 'block' : 'none';
+                    if (labelChatGPT) {
+                        labelChatGPT.style.borderColor = mode === 'chatgpt' ? '#22c55e' : '#444';
+                        labelChatGPT.style.background  = mode === 'chatgpt' ? '#0f2a0f' : '#2a2a2a';
+                        labelChatGPT.style.color       = mode === 'chatgpt' ? '#22c55e' : '#888';
                     }
+                    if (labelApikey) {
+                        labelApikey.style.borderColor = mode === 'apikey' ? '#a855f7' : '#444';
+                        labelApikey.style.background  = mode === 'apikey' ? '#280d3d' : '#2a2a2a';
+                        labelApikey.style.color       = mode === 'apikey' ? '#c084fc' : '#888';
+                    }
+                };
 
-                    try {
-                        allModels = await OpenAIProvider.fetchModels(forceRefresh);
-                        populateSelect(allModels);
-                        if (statusDiv) statusDiv.textContent = `${allModels.length} models loaded`;
-                    } catch (error) {
-                        console.error('[OpenAI] Failed to load models:', error);
-                        if (statusDiv) statusDiv.textContent = `Error: ${error.message}`;
-                        select.innerHTML = '<option value="gpt-4o-mini" selected>GPT-4o Mini (Default)</option>';
-                    } finally {
-                        if (refreshBtn) {
-                            refreshBtn.disabled = false;
-                            refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
+                // ---- account status ----
+                const refreshAccountStatus = async () => {
+                    if (!accountStatus) return;
+                    const signedIn = OAuthLogin.isSignedIn();
+                    if (signedIn) {
+                        accountDot.style.background = '#22c55e';
+                        accountDot.style.boxShadow  = '0 0 0 3px rgba(34,197,94,0.2)';
+                        accountStatus.style.color   = '#22c55e';
+                        accountStatus.textContent   = '✅ Signed in with ChatGPT';
+                        accountSub.textContent      = 'Connected via openai-oauth proxy — ready to use!';
+                        if (loginBtn)  loginBtn.style.display  = 'none';
+                        if (logoutBtn) logoutBtn.style.display = 'block';
+                        if (extNotice) extNotice.style.display = 'none';
+                        if (proxyInfo) proxyInfo.style.display = 'block';
+                    } else {
+                        accountDot.style.background = '#555';
+                        accountDot.style.boxShadow  = '0 0 0 2px #1a1a1a';
+                        accountStatus.style.color   = '#6b7280';
+                        accountStatus.textContent   = 'Not signed in';
+                        accountSub.textContent      = 'Run npx openai-oauth login, then click sign in below';
+                        if (loginBtn)  loginBtn.style.display  = 'flex';
+                        if (logoutBtn) logoutBtn.style.display = 'none';
+                        if (proxyInfo) proxyInfo.style.display = 'none';
+                        const extInstalled = await OAuthLogin.isExtensionInstalled();
+                        if (extNotice) extNotice.style.display = extInstalled ? 'none' : 'block';
+                    }
+                };
+
+                // ---- login button hover effects + click ----
+                if (loginBtn) {
+                    loginBtn.addEventListener('mouseenter', () => {
+                        if (!loginBtn.disabled) {
+                            loginBtn.style.background = '#f3f4f6';
+                            loginBtn.style.boxShadow  = '0 2px 8px rgba(0,0,0,0.15), 0 6px 24px rgba(0,0,0,0.08)';
+                            loginBtn.style.transform  = 'translateY(-1px)';
                         }
+                    });
+                    loginBtn.addEventListener('mouseleave', () => {
+                        if (!loginBtn.disabled) {
+                            loginBtn.style.background = '#ffffff';
+                            loginBtn.style.boxShadow  = '0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.04)';
+                            loginBtn.style.transform  = 'translateY(0)';
+                        }
+                    });
+                    loginBtn.addEventListener('mousedown', () => {
+                        loginBtn.style.transform  = 'translateY(0) scale(0.98)';
+                        loginBtn.style.boxShadow  = '0 1px 2px rgba(0,0,0,0.1)';
+                    });
+                    loginBtn.addEventListener('click', async () => {
+                        loginBtn.disabled = true;
+                        loginBtn.style.opacity = '0.7';
+                        loginBtn.style.cursor  = 'wait';
+                        if (loginBtnText) loginBtnText.textContent = 'Opening login…';
+                        try {
+                            const result = await OAuthLogin.initiateLogin();
+                            if (result.status === 'needs-extension') {
+                                if (extNotice) extNotice.style.display = 'block';
+                                if (loginBtnText) loginBtnText.textContent = 'Install extension first';
+                                window.open(result.installUrl, '_blank');
+                                loginBtn.disabled = false;
+                                loginBtn.style.opacity = '1';
+                                loginBtn.style.cursor  = 'pointer';
+                                if (loginBtnText) setTimeout(() => { loginBtnText.textContent = 'Sign in with ChatGPT'; }, 3000);
+
+                            } else if (result.status === 'started' && result.popup) {
+                                // Popup opened — poll until it closes (extension redirects popup to our page)
+                                if (loginBtnText) loginBtnText.textContent = 'Waiting for login…';
+                                const pollTimer = setInterval(async () => {
+                                    const done = OAuthLogin.isSignedIn();
+                                    if (done || (result.popup && result.popup.closed)) {
+                                        clearInterval(pollTimer);
+                                        loginBtn.disabled = false;
+                                        loginBtn.style.opacity = '1';
+                                        loginBtn.style.cursor  = 'pointer';
+                                        if (loginBtnText) loginBtnText.textContent = 'Sign in with ChatGPT';
+                                        await refreshAccountStatus();
+                                        if (OAuthLogin.isSignedIn()) loadChatGPTModels(true);
+                                    }
+                                }, 800);
+                                // Safety timeout — stop polling after 3 minutes
+                                setTimeout(() => clearInterval(pollTimer), 3 * 60 * 1000);
+
+                            } else {
+                                // Popup was blocked → same-tab redirect already happened
+                                if (loginBtnText) loginBtnText.textContent = 'Redirecting…';
+                            }
+                        } catch (e) {
+                            console.error('[OAuthLogin] Login error:', e);
+                            if (loginBtnText) loginBtnText.textContent = 'Error — try again';
+                            loginBtn.disabled = false;
+                            loginBtn.style.opacity = '1';
+                            loginBtn.style.cursor  = 'pointer';
+                            setTimeout(() => { if (loginBtnText) loginBtnText.textContent = 'Sign in with ChatGPT'; }, 3000);
+                        }
+                    });
+                }
+
+                // ---- logout button ----
+                if (logoutBtn) {
+                    logoutBtn.addEventListener('click', () => {
+                        OAuthLogin.logout();
+                        refreshAccountStatus();
+                        loadChatGPTModels(true);
+                    });
+                }
+
+                // ---- mode switching ----
+                if (modeChatGPT) modeChatGPT.addEventListener('change', () => {
+                    SETTINGS.openaiAuthMode = 'chatgpt';
+                    saveSettings(SETTINGS);
+                    applyMode('chatgpt');
+                    refreshAccountStatus();
+                    loadChatGPTModels();
+                });
+                if (modeApiKey) modeApiKey.addEventListener('change', () => {
+                    SETTINGS.openaiAuthMode = 'apikey';
+                    saveSettings(SETTINGS);
+                    applyMode('apikey');
+                    loadApiKeyModels();
+                });
+
+                // ---- ChatGPT model loading ----
+                const loadChatGPTModels = async (forceRefresh = false) => {
+                    if (modelStatus) modelStatus.textContent = 'Loading modelsâ€¦';
+                    if (refreshBtn) refreshBtn.disabled = true;
+                    try {
+                        allModelsChatGPT = await OpenAIProvider.fetchModels(forceRefresh);
+                        populateModelSelect(modelSelect, allModelsChatGPT, SETTINGS.openaiModel, modelStatus);
+                    } catch (e) {
+                        if (modelStatus) modelStatus.textContent = `Error: ${e.message}`;
+                    } finally {
+                        if (refreshBtn) refreshBtn.disabled = false;
                     }
                 };
 
-                if (searchInput) {
-                    let searchTimeout;
-                    searchInput.addEventListener('input', () => {
-                        clearTimeout(searchTimeout);
-                        searchTimeout = setTimeout(() => {
-                            const filtered = OpenAIProvider.filterModels(allModels, searchInput.value.trim());
-                            populateSelect(filtered);
+                if (refreshBtn) refreshBtn.addEventListener('click', () => loadChatGPTModels(true));
+                if (modelSearch) {
+                    let t;
+                    modelSearch.addEventListener('input', () => {
+                        clearTimeout(t);
+                        t = setTimeout(() => {
+                            const filtered = OpenAIProvider.filterModels(allModelsChatGPT, modelSearch.value.trim());
+                            populateModelSelect(modelSelect, filtered, SETTINGS.openaiModel, modelStatus);
                         }, 150);
                     });
                 }
+                if (modelSelect) modelSelect.addEventListener('change', () => { SETTINGS.openaiModel = modelSelect.value; saveSettings(SETTINGS); });
 
-                if (refreshBtn) {
-                    refreshBtn.addEventListener('click', () => loadModels(true));
+                // ---- API Key model loading ----
+                const loadApiKeyModels = async (forceRefresh = false) => {
+                    if (modelStatusApikey) modelStatusApikey.textContent = 'Loading modelsâ€¦';
+                    if (refreshBtnApikey) refreshBtnApikey.disabled = true;
+                    try {
+                        allModelsApikey = await OpenAIProvider.fetchModels(forceRefresh);
+                        populateModelSelect(modelSelectApikey, allModelsApikey, SETTINGS.openaiModel, modelStatusApikey);
+                    } catch (e) {
+                        if (modelStatusApikey) modelStatusApikey.textContent = `Error: ${e.message}`;
+                    } finally {
+                        if (refreshBtnApikey) refreshBtnApikey.disabled = false;
+                    }
+                };
+
+                if (refreshBtnApikey) refreshBtnApikey.addEventListener('click', () => loadApiKeyModels(true));
+                if (modelSearchApikey) {
+                    let t;
+                    modelSearchApikey.addEventListener('input', () => {
+                        clearTimeout(t);
+                        t = setTimeout(() => {
+                            const filtered = OpenAIProvider.filterModels(allModelsApikey, modelSearchApikey.value.trim());
+                            populateModelSelect(modelSelectApikey, filtered, SETTINGS.openaiModel, modelStatusApikey);
+                        }, 150);
+                    });
                 }
-
-                if (select) {
-                    select.addEventListener('change', () => {
-                        SETTINGS.openaiModel = select.value;
-                        saveSettings(SETTINGS);
+                if (modelSelectApikey) modelSelectApikey.addEventListener('change', () => { SETTINGS.openaiModel = modelSelectApikey.value; saveSettings(SETTINGS); });
+                if (apiKeyInput) {
+                    let saveTimeout;
+                    apiKeyInput.addEventListener('input', () => {
+                        clearTimeout(saveTimeout);
+                        saveTimeout = setTimeout(() => { SETTINGS.openaiApiKey = apiKeyInput.value; saveSettings(SETTINGS); }, 500);
                     });
                 }
 
-                loadModels();
+                // ---- initial load ----
+                const mode = currentMode || 'chatgpt';
+                applyMode(mode);
+                if (mode === 'chatgpt') {
+                    refreshAccountStatus();
+                    loadChatGPTModels();
+                } else {
+                    loadApiKeyModels();
+                }
             }, 100);
 
             return wrapper;
         };
 
-        panelContent.appendChild(createOpenAIModelSelector());
+
+        panelContent.appendChild(createOpenAISettings());
         // ========================================================
+
 
         panelContent.appendChild(createTextInput('openrouterApiKey', 'OpenRouter API Key', SETTINGS.openrouterApiKey, 'Enter your OpenRouter API key'));
 
@@ -3659,9 +5111,146 @@
         panelContent.appendChild(createYuppBridgeModelSelector());
         // ==============================================================
 
+        // ========== NVIDIA NIM API KEY + MODEL SELECTOR ==========
+        panelContent.appendChild(createTextInput('nvidiaApiKey', 'NVIDIA NIM API Key', SETTINGS.nvidiaApiKey, 'nvapi-... (free key from build.nvidia.com)'));
+
+        const createNvidiaModelSelector = () => {
+            const wrapper = document.createElement('div');
+            wrapper.id = 'nvidia-model-wrapper';
+            wrapper.style.cssText = `padding: 10px 0; border-bottom: 1px solid #333; display: ${SETTINGS.aiProvider === 'nvidia' ? 'block' : 'none'};`;
+
+            wrapper.innerHTML = `
+                <div style="color: #fff; font-size: 17px; margin-bottom: 6px;">NVIDIA NIM Model</div>
+                <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+                    <input type="text" id="nvidiaModelSearch" placeholder="Search models (e.g., nemotron, deepseek, kimi)" style="
+                        flex: 1;
+                        padding: 8px;
+                        border: 1px solid #444;
+                        border-radius: 6px;
+                        background: #2d2d2d;
+                        color: #fff;
+                        font-size: 15px;
+                        box-sizing: border-box;
+                    ">
+                    <button id="nvidiaRefreshModels" title="Refresh models from API" style="
+                        padding: 8px 12px;
+                        border: 1px solid #444;
+                        border-radius: 6px;
+                        background: #3d3d3d;
+                        color: #fff;
+                        cursor: pointer;
+                        font-size: 15px;
+                    "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
+                </div>
+                <select id="nvidiaModel" style="
+                    width: 100%;
+                    padding: 8px;
+                    border: 1px solid #444;
+                    border-radius: 6px;
+                    background: #000000;
+                    color: #76b900;
+                    font-size: 15px;
+                    box-sizing: border-box;
+                    font-family: 'VT323', monospace;
+                ">
+                    <option value="z-ai/glm-5.2">Loading models...</option>
+                </select>
+                <div id="nvidiaModelStatus" style="color: #666; font-size: 14px; margin-top: 4px;"></div>
+            `;
+
+            setTimeout(() => {
+                const select = document.getElementById('nvidiaModel');
+                const searchInput = document.getElementById('nvidiaModelSearch');
+                const refreshBtn = document.getElementById('nvidiaRefreshModels');
+                const statusDiv = document.getElementById('nvidiaModelStatus');
+
+                let allModels = [];
+
+                const populateSelect = (models) => {
+                    if (!select) return;
+                    const currentValue = SETTINGS.nvidiaModel || NvidiaProvider.CONFIG.DEFAULT_MODEL;
+                    select.innerHTML = '';
+
+                    const groups = NvidiaProvider.groupModels(models);
+                    const groupOrder = ['NVIDIA', 'Z.ai', 'DeepSeek', 'Google', 'Mistral', 'Moonshot', 'MiniMax', 'Qwen', 'StepFun', 'Other'];
+                    const renderedGroups = new Set();
+
+                    // Render in priority order first, then remaining
+                    [...groupOrder, ...Object.keys(groups).filter(g => !groupOrder.includes(g))].forEach(g => {
+                        if (renderedGroups.has(g) || !groups[g] || groups[g].length === 0) return;
+                        renderedGroups.add(g);
+                        const optgroup = document.createElement('optgroup');
+                        optgroup.label = `${g} (${groups[g].length})`;
+                        groups[g].forEach(model => {
+                            const option = document.createElement('option');
+                            option.value = model.id;
+                            const tagsStr = model.tags ? ` — ${model.tags}` : '';
+                            const ctxStr = model.context ? ` [${model.context}]` : '';
+                            option.textContent = `${model.name} (Free)${ctxStr}${tagsStr}`;
+                            option.selected = model.id === currentValue;
+                            optgroup.appendChild(option);
+                        });
+                        select.appendChild(optgroup);
+                    });
+
+                    if (statusDiv) statusDiv.textContent = `${models.length} models available`;
+                };
+
+                const loadModels = async (forceRefresh = false) => {
+                    if (statusDiv) statusDiv.textContent = 'Loading models...';
+                    if (refreshBtn) {
+                        refreshBtn.disabled = true;
+                        refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;animation:bypassSpin 1s linear infinite"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>';
+                    }
+                    try {
+                        allModels = await NvidiaProvider.fetchModels(forceRefresh);
+                        populateSelect(allModels);
+                        if (statusDiv) statusDiv.textContent = `${allModels.length} models loaded`;
+                    } catch (error) {
+                        console.error('[NVIDIA] Failed to load models:', error);
+                        if (statusDiv) statusDiv.textContent = `Error: ${error.message}`;
+                        if (select) select.innerHTML = '<option value="z-ai/glm-5.2" selected>GLM-5.2 (Default)</option>';
+                    } finally {
+                        if (refreshBtn) {
+                            refreshBtn.disabled = false;
+                            refreshBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
+                        }
+                    }
+                };
+
+                if (searchInput) {
+                    let searchTimeout;
+                    searchInput.addEventListener('input', () => {
+                        clearTimeout(searchTimeout);
+                        searchTimeout = setTimeout(() => {
+                            const filtered = NvidiaProvider.filterModels(allModels, searchInput.value.trim());
+                            populateSelect(filtered);
+                        }, 150);
+                    });
+                }
+
+                if (refreshBtn) {
+                    refreshBtn.addEventListener('click', () => loadModels(true));
+                }
+
+                if (select) {
+                    select.addEventListener('change', () => {
+                        SETTINGS.nvidiaModel = select.value;
+                        saveSettings(SETTINGS);
+                    });
+                }
+
+                loadModels();
+            }, 100);
+
+            return wrapper;
+        };
+        panelContent.appendChild(createNvidiaModelSelector());
+        // =========================================================
+
         const note = document.createElement('div');
         note.style.cssText = 'color:#3f3f46;font-size:14px;padding:14px 4px;text-align:center;font-family:"VT323",monospace;line-height:1.7;border-top:1px solid rgba(255,255,255,0.05);margin-top:4px;';
-        note.innerHTML = 'Reload page after changing settings<br>Keys: <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#4CAF50;">Gemini</a> | <a href="https://openrouter.ai/keys" target="_blank" style="color:#4CAF50;">OpenRouter</a> | <a href="https://g4f.space" target="_blank" style="color:#4CAF50;">G4F</a><br>Puter.js: no API key required | <a href="https://developer.puter.com/ai/" target="_blank" style="color:#2196F3;">Puter AI docs</a><br>DuckDuckGo AI is FREE! | <a href="https://github.com/cloudWaddie/yuppbridge" target="_blank" style="color:#2196F3;">YuppBridge</a>';
+        note.innerHTML = 'Reload page after changing settings<br>Keys: <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#4CAF50;">Gemini</a> | <a href="https://openrouter.ai/keys" target="_blank" style="color:#4CAF50;">OpenRouter</a> | <a href="https://g4f.space" target="_blank" style="color:#4CAF50;">G4F</a><br>Puter.js: no API key required | <a href="https://developer.puter.com/ai/" target="_blank" style="color:#2196F3;">Puter AI docs</a><br>DuckDuckGo AI is FREE! | <a href="https://github.com/cloudWaddie/yuppbridge" target="_blank" style="color:#2196F3;">YuppBridge</a><br>NVIDIA NIM: Free key at <a href="https://build.nvidia.com" target="_blank" style="color:#76b900;">build.nvidia.com</a>';
         panelContent.appendChild(note);
 
         panel.appendChild(panelHeader);
@@ -5752,36 +7341,35 @@
         return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     };
 
+    // ---- OpenAI OAuth proxy health check ----
+    // Returns { ok, modelsCount, error, baseUrl }
+    const checkOpenAIOAuthProxy = async () => {
+        const baseUrl = OpenAIProvider.getOAuthBaseUrl();
+        try {
+            const response = await gmFetch(`${baseUrl}/models`, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json', 'Authorization': 'Bearer openai-oauth' }
+            });
+            if (response.status === 401 || response.status === 403) {
+                return { ok: false, modelsCount: 0, error: 'not_signed_in', baseUrl };
+            }
+            if (!response.ok) {
+                return { ok: false, modelsCount: 0, error: `HTTP ${response.status}`, baseUrl };
+            }
+            const data = await response.json();
+            const rawModels = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
+            return { ok: true, modelsCount: rawModels.length, error: null, baseUrl };
+        } catch (e) {
+            return { ok: false, modelsCount: 0, error: 'offline', baseUrl };
+        }
+    };
+
+    // Thin wrapper — all logic lives in OpenAIProvider.generateCompletion
     const generateWithOpenAI = async (prompt) => {
-        const apiKey = SETTINGS.openaiApiKey;
-        if (!apiKey) {
-            throw new Error('OpenAI API key not configured. Please add it in settings.');
-        }
-
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model: SETTINGS.openaiModel || 'gpt-4o-mini',
-                messages: [{
-                    role: 'user',
-                    content: prompt
-                }],
-                temperature: SETTINGS.aiTemperature,
-                max_tokens: 2048
-            })
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error?.message || 'OpenAI API request failed');
-        }
-
-        const data = await response.json();
-        return data.choices?.[0]?.message?.content || '';
+        return OpenAIProvider.generateCompletion(
+            [{ role: 'user', content: prompt }],
+            { model: SETTINGS.openaiModel, temperature: SETTINGS.aiTemperature }
+        );
     };
 
     // Shared OpenRouter request gate to avoid bursty 429s across repeated AutoSolver calls
@@ -5993,6 +7581,27 @@
         let lastResult = await requestModelWithRetry(primaryModel, 3);
         if (lastResult.ok) {
             return lastResult.content;
+        }
+
+        // Fallback to other free models if the primary model failed and is a free model
+        const isFreeModel = primaryModel.endsWith(':free');
+        if (isFreeModel) {
+            const fallbackModels = [
+                'qwen/qwen-2.5-coder-32b-instruct:free',
+                'qwen/qwen3-coder:free',
+                'meta-llama/llama-3.3-70b-instruct:free',
+                'google/gemma-4-31b-it:free',
+                'openai/gpt-oss-20b:free'
+            ].filter(m => m !== primaryModel);
+
+            for (const fallbackModel of fallbackModels) {
+                console.log(`[OpenRouter] Primary model "${primaryModel}" failed. Trying fallback model: "${fallbackModel}"`);
+                const fallbackResult = await requestModelWithRetry(fallbackModel, 1);
+                if (fallbackResult.ok) {
+                    console.log(`[OpenRouter] Fallback model "${fallbackModel}" succeeded.`);
+                    return fallbackResult.content;
+                }
+            }
         }
 
         const primaryErr = lastResult.errMsg || 'Unknown error';
@@ -6481,6 +8090,8 @@ SOLVING APPROACH:
                         return await generateWithDuckDuckGo(promptText);
                     case 'yuppbridge':
                         return await generateWithYuppBridge(promptText);
+                    case 'nvidia':
+                        return await generateWithNvidia(promptText);
                     default:
                         throw new Error(`Unknown AI provider: ${SETTINGS.aiProvider}`);
                 }
@@ -6500,6 +8111,19 @@ SOLVING APPROACH:
                         } catch (err) {
                             answers = response.split('\n').map(l => l.replace(/^[-\s*"\']+|["\',\s*]+$/g, '')).filter(Boolean);
                         }
+                    } else if (problem.blankInputs.length === 1) {
+                        // Fallback when only 1 blank and no JSON array: treat the extracted code block (or whole text) as the single answer
+                        answers = [extractCode(response, language)];
+                    } else {
+                        // Fallback for multiple blanks: split by line and clean list markers
+                        answers = response.split('\n')
+                            .map(l => {
+                                let clean = l.trim();
+                                // Strip list markers (e.g. "- ", "* ", "1. ")
+                                clean = clean.replace(/^[-*•#]\s+/, '').replace(/^\d+\.\s*/, '').trim();
+                                return clean;
+                            })
+                            .filter(Boolean);
                     }
                 }
 
@@ -7516,7 +9140,11 @@ SOLVING APPROACH:
                 }
             }
 
-            updateStatus(`Failed after ${maxRetries} attempts`, 'error');
+            updateStatus(`Failed after ${maxRetries} attempts. Moving to next...`, 'warning');
+            await sleep(3000);
+            checkStop();
+            const movedNext = await clickProceedNext();
+            if (movedNext) return true;
             return false;
         }
 
@@ -7676,6 +9304,9 @@ SOLVING APPROACH:
         });
         let currentState = STATE.IDLE;
         let activeController = null;
+        let visitedPaths = new Set(); // Bug fix: prevents infinite crawl recursion
+        let cachedTrackData = null; // Caching: map of Level -> Track -> parts array
+        let activeSolvedCounts = null; // Caching: current solved counts for comparison
 
         // ── JSF ViewState & Sequential Request Queue ─────────────────────────
         let currentViewState = null;
@@ -8088,11 +9719,38 @@ SOLVING APPROACH:
             return { html, viewState: freshState };
         }
 
+        function getCachedTrackIfUnchanged(levelName, trackName, solvedCounts) {
+            if (!cachedTrackData || !cachedTrackData[levelName] || !cachedTrackData[levelName][trackName]) return null;
+            const parts = cachedTrackData[levelName][trackName];
+            
+            // Verify if all parts in cache match fresh solvedCounts
+            for (const part of parts) {
+                const fresh = matchSolvedInfo(part.partName, solvedCounts);
+                if (!fresh) return null; // Not in fresh solved counts, must crawl
+                if (fresh.solvedCount !== (part.solvedCount || 0)) return null; // Count changed, must crawl
+            }
+            return parts;
+        }
+
         // ── Recursive Deep Crawler ───────────────────────────────────────────
         async function crawlPage(url, transition, parentViewState, pathNames, buttonPath, statusCallback) {
             if (activeController && activeController.signal.aborted) throw new Error('Cancelled');
-            
-            const currentPathName = pathNames.join(' ➔ ');
+
+            // Bug fix 1: hard depth limit — prevents runaway recursion on unexpected page shapes
+            if (buttonPath.length > 6) {
+                console.warn('[FindIncomplete] Max depth exceeded at:', pathNames.join(' > '));
+                return [];
+            }
+
+            // Bug fix 2: visited-path deduplication — prevents re-entering the same server state
+            const pathKey = pathNames.join('\u27F6') + '\xA7' + buttonPath.map(t => t.btnName || t.href || '').join('>');
+            if (visitedPaths.has(pathKey)) {
+                console.warn('[FindIncomplete] Already visited:', pathKey);
+                return [];
+            }
+            visitedPaths.add(pathKey);
+
+            const currentPathName = pathNames.join(' \u27A1 ');
             if (currentPathName) {
                 statusCallback(`Scraping: ${currentPathName}...`);
             }
@@ -8332,6 +9990,17 @@ SOLVING APPROACH:
                     continue;
                 }
 
+                // Caching check: if trans is a Track (we're at level root), check if we can bypass crawling
+                if (buttonPath.length === 0 && activeSolvedCounts) {
+                    const levelName = pathNames[0];
+                    const cachedTrackParts = getCachedTrackIfUnchanged(levelName, trans.name, activeSolvedCounts);
+                    if (cachedTrackParts) {
+                        console.log(`[FindIncomplete] Cache HIT for track ${levelName} > ${trans.name}. Skipping crawl.`);
+                        results = results.concat(cachedTrackParts);
+                        continue;
+                    }
+                }
+
                 const nextUrl = trans.type === 'LINK' ? trans.href : url;
                 const nextResults = await crawlPage(
                     nextUrl,
@@ -8382,12 +10051,37 @@ SOLVING APPROACH:
         async function runFullCrawl() {
             if (currentState === STATE.SCANNING) return;
             setState(STATE.SCANNING);
-            showStatus('Starting full scan...', '🔍');
+            visitedPaths.clear(); // Bug fix: reset visited set for each fresh crawl
+            
+            showStatus('Fetching solved counts...', '📊');
             renderScanningState();
+            updateLoadingMessage('Fetching solved counts...');
 
             activeController = new AbortController();
 
             try {
+                // Fetch solved counts first to match against cache and avoid crawling unchanged tracks
+                const solvedCounts = await getSolvedCounts();
+                activeSolvedCounts = solvedCounts;
+
+                // Load existing cache to check if we can skip some tracks
+                cachedTrackData = {};
+                try {
+                    const raw = storage.getValue('find_incomplete_cache_v2');
+                    if (raw) {
+                        const parts = JSON.parse(raw).parts || [];
+                        parts.forEach(p => {
+                            if (p.status !== 'ok' || !p.levelName || !p.buttonPath || p.buttonPath.length === 0) return;
+                            const trackName = p.buttonPath[0].name;
+                            if (!cachedTrackData[p.levelName]) cachedTrackData[p.levelName] = {};
+                            if (!cachedTrackData[p.levelName][trackName]) cachedTrackData[p.levelName][trackName] = [];
+                            cachedTrackData[p.levelName][trackName].push(p);
+                        });
+                    }
+                } catch (e) {
+                    console.warn("Failed to load cached track data:", e);
+                }
+
                 let allParts = [];
                 const levels = Object.keys(LEVEL_URLS);
 
@@ -8418,10 +10112,6 @@ SOLVING APPROACH:
                     allParts = allParts.concat(levelParts);
                 }
 
-                showStatus('Fetching solved counts...', '📊');
-                updateLoadingMessage('Fetching solved counts...');
-                const solvedCounts = await getSolvedCounts();
-
                 // Map solved counts to parsed parts
                 allParts.forEach(part => {
                     if (part.status === 'ok') {
@@ -8445,7 +10135,7 @@ SOLVING APPROACH:
                 setTimeout(hideStatus, 3000);
                 
                 if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
-                    renderList(allParts, cacheData.timestamp);
+                    renderList(allParts);
                 }
 
             } catch (err) {
@@ -8460,6 +10150,8 @@ SOLVING APPROACH:
                 setTimeout(hideStatus, 6000);
             } finally {
                 activeController = null;
+                activeSolvedCounts = null;
+                cachedTrackData = null;
             }
         }
 
@@ -8478,10 +10170,10 @@ SOLVING APPROACH:
                     parts: cachedParts,
                     timestamp: Date.now()
                 };
-                storage.setValue('find_incomplete_cache_v2', JSON.stringify(cachedParts));
+                storage.setValue('find_incomplete_cache_v2', JSON.stringify(cacheData));
                 
                 if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
-                    renderList(cachedParts, cacheData.timestamp);
+                    renderList(cachedParts);
                 }
             } catch (e) {
                 console.warn("Silent solved counts update failed:", e);
@@ -8491,49 +10183,23 @@ SOLVING APPROACH:
         async function loadAndRenderTracks(forceRefresh = false) {
             if (currentState === STATE.SCANNING) {
                 renderScanningState();
-                if (statusText) {
-                    updateLoadingMessage(statusText.textContent);
-                }
+                if (statusText) updateLoadingMessage(statusText.textContent);
                 return;
             }
 
             let cache = null;
             if (!forceRefresh) {
                 try {
-                    const rawCache = storage.getValue('find_incomplete_cache_v2');
-                    if (rawCache) {
-                        cache = JSON.parse(rawCache);
-                    }
-                } catch (e) {
-                    console.error("Failed to parse cache:", e);
-                }
+                    const raw = storage.getValue('find_incomplete_cache_v2');
+                    if (raw) cache = JSON.parse(raw);
+                } catch (e) { console.error('Failed to parse cache:', e); }
             }
 
-            if (forceRefresh) {
+            if (forceRefresh || !cache || !cache.parts) {
                 await runFullCrawl();
-            } else if (!cache || !cache.parts) {
-                renderUnscrapedState();
             } else {
-                renderList(cache.parts, cache.timestamp);
+                renderList(cache.parts);
                 updateSolvedCountsSilently(cache.parts);
-            }
-        }
-
-        function cancelScan() {
-            if (activeController) activeController.abort();
-            setState(STATE.IDLE);
-            hideStatus();
-            
-            let cache = null;
-            try {
-                const rawCache = storage.getValue('find_incomplete_cache_v2');
-                if (rawCache) cache = JSON.parse(rawCache);
-            } catch (_) {}
-            
-            if (cache && cache.parts) {
-                renderList(cache.parts, cache.timestamp);
-            } else {
-                hideDropdown();
             }
         }
 
@@ -8612,10 +10278,71 @@ SOLVING APPROACH:
             }
         }
 
-        // ── UI Components ────────────────────────────────────────────────────
+        // ── Dropdown UI ──────────────────────────────────────────────────────
         let dropdown = null;
         let statusPanel = null;
         let statusText = null;
+
+        function injectStyles() {
+            if (document.getElementById('find-incomplete-styles')) return;
+            const style = document.createElement('style');
+            style.id = 'find-incomplete-styles';
+            style.textContent = `
+                @keyframes spin {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(360deg); }
+                }
+                .find-inc-item {
+                    display: flex;
+                    flex-direction: column;
+                    padding: 8px 12px;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    margin-bottom: 6px;
+                    transition: background 0.2s, transform 0.1s;
+                    border: 1px solid transparent;
+                }
+                .find-inc-item:hover {
+                    background: rgba(99, 179, 237, 0.1) !important;
+                    border-color: rgba(99, 179, 237, 0.2) !important;
+                    transform: translateY(-1px);
+                }
+                .find-inc-item:active {
+                    transform: translateY(0);
+                }
+                .find-inc-failed:hover {
+                    background: rgba(239, 68, 68, 0.08) !important;
+                    border-color: rgba(239, 68, 68, 0.25) !important;
+                }
+                .find-inc-title {
+                    font-weight: 600;
+                    font-size: 13px;
+                    color: #e4e4e7;
+                }
+                .find-inc-meta {
+                    font-size: 11px;
+                    color: #a1a1aa;
+                    margin-top: 2px;
+                    display: flex;
+                    justify-content: space-between;
+                }
+                .find-inc-progress-bg {
+                    width: 100%;
+                    height: 6px;
+                    background: rgba(255, 255, 255, 0.08);
+                    border-radius: 3px;
+                    margin-top: 6px;
+                    overflow: hidden;
+                }
+                .find-inc-progress-bar {
+                    height: 100%;
+                    background: linear-gradient(90deg, #3182ce, #63b3ed);
+                    border-radius: 3px;
+                    transition: width 0.3s ease;
+                }
+            `;
+            document.head.appendChild(style);
+        }
 
         function ensureDropdown(parentEl) {
             if (dropdown) return;
@@ -8627,7 +10354,7 @@ SOLVING APPROACH:
                 '-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);' +
                 'border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,0.65);' +
                 'padding:14px;min-width:320px;max-width:380px;' +
-                "color:#f4f4f5;font-family:'VT323',monospace;font-size:18px;" +
+                "color:#f4f4f5;font-family:'VT323',monospace;font-size:15px;" +
                 'transition:opacity 0.25s, transform 0.25s;opacity:0;transform:translateY(-8px);';
             document.body.appendChild(dropdown);
         }
@@ -8651,6 +10378,12 @@ SOLVING APPROACH:
             dropdown.style.opacity = '0';
             dropdown.style.transform = 'translateY(-8px)';
             
+            if (currentState === STATE.SCANNING) {
+                if (activeController) activeController.abort();
+                setState(STATE.IDLE);
+                hideStatus();
+            }
+            
             setTimeout(() => {
                 if (dropdown && dropdown.style.opacity === '0') {
                     dropdown.style.display = 'none';
@@ -8658,19 +10391,7 @@ SOLVING APPROACH:
             }, 250);
         }
 
-        function formatTimeAgo(ts) {
-            if (!ts) return '';
-            const diffMs = Date.now() - ts;
-            const diffMins = Math.floor(diffMs / 60000);
-            if (diffMins < 1) return 'just now';
-            if (diffMins < 60) return `${diffMins}m ago`;
-            const diffHours = Math.floor(diffMins / 60);
-            if (diffHours < 24) return `${diffHours}h ago`;
-            const diffDays = Math.floor(diffHours / 24);
-            return `${diffDays}d ago`;
-        }
-
-        function renderList(parts, timestamp) {
+        function renderList(parts) {
             if (!dropdown) return;
             dropdown.innerHTML = '';
 
@@ -8693,23 +10414,11 @@ SOLVING APPROACH:
             const remainingQuestions = totalQuestions - totalSolved;
 
             const header = document.createElement('div');
-            header.style.cssText = 'font-weight: 700; font-size: 18px; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;';
+            header.style.cssText = 'font-weight: 700; font-size: 15px; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center;';
             header.innerHTML = '<span>Incomplete Tracks</span>' + 
-                               `<span style="font-size: 11px; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 2px 6px; border-radius: 4px; white-space: nowrap;">` +
+                               `<span style="font-size: 10px; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 2px 6px; border-radius: 4px; white-space: nowrap;">` +
                                `${incompleteList.length} Tracks | ${remainingQuestions} Qs Left</span>`;
             dropdown.appendChild(header);
-
-            if (timestamp) {
-                const timeAgo = formatTimeAgo(timestamp);
-                const timeEl = document.createElement('div');
-                timeEl.style.cssText = 'font-size: 11px; color: #71717a; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px;';
-                timeEl.textContent = `Last Scanned: ${timeAgo}`;
-                dropdown.appendChild(timeEl);
-            } else {
-                const divider = document.createElement('div');
-                divider.style.cssText = 'border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 12px;';
-                dropdown.appendChild(divider);
-            }
 
             const listContainer = document.createElement('div');
             listContainer.style.cssText = 'max-height: 280px; overflow-y: auto;';
@@ -8745,7 +10454,7 @@ SOLVING APPROACH:
                 // VISIBLY SEPARATE "COULDN'T VERIFY" SECTION
                 if (failedList.length > 0) {
                     const failHeader = document.createElement('div');
-                    failHeader.style.cssText = 'font-weight: 700; font-size: 15px; color: #f87171; margin: 14px 0 8px 0; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; display: flex; justify-content: space-between; align-items: center;';
+                    failHeader.style.cssText = 'font-weight: 700; font-size: 13px; color: #f87171; margin: 14px 0 8px 0; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; display: flex; justify-content: space-between; align-items: center;';
                     failHeader.innerHTML = '<span>⚠️ Couldn\'t Verify (Crawl Failed)</span>';
                     listContainer.appendChild(failHeader);
 
@@ -8755,7 +10464,7 @@ SOLVING APPROACH:
                         itemEl.style.cssText = 'border-color: rgba(239, 68, 68, 0.15) !important; background: rgba(239, 68, 68, 0.02);';
                         itemEl.innerHTML = `
                             <div class="find-inc-title" style="color: #d1d5db;">${item.partName}</div>
-                            <div class="find-inc-meta" style="color: #ef4444; font-size: 12px;">
+                            <div class="find-inc-meta" style="color: #ef4444; font-size: 10px;">
                                 <span>${item.levelName}</span>
                                 <span>Crawl failed: ${item.error || 'Unknown Error'}</span>
                             </div>
@@ -8772,7 +10481,7 @@ SOLVING APPROACH:
 
             const refreshBtn = document.createElement('div');
             refreshBtn.id = 'find-inc-refresh-btn';
-            refreshBtn.style.cssText = 'text-align: center; padding: 10px 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); color: #63b3ed; cursor: pointer; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;';
+            refreshBtn.style.cssText = 'text-align: center; padding: 10px 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); color: #63b3ed; cursor: pointer; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;';
             refreshBtn.innerHTML = '🔄 Force Re-Crawl & Refresh';
             refreshBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -8786,69 +10495,10 @@ SOLVING APPROACH:
             dropdown.innerHTML = `
                 <div style="text-align: center; padding: 30px 15px;">
                     <div style="font-size: 24px; margin-bottom: 12px; animation: spin 2s linear infinite; display: inline-block;">🔄</div>
-                    <div id="find-inc-loading-msg" style="font-size: 15px; color: #a1a1aa;">Starting scan...</div>
-                    <div style="margin-top: 12px; font-size: 11px; color: #71717a;">Please wait, rate-limiting is active to ensure safety.</div>
-                    <div id="find-inc-cancel-btn" style="margin-top: 16px; font-size: 13px; color: #f87171; cursor: pointer; text-decoration: underline;">Cancel Scan</div>
+                    <div id="find-inc-loading-msg" style="font-size: 13px; color: #a1a1aa;">Starting scan...</div>
+                    <div style="margin-top: 12px; font-size: 10px; color: #71717a;">Please wait, rate-limiting is active to ensure safety.</div>
                 </div>
             `;
-            const cancelBtn = dropdown.querySelector('#find-inc-cancel-btn');
-            if (cancelBtn) {
-                cancelBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    cancelScan();
-                });
-            }
-        }
-
-        function renderErrorState(msg) {
-            if (!dropdown) return;
-            dropdown.innerHTML = `
-                <div style="text-align: center; padding: 30px 15px;">
-                    <div style="font-size: 24px; margin-bottom: 12px;">❌</div>
-                    <div style="font-size: 15px; color: #f87171; font-weight: 600;">Scan Failed</div>
-                    <div style="margin-top: 8px; font-size: 13px; color: #a1a1aa; max-height: 80px; overflow-y: auto;">${msg}</div>
-                    <div id="find-inc-retry-btn" style="margin-top: 16px; font-size: 13px; color: #63b3ed; cursor: pointer; text-decoration: underline;">Try Again</div>
-                </div>
-            `;
-            const retryBtn = dropdown.querySelector('#find-inc-retry-btn');
-            if (retryBtn) {
-                retryBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    loadAndRenderTracks(true);
-                });
-            }
-        }
-
-        function renderUnscrapedState() {
-            if (!dropdown) return;
-            dropdown.innerHTML = `
-                <div style="text-align: center; padding: 24px 12px;">
-                    <div style="font-size: 24px; margin-bottom: 8px;">🔍</div>
-                    <div style="font-size: 15px; color: #a1a1aa; margin-bottom: 12px;">No Scraped Data Found</div>
-                    <div style="font-size: 12px; color: #71717a; margin-bottom: 16px; line-height: 1.4;">
-                        Please run a scan to discover and list all incomplete tracks.
-                    </div>
-                    <div id="find-inc-start-btn" style="
-                        display: inline-block;
-                        background: linear-gradient(135deg, #3182ce, #63b3ed);
-                        color: white;
-                        padding: 8px 16px;
-                        border-radius: 8px;
-                        font-size: 13px;
-                        font-weight: 600;
-                        cursor: pointer;
-                        text-transform: uppercase;
-                        box-shadow: 0 4px 12px rgba(49, 130, 206, 0.3);
-                    ">Start Scan</div>
-                </div>
-            `;
-            const startBtn = dropdown.querySelector('#find-inc-start-btn');
-            if (startBtn) {
-                startBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    runFullCrawl();
-                });
-            }
         }
 
         function updateLoadingMessage(msg) {
@@ -8856,7 +10506,28 @@ SOLVING APPROACH:
             if (el) el.textContent = msg;
         }
 
-        // Expose init/crawling interfaces
+        function renderErrorState(errStr) {
+            if (!dropdown) return;
+            dropdown.innerHTML = `
+                <div style="text-align: center; padding: 20px 15px;">
+                    <div style="font-size: 24px; margin-bottom: 12px;">❌</div>
+                    <div style="font-size: 13px; color: #f87171; font-weight: 600;">Scan Failed</div>
+                    <div style="font-size: 12px; color: #a1a1aa; margin-top: 4px; overflow-wrap: break-word;">${errStr}</div>
+                    <div id="find-inc-retry-btn" style="margin-top: 15px; display: inline-block; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600;">
+                        Try Again
+                    </div>
+                </div>
+            `;
+            const btn = document.getElementById('find-inc-retry-btn');
+            if (btn) {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    loadAndRenderTracks(true);
+                });
+            }
+        }
+
+        // ── Status pill ──────────────────────────────────────────────────────
         function ensureStatusPanel() {
             if (statusPanel) return;
             statusPanel = document.createElement('div');
@@ -8868,14 +10539,13 @@ SOLVING APPROACH:
                 '-webkit-backdrop-filter:blur(18px);border-radius:14px;' +
                 'border:1px solid rgba(99,179,237,0.3);' +
                 'box-shadow:0 16px 48px rgba(0,0,0,0.65);' +
-                "font-family:'VT323',monospace;font-size:19px;color:#e4e4e7;" +
+                "font-family:'VT323',monospace;font-size:16px;color:#e4e4e7;" +
                 'display:none;transition:opacity 0.2s;';
             statusText = document.createElement('span');
             statusPanel.appendChild(statusText);
             document.body.appendChild(statusPanel);
         }
 
-        // Expose function for updating status Panel
         function showStatus(msg, icon) {
             ensureStatusPanel();
             statusText.textContent = (icon ? icon + '  ' : '') + msg;
@@ -8886,82 +10556,16 @@ SOLVING APPROACH:
         function hideStatus() {
             if (!statusPanel) return;
             statusPanel.style.opacity = '0';
-            setTimeout(() => {
-                if (statusPanel) statusPanel.style.display = 'none';
-            }, 200);
+            setTimeout(() => { if (statusPanel) statusPanel.style.display = 'none'; }, 200);
         }
 
-        function injectStyles() {
-            if (document.getElementById('find-incomplete-styles')) return;
-            const style = document.createElement('style');
-            style.id = 'find-incomplete-styles';
-            style.textContent = `
-                @keyframes spin {
-                    from { transform: rotate(0deg); }
-                    to { transform: rotate(360deg); }
-                }
-                .find-inc-item {
-                    display: flex;
-                    flex-direction: column;
-                    padding: 8px 12px;
-                    border-radius: 8px;
-                    cursor: pointer;
-                    margin-bottom: 6px;
-                    transition: background 0.2s, transform 0.1s;
-                    border: 1px solid transparent;
-                }
-                .find-inc-item:hover {
-                    background: rgba(99, 179, 237, 0.1) !important;
-                    border-color: rgba(99, 179, 237, 0.2) !important;
-                    transform: translateY(-1px);
-                }
-                .find-inc-item:active {
-                    transform: translateY(0);
-                }
-                .find-inc-failed:hover {
-                    background: rgba(239, 68, 68, 0.08) !important;
-                    border-color: rgba(239, 68, 68, 0.25) !important;
-                }
-                .find-inc-title {
-                    font-weight: 600;
-                    font-size: 16px;
-                    color: #e4e4e7;
-                }
-                .find-inc-meta {
-                    font-size: 13px;
-                    color: #a1a1aa;
-                    margin-top: 2px;
-                    display: flex;
-                    justify-content: space-between;
-                }
-                .find-inc-progress-bg {
-                    width: 100%;
-                    height: 6px;
-                    background: rgba(255, 255, 255, 0.08);
-                    border-radius: 3px;
-                    margin-top: 6px;
-                    overflow: hidden;
-                }
-                .find-inc-progress-bar {
-                    height: 100%;
-                    background: linear-gradient(90deg, #3182ce, #63b3ed);
-                    border-radius: 3px;
-                    transition: width 0.3s ease;
-                }
-            `;
-            document.head.appendChild(style);
-        }
+        function setState(s) { currentState = s; }
 
-        // ── Set State ────────────────────────────────────────────────────────
-        function setState(s) {
-            currentState = s;
-        }
-
-        // ── Init & Cleanup ───────────────────────────────────────────────────
+        // ── Menu button ──────────────────────────────────────────────────────
         function injectMenuButton() {
             if (!SETTINGS.enableFindIncomplete) return;
             const menuList = document.querySelector(
-                '.ui-toolbar-group-right .ui-menu-list, ' +
+                '.ui-toolbar-group-right .ui-menu-list,' +
                 '.ui-toolbar-group-right ul[role="menubar"]'
             );
             if (!menuList || document.getElementById('find-incomplete-btn')) return;
@@ -8979,7 +10583,7 @@ SOLVING APPROACH:
                 '</a>';
 
             const anchor = li.querySelector('a');
-            anchor.addEventListener('click', (e) => {
+            anchor.addEventListener('click', e => {
                 e.preventDefault();
                 e.stopPropagation();
                 if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
@@ -8999,15 +10603,11 @@ SOLVING APPROACH:
             injectMenuButton();
 
             const obs = new MutationObserver(() => {
-                if (!document.getElementById('find-incomplete-btn')) {
-                    injectMenuButton();
-                }
+                if (!document.getElementById('find-incomplete-btn')) injectMenuButton();
             });
-            if (document.body) {
-                obs.observe(document.body, { childList: true, subtree: false });
-            }
+            if (document.body) obs.observe(document.body, { childList: true, subtree: true });
 
-            document.addEventListener('click', (e) => {
+            document.addEventListener('click', e => {
                 if (dropdown && dropdown.style.display === 'block' && 
                     !dropdown.contains(e.target) && 
                     e.target.id !== 'find-incomplete-btn' && 
@@ -9046,4 +10646,4 @@ SOLVING APPROACH:
         window.FindIncompleteModule = FindIncompleteModule;
     });
 
-})();                 
+}                 

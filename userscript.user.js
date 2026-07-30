@@ -11,13 +11,105 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
+// @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
+// @connect      integrate.api.nvidia.com
 // @run-at       document-start
 // @downloadURL https://raw.githubusercontent.com/ToonTamilIndia/skillrack-userscript/refs/heads/main/userscript.user.js
 // @updateURL https://raw.githubusercontent.com/ToonTamilIndia/skillrack-userscript/refs/heads/main/userscript.user.js
 // ==/UserScript==
 
-(function () {
+// 1. Sandbox bridge
+if (typeof GM_xmlhttpRequest !== 'undefined') {
+    // Expose required libraries to the webpage context
+    if (typeof unsafeWindow !== 'undefined') {
+        if (typeof Tesseract !== 'undefined') unsafeWindow.Tesseract = Tesseract;
+        if (typeof puter !== 'undefined') unsafeWindow.puter = puter;
+    }
+
+    // Listen for requests from the webpage context
+    window.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'GM_XHR_REQUEST') {
+            const { id, options } = event.data;
+            GM_xmlhttpRequest({
+                method: options.method || 'GET',
+                url: options.url,
+                headers: options.headers,
+                data: options.data,
+                onload: function (response) {
+                    window.postMessage({
+                        type: 'GM_XHR_RESPONSE',
+                        id: id,
+                        status: response.status,
+                        statusText: response.statusText,
+                        responseText: response.responseText,
+                        responseHeaders: response.responseHeaders
+                    }, '*');
+                },
+                onerror: function (err) {
+                    window.postMessage({
+                        type: 'GM_XHR_RESPONSE',
+                        id: id,
+                        error: err.error || 'Network error'
+                    }, '*');
+                }
+            });
+        }
+    });
+
+    // Inject the main code into the webpage context
+    const script = document.createElement('script');
+    script.textContent = `(${mainCode.toString()})();`;
+    (document.head || document.documentElement).appendChild(script);
+    script.remove();
+}
+
+function mainCode() {
     'use strict';
+
+    // A wrapper around GM_xmlhttpRequest via message bridge
+    const gmFetch = (url, options = {}) => {
+        return new Promise((resolve, reject) => {
+            const requestId = Math.random().toString(36).substr(2, 9);
+            
+            const handleMessage = (event) => {
+                if (event.data && event.data.type === 'GM_XHR_RESPONSE' && event.data.id === requestId) {
+                    window.removeEventListener('message', handleMessage);
+                    if (event.data.error) {
+                        reject(new Error(event.data.error));
+                    } else {
+                        resolve({
+                            ok: event.data.status >= 200 && event.data.status < 300,
+                            status: event.data.status,
+                            statusText: event.data.statusText,
+                            headers: {
+                                get: (name) => {
+                                    const headersText = event.data.responseHeaders || '';
+                                    const match = new RegExp('^' + name + ':\\s*(.*)$', 'mi').exec(headersText);
+                                    return match ? match[1].trim() : null;
+                                }
+                            },
+                            json: async () => JSON.parse(event.data.responseText),
+                            text: async () => event.data.responseText
+                        });
+                    }
+                }
+            };
+            
+            window.addEventListener('message', handleMessage);
+            
+            window.postMessage({
+                type: 'GM_XHR_REQUEST',
+                id: requestId,
+                options: {
+                    method: options.method,
+                    url: url,
+                    headers: options.headers,
+                    data: options.body
+                }
+            }, '*');
+        });
+    };
 
     // ============================================
     // SCRIPT VERSION & REMOTE URLS
@@ -499,6 +591,11 @@
         yuppbridgeApiKey: "",
         yuppbridgeModel: "gpt-4o",
         // ================================================
+
+        // ========== NVIDIA NIM SETTINGS ==========
+        nvidiaApiKey: "",
+        nvidiaModel: "deepseek-ai/deepseek-v4-flash",
+        // =========================================
 
         // ========== AUTO SOLVER SETTINGS ==========
         enableAutoSolver: false,
@@ -1971,6 +2068,251 @@
     };
 
     // ============================================
+    // NVIDIA NIM PROVIDER MODULE (DYNAMIC MODEL LOADING)
+    // ============================================
+
+    const NvidiaProvider = (function () {
+        'use strict';
+
+        const CONFIG = {
+            BASE_URL: 'https://integrate.api.nvidia.com/v1',
+            MODELS_URL: 'https://integrate.api.nvidia.com/v1/models',
+            CHAT_URL: 'https://integrate.api.nvidia.com/v1/chat/completions',
+            CACHE_KEY: 'nvidia_models_cache',
+            CACHE_TTL: 6 * 60 * 60 * 1000,
+            DEFAULT_MODEL: 'deepseek-ai/deepseek-v4-flash'
+        };
+
+        const PUBLISHER_GROUP = {
+            'z-ai': 'Z.ai', 'nvidia': 'NVIDIA', 'deepseek-ai': 'DeepSeek',
+            'google': 'Google', 'mistralai': 'Mistral', 'moonshotai': 'Moonshot',
+            'minimaxai': 'MiniMax', 'qwen': 'Qwen', 'stepfun-ai': 'StepFun'
+        };
+        const FALLBACK_MODELS = [
+            { id: "abacusai/dracarys-llama-3.1-70b-instruct", name: "Dracarys Llama 3.1 70B Instruct", group: "Abacus", tags: "", context: "-" },
+            { id: "ai21labs/jamba-1.5-large-instruct", name: "Jamba 1.5 Large Instruct", group: "AI21", tags: "", context: "-" },
+            { id: "bytedance/seed-oss-36b-instruct", name: "Seed Oss 36B Instruct", group: "ByteDance", tags: "", context: "-" },
+            { id: "deepseek-ai/deepseek-v4-flash", name: "Deepseek V4 Flash", group: "DeepSeek", tags: "MoE, Coding, Agents", context: "1M" },
+            { id: "deepseek-ai/deepseek-v4-pro", name: "Deepseek V4 Pro", group: "DeepSeek", tags: "MoE, Coding", context: "1M" },
+            { id: "google/gemma-2-2b-it", name: "Gemma 2 2B It", group: "Google", tags: "", context: "-" },
+            { id: "meta/llama-3.1-70b-instruct", name: "Llama 3.1 70B Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-3.1-8b-instruct", name: "Llama 3.1 8B Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-3.2-11b-vision-instruct", name: "Llama 3.2 11B Vision Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-3.2-1b-instruct", name: "Llama 3.2 1B Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-3.2-3b-instruct", name: "Llama 3.2 3B Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-3.2-90b-vision-instruct", name: "Llama 3.2 90B Vision Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama-4-maverick-17b-128e-instruct", name: "Llama 4 Maverick 17B 128E Instruct", group: "Meta", tags: "", context: "-" },
+            { id: "meta/llama2-70b", name: "Llama2 70B", group: "Meta", tags: "", context: "-" },
+            { id: "mistralai/ministral-14b-instruct-2512", name: "Ministral 14B Instruct 2512", group: "Mistral", tags: "", context: "-" },
+            { id: "mistralai/mistral-large-3-675b-instruct-2512", name: "Mistral Large 3 675B Instruct 2512", group: "Mistral", tags: "", context: "-" },
+            { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B", group: "Mistral", tags: "Text Gen, Coding, Agentic", context: "128K" },
+            { id: "mistralai/mistral-nemotron", name: "Mistral Nemotron", group: "Mistral", tags: "", context: "-" },
+            { id: "mistralai/mistral-small-4-119b-2603", name: "Mistral Small 4 119B 2603", group: "Mistral", tags: "Hybrid MoE, Multimodal", context: "256K" },
+            { id: "mistralai/mixtral-8x7b-instruct-v0.1", name: "Mixtral 8X7B Instruct V0.1", group: "Mistral", tags: "", context: "-" },
+            { id: "moonshotai/kimi-k2.6", name: "Kimi K2.6", group: "Moonshot", tags: "Multimodal MoE, Agentic", context: "-" },
+            { id: "nvidia/llama-3.1-nemotron-nano-vl-8b-v1", name: "Llama 3.1 Nemotron Nano Vl 8B V1", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/llama-3.3-nemotron-super-49b-v1", name: "Llama 3.3 Nemotron Super 49B V1", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/llama-3.3-nemotron-super-49b-v1.5", name: "Llama 3.3 Nemotron Super 49B V1.5", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/nemotron-3-nano-30b-a3b", name: "Nemotron 3 Nano 30B A3B", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", name: "Nemotron 3 Nano Omni 30B A3B Reasoning", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/nemotron-3-super-120b-a12b", name: "Nemotron 3 Super 120B A12B", group: "NVIDIA", tags: "MoE, Coding, Planning", context: "1M" },
+            { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "Nemotron 3 Ultra 550B A55B", group: "NVIDIA", tags: "Agent, MoE, Tool Calling", context: "1M" },
+            { id: "nvidia/nemotron-mini-4b-instruct", name: "Nemotron Mini 4B Instruct", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/nemotron-nano-12b-v2-vl", name: "Nemotron Nano 12B V2 Vl", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/nvidia-nemotron-nano-9b-v2", name: "Nvidia Nemotron Nano 9B V2", group: "NVIDIA", tags: "", context: "-" },
+            { id: "nvidia/vila", name: "Vila", group: "NVIDIA", tags: "", context: "-" },
+            { id: "openai/gpt-oss-120b", name: "Gpt Oss 120B", group: "OpenAI", tags: "", context: "-" },
+            { id: "openai/gpt-oss-20b", name: "Gpt Oss 20B", group: "OpenAI", tags: "", context: "-" },
+            { id: "qwen/qwen3.5-122b-a10b", name: "Qwen3.5 122B A10B", group: "Qwen", tags: "", context: "-" },
+            { id: "sarvamai/sarvam-m", name: "Sarvam M", group: "Sarvam", tags: "", context: "-" },
+            { id: "stepfun-ai/step-3.5-flash", name: "Step 3.5 Flash", group: "StepFun", tags: "", context: "-" },
+            { id: "stepfun-ai/step-3.7-flash", name: "Step 3.7 Flash", group: "StepFun", tags: "", context: "-" },
+            { id: "stockmark/stockmark-2-100b-instruct", name: "Stockmark 2 100B Instruct", group: "Stockmark", tags: "", context: "-" },
+            { id: "upstage/solar-10.7b-instruct", name: "Solar 10.7B Instruct", group: "Upstage", tags: "", context: "-" },
+            { id: "z-ai/glm-5.2", name: "Glm 5.2", group: "Z.ai", tags: "Agentic, Coding, Reasoning", context: "16K" }
+        ];
+
+        function getApiKey() { return (SETTINGS.nvidiaApiKey || '').trim() || null; }
+
+        function validateApiKey(key) {
+            return !!(key && key.startsWith('nvapi-') && key.length > 20);
+        }
+
+        function normalizeModel(rawModel) {
+            const id = rawModel.id || '';
+            const publisher = id.split('/')[0] || 'other';
+            const group = PUBLISHER_GROUP[publisher.toLowerCase()] || 'Other';
+            const shortName = id.includes('/') ? id.split('/').pop() : id;
+            const displayName = rawModel.name || shortName
+                .replace(/-/g, ' ').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            return { id, name: displayName, group, ownedBy: rawModel.owned_by || publisher, tags: '', context: '' };
+        }
+
+        function getCachedModels() {
+            try {
+                const cached = localStorage.getItem(CONFIG.CACHE_KEY);
+                if (!cached) return null;
+                const { models, timestamp } = JSON.parse(cached);
+                if (Date.now() - timestamp < CONFIG.CACHE_TTL) return models;
+                localStorage.removeItem(CONFIG.CACHE_KEY);
+            } catch (e) { try { localStorage.removeItem(CONFIG.CACHE_KEY); } catch (_) {} }
+            return null;
+        }
+
+        function setCachedModels(models) {
+            try { localStorage.setItem(CONFIG.CACHE_KEY, JSON.stringify({ models, timestamp: Date.now() })); }
+            catch (e) { console.warn('[NVIDIA] Cache write error:', e); }
+        }
+
+        function clearCache() { try { localStorage.removeItem(CONFIG.CACHE_KEY); } catch (e) {} }
+
+        async function fetchModels(forceRefresh = false) {
+            const apiKey = getApiKey();
+            if (!forceRefresh) {
+                const cached = getCachedModels();
+                if (cached && cached.length > 0) return cached;
+            }
+            if (!apiKey) return FALLBACK_MODELS.slice();
+            if (!validateApiKey(apiKey)) return FALLBACK_MODELS.slice();
+
+            let response;
+            try {
+                response = await gmFetch(CONFIG.MODELS_URL, {
+                    method: 'GET',
+                    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+                });
+            } catch (networkErr) {
+                console.warn('[NVIDIA] Network error:', networkErr.message);
+                return FALLBACK_MODELS.slice();
+            }
+
+            if (!response.ok) {
+                if (response.status === 401) console.warn('[NVIDIA] 401 - check API key at build.nvidia.com');
+                else if (response.status === 429) console.warn('[NVIDIA] 429 - rate limit exceeded');
+                else console.warn(`[NVIDIA] Models API HTTP ${response.status}`);
+                return FALLBACK_MODELS.slice();
+            }
+
+            let rawResponse;
+            try { rawResponse = await response.json(); }
+            catch (e) { return FALLBACK_MODELS.slice(); }
+
+            const modelArray = Array.isArray(rawResponse?.data) ? rawResponse.data
+                : Array.isArray(rawResponse) ? rawResponse : [];
+            if (modelArray.length === 0) return FALLBACK_MODELS.slice();
+
+            const excludePatterns = /embed|diffusion|tts|whisper|moderation|image|audio|clip|owl/i;
+                        // Filter to verified free-tier coding models
+            const VERIFIED_FREE_MODELS = new Set([
+                "abacusai/dracarys-llama-3.1-70b-instruct",
+                "ai21labs/jamba-1.5-large-instruct",
+                "bytedance/seed-oss-36b-instruct",
+                "deepseek-ai/deepseek-v4-flash",
+                "deepseek-ai/deepseek-v4-pro",
+                "google/gemma-2-2b-it",
+                "meta/llama-3.1-70b-instruct",
+                "meta/llama-3.1-8b-instruct",
+                "meta/llama-3.2-11b-vision-instruct",
+                "meta/llama-3.2-1b-instruct",
+                "meta/llama-3.2-3b-instruct",
+                "meta/llama-3.2-90b-vision-instruct",
+                "meta/llama-4-maverick-17b-128e-instruct",
+                "meta/llama2-70b",
+                "mistralai/ministral-14b-instruct-2512",
+                "mistralai/mistral-large-3-675b-instruct-2512",
+                "mistralai/mistral-medium-3.5-128b",
+                "mistralai/mistral-nemotron",
+                "mistralai/mistral-small-4-119b-2603",
+                "mistralai/mixtral-8x7b-instruct-v0.1",
+                "moonshotai/kimi-k2.6",
+                "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+                "nvidia/llama-3.3-nemotron-super-49b-v1",
+                "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                "nvidia/nemotron-3-nano-30b-a3b",
+                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+                "nvidia/nemotron-3-super-120b-a12b",
+                "nvidia/nemotron-3-ultra-550b-a55b",
+                "nvidia/nemotron-mini-4b-instruct",
+                "nvidia/nemotron-nano-12b-v2-vl",
+                "nvidia/nvidia-nemotron-nano-9b-v2",
+                "nvidia/vila",
+                "openai/gpt-oss-120b",
+                "openai/gpt-oss-20b",
+                "qwen/qwen3.5-122b-a10b",
+                "sarvamai/sarvam-m",
+                "stepfun-ai/step-3.5-flash",
+                "stepfun-ai/step-3.7-flash",
+                "stockmark/stockmark-2-100b-instruct",
+                "upstage/solar-10.7b-instruct",
+                "z-ai/glm-5.2"
+            ]);
+            const normalized = modelArray
+            .filter(m => m && m.id && VERIFIED_FREE_MODELS.has(m.id))
+                .map(m => normalizeModel(m))
+                .sort((a, b) => a.group !== b.group ? a.group.localeCompare(b.group) : a.name.localeCompare(b.name));
+
+            const fallbackMap = {};
+            FALLBACK_MODELS.forEach(m => { fallbackMap[m.id] = m; });
+            normalized.forEach(m => { const fb = fallbackMap[m.id]; if (fb) { m.tags = fb.tags; m.context = fb.context; } });
+
+            setCachedModels(normalized);
+            return normalized;
+        }
+
+        function filterModels(models, query) {
+            if (!query || !Array.isArray(models)) return models || [];
+            const q = query.toLowerCase().trim();
+            if (!q) return models;
+            return models.filter(m =>
+                (m.id || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q) ||
+                (m.group || '').toLowerCase().includes(q) || (m.tags || '').toLowerCase().includes(q)
+            );
+        }
+
+        function groupModels(models) {
+            const groups = {};
+            (models || []).forEach(m => { const g = m.group || 'Other'; if (!groups[g]) groups[g] = []; groups[g].push(m); });
+            return groups;
+        }
+
+        return { CONFIG, fetchModels, filterModels, groupModels, clearCache, validateApiKey, FALLBACK_MODELS };
+    })();
+
+    // NVIDIA NIM completion helper
+    const generateWithNvidia = async (prompt) => {
+        const apiKey = (SETTINGS.nvidiaApiKey || '').trim();
+        if (!apiKey) throw new Error('NVIDIA NIM API key not configured. Get a free key at build.nvidia.com.');
+        if (!NvidiaProvider.validateApiKey(apiKey)) throw new Error('NVIDIA NIM API key appears invalid (should start with nvapi-).');
+
+        const model = SETTINGS.nvidiaModel || NvidiaProvider.CONFIG.DEFAULT_MODEL;
+        let response;
+        try {
+            response = await gmFetch(NvidiaProvider.CONFIG.CHAT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                body: JSON.stringify({
+                    model, messages: [{ role: 'user', content: prompt }],
+                    temperature: SETTINGS.aiTemperature || 0.1, top_p: 1, max_tokens: 16384, stream: false
+                })
+            });
+        } catch (networkErr) {
+            throw new Error(`NVIDIA NIM network error: ${networkErr.message}`);
+        }
+
+        if (!response.ok) {
+            let detail = '';
+            try { const b = await response.json(); detail = b?.detail || b?.message || b?.error?.message || ''; } catch (_) {}
+            if (response.status === 401) throw new Error('NVIDIA NIM: Invalid API key. Verify at build.nvidia.com.');
+            if (response.status === 429) throw new Error('NVIDIA NIM: Rate limit exceeded. Please wait.');
+            if (response.status >= 500) throw new Error(`NVIDIA NIM: Service unavailable (${response.status}).`);
+            throw new Error(`NVIDIA NIM HTTP ${response.status}${detail ? ': ' + detail : ''}`);
+        }
+
+        const data = await response.json();
+        return data?.choices?.[0]?.message?.content || '';
+    };
+
+    // ============================================
     // SETTINGS UI
     // ============================================
     const createSettingsUI = () => {
@@ -2469,6 +2811,7 @@
                 <option value="g4f" ${SETTINGS.aiProvider === 'g4f' ? 'selected' : ''}>G4F (g4f.space)</option>
                 <option value="duckduckgo" ${SETTINGS.aiProvider === 'duckduckgo' ? 'selected' : ''}>DuckDuckGo AI (FREE!)</option>
                 <option value="yuppbridge" ${SETTINGS.aiProvider === 'yuppbridge' ? 'selected' : ''}>YuppBridge (200+ Models)</option>
+                <option value="nvidia" ${SETTINGS.aiProvider === 'nvidia' ? 'selected' : ''}>NVIDIA NIM (Free Tier)</option>
             </select>
         `;
         const providerSelect = providerWrapper.querySelector('select');
@@ -2503,6 +2846,10 @@
             const yuppbridgeModelWrapper = document.getElementById('yuppbridge-model-wrapper');
             if (yuppbridgeModelWrapper) {
                 yuppbridgeModelWrapper.style.display = providerSelect.value === 'yuppbridge' ? 'block' : 'none';
+            }
+            const nvidiaModelWrapper = document.getElementById('nvidia-model-wrapper');
+            if (nvidiaModelWrapper) {
+                nvidiaModelWrapper.style.display = providerSelect.value === 'nvidia' ? 'block' : 'none';
             }
         });
         panelContent.appendChild(providerWrapper);
@@ -3659,9 +4006,102 @@
         panelContent.appendChild(createYuppBridgeModelSelector());
         // ==============================================================
 
+        // ========== NVIDIA NIM API KEY + MODEL SELECTOR ==========
+        panelContent.appendChild(createTextInput('nvidiaApiKey', 'NVIDIA NIM API Key', SETTINGS.nvidiaApiKey, 'nvapi-... (free key from build.nvidia.com)'));
+
+        const createNvidiaModelSelector = () => {
+            const wrapper = document.createElement('div');
+            wrapper.id = 'nvidia-model-wrapper';
+            wrapper.style.cssText = `padding: 10px 0; border-bottom: 1px solid #333; display: ${SETTINGS.aiProvider === 'nvidia' ? 'block' : 'none'};`;
+
+            wrapper.innerHTML = `
+                <div style="color: #fff; font-size: 17px; margin-bottom: 6px;">NVIDIA NIM Model</div>
+                <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+                    <input type="text" id="nvidiaModelSearch" placeholder="Search models (e.g., nemotron, deepseek, kimi)" style="
+                        flex: 1; padding: 8px; border: 1px solid #444; border-radius: 6px;
+                        background: #2d2d2d; color: #fff; font-size: 15px; box-sizing: border-box;
+                    ">
+                    <button id="nvidiaRefreshModels" title="Refresh models from API" style="
+                        padding: 8px 12px; border: 1px solid #444; border-radius: 6px;
+                        background: #3d3d3d; color: #fff; cursor: pointer; font-size: 15px;
+                    "><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="display:block;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4C7.58 4 4 7.58 4 12s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
+                </div>
+                <select id="nvidiaModel" style="
+                    width: 100%; padding: 8px; border: 1px solid #444; border-radius: 6px;
+                    background: #000000; color: #76b900; font-size: 15px;
+                    box-sizing: border-box; font-family: 'VT323', monospace;
+                ">
+                    <option value="z-ai/glm-5.2">Loading models...</option>
+                </select>
+                <div id="nvidiaModelStatus" style="color: #666; font-size: 14px; margin-top: 4px;"></div>
+            `;
+
+            setTimeout(() => {
+                const select = document.getElementById('nvidiaModel');
+                const searchInput = document.getElementById('nvidiaModelSearch');
+                const refreshBtn = document.getElementById('nvidiaRefreshModels');
+                const statusDiv = document.getElementById('nvidiaModelStatus');
+                let allModels = [];
+
+                const populateSelect = (models) => {
+                    if (!select) return;
+                    const currentValue = SETTINGS.nvidiaModel || NvidiaProvider.CONFIG.DEFAULT_MODEL;
+                    select.innerHTML = '';
+                    const groups = NvidiaProvider.groupModels(models);
+                    const groupOrder = ['NVIDIA', 'Z.ai', 'DeepSeek', 'Google', 'Mistral', 'Moonshot', 'MiniMax', 'Qwen', 'StepFun', 'Other'];
+                    const renderedGroups = new Set();
+                    [...groupOrder, ...Object.keys(groups).filter(g => !groupOrder.includes(g))].forEach(g => {
+                        if (renderedGroups.has(g) || !groups[g] || groups[g].length === 0) return;
+                        renderedGroups.add(g);
+                        const optgroup = document.createElement('optgroup');
+                        optgroup.label = `${g} (${groups[g].length})`;
+                        groups[g].forEach(model => {
+                            const option = document.createElement('option');
+                            option.value = model.id;
+                            option.textContent = `${model.name} (Free)${model.context ? ' [' + model.context + ']' : ''}${model.tags ? ' — ' + model.tags : ''}`;
+                            option.selected = model.id === currentValue;
+                            optgroup.appendChild(option);
+                        });
+                        select.appendChild(optgroup);
+                    });
+                    if (statusDiv) statusDiv.textContent = `${models.length} models available`;
+                };
+
+                const loadModels = async (forceRefresh = false) => {
+                    if (statusDiv) statusDiv.textContent = 'Loading models...';
+                    if (refreshBtn) { refreshBtn.disabled = true; }
+                    try {
+                        allModels = await NvidiaProvider.fetchModels(forceRefresh);
+                        populateSelect(allModels);
+                        if (statusDiv) statusDiv.textContent = `${allModels.length} models loaded`;
+                    } catch (error) {
+                        if (statusDiv) statusDiv.textContent = `Error: ${error.message}`;
+                        if (select) select.innerHTML = '<option value="z-ai/glm-5.2" selected>GLM-5.2 (Default)</option>';
+                    } finally {
+                        if (refreshBtn) { refreshBtn.disabled = false; }
+                    }
+                };
+
+                if (searchInput) {
+                    let t;
+                    searchInput.addEventListener('input', () => {
+                        clearTimeout(t);
+                        t = setTimeout(() => populateSelect(NvidiaProvider.filterModels(allModels, searchInput.value.trim())), 150);
+                    });
+                }
+                if (refreshBtn) refreshBtn.addEventListener('click', () => loadModels(true));
+                if (select) select.addEventListener('change', () => { SETTINGS.nvidiaModel = select.value; saveSettings(SETTINGS); });
+                loadModels();
+            }, 100);
+
+            return wrapper;
+        };
+        panelContent.appendChild(createNvidiaModelSelector());
+        // =========================================================
+
         const note = document.createElement('div');
         note.style.cssText = 'color:#3f3f46;font-size:14px;padding:14px 4px;text-align:center;font-family:"VT323",monospace;line-height:1.7;border-top:1px solid rgba(255,255,255,0.05);margin-top:4px;';
-        note.innerHTML = 'Reload page after changing settings<br>Keys: <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#4CAF50;">Gemini</a> | <a href="https://openrouter.ai/keys" target="_blank" style="color:#4CAF50;">OpenRouter</a> | <a href="https://g4f.space" target="_blank" style="color:#4CAF50;">G4F</a><br>Puter.js: no API key required | <a href="https://developer.puter.com/ai/" target="_blank" style="color:#2196F3;">Puter AI docs</a><br>DuckDuckGo AI is FREE! | <a href="https://github.com/cloudWaddie/yuppbridge" target="_blank" style="color:#2196F3;">YuppBridge</a>';
+        note.innerHTML = 'Reload page after changing settings<br>Keys: <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#4CAF50;">Gemini</a> | <a href="https://openrouter.ai/keys" target="_blank" style="color:#4CAF50;">OpenRouter</a> | <a href="https://g4f.space" target="_blank" style="color:#4CAF50;">G4F</a><br>Puter.js: no API key required | <a href="https://developer.puter.com/ai/" target="_blank" style="color:#2196F3;">Puter AI docs</a><br>DuckDuckGo AI is FREE! | <a href="https://github.com/cloudWaddie/yuppbridge" target="_blank" style="color:#2196F3;">YuppBridge</a><br>NVIDIA NIM: Free key at <a href="https://build.nvidia.com" target="_blank" style="color:#76b900;">build.nvidia.com</a>';
         panelContent.appendChild(note);
 
         panel.appendChild(panelHeader);
@@ -5995,6 +6435,27 @@
             return lastResult.content;
         }
 
+        // Fallback to other free models if the primary model failed and is a free model
+        const isFreeModel = primaryModel.endsWith(':free');
+        if (isFreeModel) {
+            const fallbackModels = [
+                'qwen/qwen-2.5-coder-32b-instruct:free',
+                'qwen/qwen3-coder:free',
+                'meta-llama/llama-3.3-70b-instruct:free',
+                'google/gemma-4-31b-it:free',
+                'openai/gpt-oss-20b:free'
+            ].filter(m => m !== primaryModel);
+
+            for (const fallbackModel of fallbackModels) {
+                console.log(`[OpenRouter] Primary model "${primaryModel}" failed. Trying fallback model: "${fallbackModel}"`);
+                const fallbackResult = await requestModelWithRetry(fallbackModel, 1);
+                if (fallbackResult.ok) {
+                    console.log(`[OpenRouter] Fallback model "${fallbackModel}" succeeded.`);
+                    return fallbackResult.content;
+                }
+            }
+        }
+
         const primaryErr = lastResult.errMsg || 'Unknown error';
         throw new Error(`OpenRouter (${primaryModel}): ${primaryErr}`);
     };
@@ -6481,6 +6942,8 @@ SOLVING APPROACH:
                         return await generateWithDuckDuckGo(promptText);
                     case 'yuppbridge':
                         return await generateWithYuppBridge(promptText);
+                    case 'nvidia':
+                        return await generateWithNvidia(promptText);
                     default:
                         throw new Error(`Unknown AI provider: ${SETTINGS.aiProvider}`);
                 }
@@ -6500,6 +6963,19 @@ SOLVING APPROACH:
                         } catch (err) {
                             answers = response.split('\n').map(l => l.replace(/^[-\s*"\']+|["\',\s*]+$/g, '')).filter(Boolean);
                         }
+                    } else if (problem.blankInputs.length === 1) {
+                        // Fallback when only 1 blank and no JSON array: treat the extracted code block (or whole text) as the single answer
+                        answers = [extractCode(response, language)];
+                    } else {
+                        // Fallback for multiple blanks: split by line and clean list markers
+                        answers = response.split('\n')
+                            .map(l => {
+                                let clean = l.trim();
+                                // Strip list markers (e.g. "- ", "* ", "1. ")
+                                clean = clean.replace(/^[-*•#]\s+/, '').replace(/^\d+\.\s*/, '').trim();
+                                return clean;
+                            })
+                            .filter(Boolean);
                     }
                 }
 
@@ -7516,7 +7992,11 @@ SOLVING APPROACH:
                 }
             }
 
-            updateStatus(`Failed after ${maxRetries} attempts`, 'error');
+            updateStatus(`Failed after ${maxRetries} attempts. Moving to next...`, 'warning');
+            await sleep(3000);
+            checkStop();
+            const movedNext = await clickProceedNext();
+            if (movedNext) return true;
             return false;
         }
 
@@ -8478,7 +8958,7 @@ SOLVING APPROACH:
                     parts: cachedParts,
                     timestamp: Date.now()
                 };
-                storage.setValue('find_incomplete_cache_v2', JSON.stringify(cachedParts));
+                storage.setValue('find_incomplete_cache_v2', JSON.stringify(cacheData));
                 
                 if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
                     renderList(cachedParts, cacheData.timestamp);
@@ -9053,6 +9533,7 @@ SOLVING APPROACH:
 
 
 
+
     // Initialize FindIncompleteModule when DOM is ready AND script is enabled
     onScriptEnabled(() => {
         if (document.readyState === 'loading') {
@@ -9067,4 +9548,4 @@ SOLVING APPROACH:
         window.FindIncompleteModule = FindIncompleteModule;
     });
 
-})();                 
+}                 

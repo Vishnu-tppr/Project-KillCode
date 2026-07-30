@@ -1,218 +1,152 @@
 # Anti-Cheat Bypass Userscript
 
-A Tampermonkey/Greasemonkey userscript that bypasses common anti-cheat mechanisms on SkillRack.
+<p align="center">
+  <img src="KillCode.jpeg" alt="KillCode Script Icon" width="120">
+</p>
+
+Tampermonkey/Greasemonkey userscript for SkillRack. Bypasses anti-cheat restrictions and generates AI solutions using your own ChatGPT account — no API key needed.
 
 ## ⚠️ Important Warnings
 
-> **⚠️ Please disable the script if you are attending a test as it might lead to unintended effects.**
+> **⚠️ Disable the script during an actual test. It may cause unintended behaviour.**
 
-> **⚠️ Attempting to navigate the page while the captcha solver is running may lead to unintended effects. If it gets stuck in a loop, closing and opening the tabs will fix it.**
-
----
-
-## Version 5.1 Features (Latest)
-
-### 🆕 New in v5.1 - Multiple Fill In the Blank & Stability Fixes
-
-#### 🧩 Multiple Fill In the Blank (MFIB) Support
-- **Full MFIB support** - Automatically parses templates containing multiple inline text inputs/blanks (`[BLANK_0]`, `[BLANK_1]`, etc.) interspersed with static code blocks.
-- **Structured JSON Prompts** - Requests the AI to return exactly a JSON array of strings matching the blanks.
-- **Blanks Autofilling** - Parses the AI response and automatically fills all the input fields, triggering correct browser events so the framework registers the input.
-
-#### 🔧 Code Editor Visibility & Interception Fixes
-- **Refactored `window.ace` property interception** - Rewritten to use a secure local variable closure instead of property deletion. This completely resolves the bug where the editor was blank/invisible or threw `window.txtCode.getSession is not a function`.
-- **Textarea Fallback** - If the Ace Editor fails to load, the script gracefully falls back to the native `<textarea>` element to enter code.
-
-#### ⚡ AutoSolver Flow Optimization (Run-Only)
-- **Fast Run-Only Flow** - The AutoSolver now runs the code against sample cases and immediately proceeds to the next challenge without clicking "Save/Submit".
-- **Stale Result Prevention** - Automatically clears previous results and growl popups before hitting run to prevent stale success/failure detection.
-
-#### 🔌 Updated OpenRouter Free Model Fallbacks
-- **`google/gemini-2.0-flash:free` as Default** - Replaced the outdated primary model with the highly active Gemini free model.
-- **Dynamic Auto-Router Fallback** - Added **`openrouter/free`** to the fallback chain to automatically use any active free model when rate limits or transient errors occur.
+> **⚠️ Don't navigate while the captcha solver is running. If it loops, close and reopen the tab.**
 
 ---
 
-## Version 5.0 Features
+## Version 5.0f (Latest)
 
-#### 🔄 Improved Pre/Post Code Support
-- **Fixed includePrePostCode logic** - Now correctly handles both modes:
-  - When **disabled**: Full code (pre + middle + post) is sent to AI
-  - When **enabled**: Only middle code is sent to AI (useful when you want AI to fill in a function)
-- **Better code wrapping** - Ensures proper code structure in both modes
+### 🆕 v5.0f — Free ChatGPT AI via openai-oauth
 
-#### 📋 YuppBridge AI Provider (200+ Models!)
-- **Access 200+ AI models** through Yupp AI
-- **Self-hosted** OpenAI-compatible API proxy
-- Requires your own YuppBridge instance ([self-host guide](https://github.com/cloudWaddie/yuppbridge))
-- Features:
-  - Dynamic model loading from your instance
-  - Model search & filtering
-  - Health check button
-  - 6-hour model caching
-- Available endpoints on your instance:
-  - `/health` - Health check with uptime
-  - `/v1/models` - List 200+ models from Yupp AI
-  - `/v1/chat/completions` - OpenAI-compatible chat
-  - `/dashboard` - Admin dashboard with stats
-  - `/api/v1/credits` - Get credit balance
-  - `/metrics` - Prometheus metrics
-  - `/api/v1/config/reload` - Clear caches
-- Supported model categories: GPT-4o, Claude, Gemini, Llama, Mistral, DeepSeek, Qwen, and more!
+The script integrates with [openai-oauth](https://github.com/EvanZhouDev/openai-oauth), which reuses the same OAuth tokens as OpenAI's Codex CLI to call `chatgpt.com/backend-api/codex` — the same compute OpenAI charges API credits for, accessed through your free ChatGPT account.
 
-#### 🦆 DuckDuckGo AI Provider (FREE!)
-- **Completely FREE** AI solution generator
-- Uses a Cloudflare Workers proxy to bypass CSP restrictions
-- Powered by DuckDuckGo AI Chat
-- Available models:
-  - **GPT-4o Mini** (OpenAI) - General-purpose
-  - **GPT-5 Mini** (OpenAI) - Reasoning
-  - **GPT-OSS 120B** (OpenAI) - Open source reasoning
-  - **Llama 4 Scout** (Meta) - Open source
-  - **Claude 3.5 Haiku** (Anthropic) - Fast responses
-  - **Mixtral Small 3** (Mistral AI) - Open source
-- No API key required!
-- Custom proxy URL support for self-hosted instances
+#### Two Modes
 
-### 🆕 Previous Updates (v4.6-4.9)
+| Mode | How it works | Requires |
+|------|-------------|----------|
+| **Direct Browser** | `GM_xmlhttpRequest` → `chatgpt.com/backend-api/codex` using your stored OAuth token | Chrome extension + sign-in |
+| **Local Proxy Fallback** | Routes through `npx openai-oauth` on your machine at `127.0.0.1:10531` | Node.js + terminal |
+
+The script tries direct first. On any failure (401, 403, network), it falls back to the local proxy automatically.
+
+---
+
+### 🔧 Setup: ChatGPT Provider
+
+#### Step 1 — Install the browser extension
+
+- **Chrome**: [Sign in with ChatGPT](https://chromewebstore.google.com/detail/sign-in-with-chatgpt/odbgboachaefbbbdiffcefhpkekhfcna)
+- **Firefox**: [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/sign-in-with-chatgpt/)
+
+The extension's only host permission is `http://localhost:1455/*`. It relays OpenAI's OAuth callback — no credentials go to any third-party server.
+
+#### Step 2 — Sign in
+
+1. Open Settings (⚙️ bottom-right), select **"🤖 ChatGPT (openai-oauth)"** as provider.
+2. Click **"Sign in with ChatGPT"**.
+3. Complete the OAuth popup. Token is stored in IndexedDB, encrypted with WebCrypto.
+
+#### Step 3 — (Optional) Local proxy
+
+If the direct call is blocked, run the proxy in a terminal:
+
+```bash
+npx openai-oauth@latest
+```
+
+Starts an OpenAI-compatible endpoint at `http://127.0.0.1:10531/v1`. Models available depend on your ChatGPT plan: `gpt-5.6-terra`, `gpt-5.6-sol`, `gpt-image-2`, etc.
+
+Background mode:
+
+```bash
+npx openai-oauth --detach
+npx openai-oauth status
+npx openai-oauth logs --follow
+npx openai-oauth stop
+```
+
+Sign in without starting the server:
+
+```bash
+npx openai-oauth login
+```
+
+---
+
+#### How it works end-to-end
+
+![openai-oauth SDK package structure](openai-oauth/assets/package-structure.png)
+
+```
+Script (in browser)
+        ↓
+GM_xmlhttpRequest → chatgpt.com/backend-api/codex
+        ↓ (if 401/403/network error)
+Fallback → http://127.0.0.1:10531/v1/chat/completions
+        ↓ (if proxy not running)
+Error shown: "Sign in or start npx openai-oauth"
+```
+
+---
+
+### 🆕 v5.1 — Multiple Fill In the Blank & Stability
+
+#### 🧩 Multiple Fill In the Blank (MFIB)
+- Parses templates with multiple blanks (`[BLANK_0]`, `[BLANK_1]`, etc.) mixed with static code.
+- Sends a structured JSON prompt; AI returns a JSON array of answers.
+- Autofills all inputs with proper browser events so the framework registers them.
+
+#### 🔧 Code Editor Fixes
+- Refactored `window.ace` interception using a local variable closure. Fixes blank editor and `getSession is not a function` errors.
+- Falls back to native `<textarea>` if Ace fails to load.
+
+#### ⚡ AutoSolver (Run-Only)
+- Runs code against sample cases then moves to the next problem — no Save/Submit click needed.
+- Clears previous results and growl popups before each run to avoid stale detection.
+
+#### 🔌 OpenRouter Model Updates
+- Default: `google/gemini-2.0-flash:free`
+- Fallback: `openrouter/free` (auto-selects any active free model on rate limits)
+
+---
+
+## Version 5.0
+
+#### 🔄 Pre/Post Code Support
+- When **disabled**: full code (pre + middle + post) sent to AI.
+- When **enabled**: only middle code sent (useful for function-fill tasks).
+
+#### 📋 YuppBridge (200+ Models)
+Self-hosted OpenAI-compatible proxy backed by Yupp AI.
+
+- Requires your own instance: [YuppBridge GitHub](https://github.com/cloudWaddie/yuppbridge)
+- Dynamic model loading with search and 6-hour cache
+- Endpoints: `/health`, `/v1/models`, `/v1/chat/completions`, `/dashboard`, `/api/v1/credits`, `/metrics`
+- Models: GPT-4o, Claude, Gemini, Llama, Mistral, DeepSeek, Qwen, and more
+
+#### 🦆 DuckDuckGo AI (FREE)
+No account, no API key. Uses a Cloudflare Workers proxy to bypass CSP.
+
+Available models: GPT-4o Mini, GPT-5 Mini, GPT-OSS 120B, Llama 4 Scout, Claude 3.5 Haiku, Mixtral Small 3.
+
+---
+
+## Previous Updates (v4.6–4.9)
 
 #### 🔄 Mandatory Update Check
-- Automatically checks for updates from GitHub
-- Compares your local version with the latest available version
-- Shows an update dialog if a newer version is available
-- **You must update to continue using the script** if outdated
-- "Update Now" button opens the script URL for easy updating
+Compares your version against GitHub on load. Shows a blocking dialog if you're behind — click "Update Now" to go to the script URL.
 
 #### ⚖️ First-Time Disclaimer
-- Shows a comprehensive disclaimer on first use
-- Covers legal and academic responsibility warnings
-- Must accept to use the script (saved in localStorage)
-- Includes warnings about:
-  - Academic penalties and disciplinary actions
-  - Account suspension or termination
-  - Legal consequences
-  - Damage to academic records
+One-time modal on first run. Must accept before the script initialises. Covers academic penalties, account termination, and legal consequences.
 
 #### 🚫 Remote Kill Switch
-- Script can be remotely disabled by the author if necessary
-- Checks `kill.txt` on GitHub (contains `true` or `false`)
-- If disabled, shows a "Script Disabled" message
-- Useful for emergency situations or maintenance
-
-### 🎛️ Settings Panel
-Click the ⚙️ button (bottom-right corner) to toggle features on/off:
-- All bypasses can be individually enabled/disabled
-- Settings are saved to localStorage
-- Changes take effect after page reload
-
-### 🤖 AI Solution Generator
-- Automatically generates code solutions using AI
-- Supports **6 AI Providers**:
-  - **Google Gemini** - Free tier available
-  - **OpenAI (ChatGPT)** - Paid
-  - **OpenRouter (Multi-Model)** - Free & Paid models
-  - **G4F (g4f.space)** - Alternative provider
-  - **DuckDuckGo AI** - FREE, no API key needed!
-  - **YuppBridge** - Self-hosted, 200+ models from Yupp AI
-- Works on both tutorial pages (generates middle code portion) and code track pages (generates complete solution)
-- Purple "🤖 AI Solution" button appears next to Save/Run buttons
-- Configure your API key in the settings panel
-
-#### 🆕 Dynamic OpenRouter Model Selection (v4.5+)
-- **Fetches models dynamically** from OpenRouter API
-- **Smart caching** (6-hour cache) to avoid excessive API calls
-- **Search & filter** models by name, author, or group
-- **"Show free only"** checkbox to filter free models
-- **Grouped by provider** (Google, Anthropic, OpenAI, Meta, etc.)
-- **Refresh button** to get the latest models
-- Hundreds of models available including:
-  - ⭐ Free models (Gemini, DeepSeek, Llama, Qwen, etc.)
-  - Premium models (Claude, GPT-4o, Gemini Pro, etc.)
-
-#### 🆕 G4F Provider Support (v4.4+)
-- Integration with g4f.space API
-- Dynamic model fetching with caching
-- Search and filter functionality
-- Auto model selection option
-
-### ⚡ Auto Solver (Experimental)
-- **Fully automated problem solving**
-- Clicks AI Solution button → Waits for generation → Runs code → Handles results
-- Automatic retry on failure (configurable max retries)
-- Proceeds to next problem on success
-- **Stop button** to halt at any time
-- Status indicator shows current operation
-- ⚠️ Experimental feature - use at your own risk
-
-### 🔢 Auto Captcha Solver (Credit: [adithyagenie](https://github.com/adithyagenie/skillrack-captcha-solver))
-- Automatically solves math captcha using Tesseract.js OCR
-- **Dynamically finds captcha images** - works across different pages
-- Inverts image colors for better OCR accuracy
-- Handles retry on failure
-- **Optional username parsing**: If your username contains '+' and numbers (e.g., `abcd123+21@xyz`), set it in the settings panel
-
-### 1. Tab Switch Detection Bypass
-- Spoofs `document.visibilityState` to always return `'visible'`
-- Spoofs `document.hidden` to always return `false`
-- Blocks `visibilitychange` event listeners
-
-### 2. Copy/Paste/Cut Functionality Restoration
-- Intercepts clipboard events at capture phase (runs before jQuery handlers)
-- Pre-emptive ACE editor interception - blocks restrictions before they're applied
-- Keyboard shortcuts (Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z) work in the code editor
-- Overrides jQuery's `$.fn.bind()` and `$.fn.on()` to filter out clipboard event bindings
-- Restores native Clipboard API functionality
-
-### 3. Drag & Drop Restrictions Removal
-- Removes `ondragstart`, `ondrop`, `onselectstart` attributes from `<body>` and all elements
-- Runs on page load and periodically to catch dynamic content
-
-### 4. Text Selection Enablement
-- Injects CSS to force `user-select: text !important` on all elements
-- Blocks `selectstart` event prevention
-- Restores right-click context menu
-
-### 5. ACE Editor Bypass
-Handles ACE Editor-specific restrictions:
-
-| Blocking Method | Bypass Solution |
-|----------------|-----------------|
-| `commands.addCommand({name: 'bte', bindKey: 'ctrl-c\|ctrl-v\|...'})` | Intercepts and blocks command registration |
-| `commands.on("exec", ...)` paste blocking | Filters out exec handlers that block clipboard |
-| `container.addEventListener("drop", ...)` | Adds working drop handler in capture phase |
-| Anti-bulk-paste (30+ char detection) | Intercepts change handlers and `setValue()` to block reset attempts |
-| `cs()` function diff check | Overrides to always sync code |
-
-### 6. Fullscreen Enforcement Bypass
-- Intercepts `requestFullscreen()` and `exitFullscreen()` calls
-- Blocks fullscreen change event listeners
-- Spoofs `document.fullscreenElement` to always return a value
-
-### 7. Multi-Monitor Detection Prevention
-- Spoofs `window.screen` properties (`left: 0`, `top: 0`, `isExtended: false`)
-- Normalizes mouse movement tracking
-
-### 8. Heartbeat/Telemetry Blocking
-- Intercepts XMLHttpRequest and Fetch API
-- Blocks requests to specific proctoring/telemetry endpoints
-- Returns fake successful responses
-
----
-
-## Installation
-
-1. Install [Tampermonkey](https://www.tampermonkey.net/) or [Greasemonkey](https://www.greasespot.net/)
-2. Create a new userscript
-3. Copy the contents of `userscript.js` into the editor
-4. Save and enable the script
-5. **Accept the disclaimer** on first run
-6. Configure your settings and API keys
+Checks `kill.txt` on GitHub. If `false`, shows "Script Disabled" and stops. Used for emergencies and maintenance.
 
 ---
 
 ## Settings Panel
 
-Click the **⚙️ gear button** in the bottom-right corner to open settings:
+Click the **⚙️ gear button** (bottom-right) to open settings. All changes save to localStorage and take effect on page reload.
 
 ### Anti-Cheat Bypasses
 | Setting | Description | Default |
@@ -234,324 +168,391 @@ Click the **⚙️ gear button** in the bottom-right corner to open settings:
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Auto-Solve Captcha | Automatically solve math captcha | ✅ On |
-| Username (optional) | Your username for captcha parsing | (empty) |
+| Username (optional) | For captcha parsing (e.g. `abc+21@xyz`) | (empty) |
 
 ### AI Solution Generator
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Enable AI Solver | Show AI solution button | ❌ Off |
 | ⚡ Auto Solver | Auto-solve & submit (experimental) | ❌ Off |
-| AI Provider | Choose Gemini, OpenAI, OpenRouter, G4F, DuckDuckGo, or **YuppBridge** | Gemini |
-| Gemini API Key | Your Google Gemini API key | (empty) |
-| OpenAI API Key | Your OpenAI API key | (empty) |
-| OpenRouter API Key | Your OpenRouter API key | (empty) |
-| OpenRouter Model | Dynamic model selection with search | Gemini 2.0 Flash |
-| G4F API Key | Your G4F API key | (empty) |
+| AI Provider | 7 providers (see below) | Gemini |
+| Gemini API Key | Google Gemini API key | (empty) |
+| OpenAI API Key | OpenAI API key | (empty) |
+| OpenRouter API Key | OpenRouter API key | (empty) |
+| OpenRouter Model | Dynamic model selector with search | Gemini 2.0 Flash |
+| G4F API Key | G4F API key | (empty) |
 | G4F Model | Dynamic model selection | Auto |
-| DuckDuckGo Model | Select from 6 free models | GPT-4o Mini |
-| DuckDuckGo API URL | Custom proxy URL (optional) | (default proxy) |
-| YuppBridge API URL | Your self-hosted YuppBridge URL | (empty) |
-| YuppBridge API Key | Your YuppBridge API key | (empty) |
-| YuppBridge Model | Dynamic selection from 200+ models | gpt-4o |
+| DuckDuckGo Model | 6 free models | GPT-4o Mini |
+| DuckDuckGo API URL | Custom proxy URL | (default) |
+| YuppBridge API URL | Self-hosted YuppBridge URL | (empty) |
+| YuppBridge API Key | YuppBridge API key | (empty) |
+| YuppBridge Model | 200+ models | gpt-4o |
+| ChatGPT (openai-oauth) | Sign in with ChatGPT — free AI | Sign In button |
 
 ---
 
-## AI Solution Generator Setup
+## AI Providers
 
-### Using Google Gemini (Free)
-1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
-2. Create an API key
-3. Paste it in the settings panel under "Gemini API Key"
+### 🤖 ChatGPT via openai-oauth — FREE ⭐
 
-### Using OpenAI (Paid)
-1. Go to [OpenAI Platform](https://platform.openai.com/api-keys)
-2. Create an API key
-3. Paste it in the settings panel under "OpenAI API Key"
-4. Change "AI Provider" to "OpenAI (ChatGPT)"
+![Sign in with ChatGPT button](openai-oauth/assets/sign-in-with-chatgpt-button.png)
 
-### Using OpenRouter (Free & Paid Models) ⭐ Recommended
-1. Go to [OpenRouter](https://openrouter.ai/keys)
-2. Create an API key (free tier available)
-3. Paste it in the settings panel under "OpenRouter API Key"
-4. Change "AI Provider" to "OpenRouter (Multi-Model)"
-5. **Search or browse** models using the dynamic selector
-6. Check "Show free only" to filter free models
+1. Install [Sign in with ChatGPT](https://chromewebstore.google.com/detail/sign-in-with-chatgpt/odbgboachaefbbbdiffcefhpkekhfcna)
+2. Set provider to **"🤖 ChatGPT (openai-oauth)"**
+3. Click **"Sign in with ChatGPT"** — OAuth flow, token stored locally
+4. Done. Script calls `chatgpt.com/backend-api/codex` directly.
 
-#### Popular Free Models on OpenRouter:
-| Model | Provider | Specialty |
-|-------|----------|-----------|
-| Gemini 2.0 Flash | Google | Fast, general purpose |
+> Optional: run `npx openai-oauth@latest` in a terminal for automatic fallback to `http://127.0.0.1:10531`.
+
+Models: `gpt-5.6-terra`, `gpt-5.6-sol`, `gpt-5.5`, `gpt-5.4-mini`, `gpt-image-2` (varies by plan).
+
+### Google Gemini (Free)
+1. [Get API key](https://aistudio.google.com/app/apikey)
+2. Paste under "Gemini API Key" in settings
+
+### OpenAI (Paid)
+1. [Get API key](https://platform.openai.com/api-keys)
+2. Paste under "OpenAI API Key", set provider to "OpenAI (ChatGPT)"
+
+### OpenRouter (Free & Paid) ⭐
+1. [Get API key](https://openrouter.ai/keys)
+2. Paste under "OpenRouter API Key", set provider to "OpenRouter (Multi-Model)"
+3. Browse models — check "Show free only" to filter
+
+Popular free models:
+
+| Model | Provider | Notes |
+|-------|----------|-------|
+| Gemini 2.0 Flash | Google | Fast, general |
 | DeepSeek R1 | DeepSeek | Reasoning |
 | Qwen3 Coder 480B | Qwen | Coding |
-| Llama 3.3 70B | Meta | General purpose |
-| Claude 3 Haiku | Anthropic | Fast responses |
+| Llama 3.3 70B | Meta | General |
+| Claude 3 Haiku | Anthropic | Fast |
 
-### Using G4F (g4f.space)
-1. Go to [G4F](https://g4f.space)
-2. Create an account and get an API key
-3. Paste it in the settings panel under "G4F API Key"
-4. Change "AI Provider" to "G4F (g4f.space)"
-5. Select a model or use "Auto" for automatic selection
+### G4F (g4f.space)
+1. [Get API key](https://g4f.space)
+2. Paste under "G4F API Key", set provider to "G4F"
+3. Pick a model or use "Auto"
 
-### Using DuckDuckGo AI (FREE - No API Key!) ⭐ Recommended
-1. Change "AI Provider" to "🦆 DuckDuckGo AI (FREE!)"
-2. Select a model from the dropdown
-3. **No API key needed!**
+### DuckDuckGo AI — FREE, no key needed ⭐
+Set provider to "🦆 DuckDuckGo AI (FREE!)" and pick a model. That's it.
 
-#### Available DuckDuckGo Models:
-| Model | Provider | Specialty |
-|-------|----------|-----------|
-| GPT-4o Mini | OpenAI | General purpose |
-| GPT-5 Mini | OpenAI | Reasoning (Beta) |
-| GPT-OSS 120B | OpenAI | Open source reasoning |
-| Llama 4 Scout | Meta | Open source |
-| Claude 3.5 Haiku | Anthropic | Fast responses |
-| Mixtral Small 3 | Mistral AI | Open source |
+| Model | Provider |
+|-------|----------|
+| GPT-4o Mini | OpenAI |
+| GPT-5 Mini | OpenAI |
+| GPT-OSS 120B | OpenAI |
+| Llama 4 Scout | Meta |
+| Claude 3.5 Haiku | Anthropic |
+| Mixtral Small 3 | Mistral AI |
 
-#### Self-Hosting the Proxy
-If you want to host your own proxy:
-1. Clone the `duckduckgo-api` folder
-2. Run `npm install && wrangler deploy`
-3. Update the "DuckDuckGo API URL" in settings
+Self-host the proxy: clone `duckduckgo-api`, run `npm install && wrangler deploy`, update the URL in settings.
 
-### Using YuppBridge (200+ Models - Self-Hosted) ⭐ Power Users
-YuppBridge provides access to 200+ AI models from Yupp AI through a self-hosted OpenAI-compatible proxy.
+### YuppBridge (200+ Models, Self-Hosted) ⭐ Power Users
 
-#### Step 1: Self-Host YuppBridge
-1. Go to [YuppBridge GitHub](https://github.com/cloudWaddie/yuppbridge)
-2. Follow the deployment instructions (Docker, Node.js, or serverless)
-3. Note your deployed instance URL (e.g., `https://your-yuppbridge.example.com`)
+1. Deploy from [YuppBridge GitHub](https://github.com/cloudWaddie/yuppbridge)
+2. Set provider to "🌉 YuppBridge (200+ Models)"
+3. Enter your URL and API key
+4. Click 🔄 to load models, ❤️ for health check
 
-#### Step 2: Configure in Settings
-1. Change "AI Provider" to "🌉 YuppBridge (200+ Models)"
-2. Enter your **YuppBridge API URL** (your self-hosted instance URL)
-3. Enter your **API Key** (provided by your YuppBridge instance)
-4. Click 🔄 to load available models
-5. Use the search to find models (e.g., "gpt-4", "claude", "gemini")
-6. Click ❤️ to check API health
+Endpoints: `/health`, `/v1/models`, `/v1/chat/completions`, `/dashboard`, `/api/v1/credits`, `/metrics`, `/api/v1/config/reload`
 
-#### YuppBridge API Endpoints
-Your self-hosted instance provides:
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check with uptime |
-| `/v1/models` | GET | List 200+ models from Yupp AI |
-| `/v1/chat/completions` | POST | OpenAI-compatible chat |
-| `/dashboard` | GET | Admin dashboard with stats |
-| `/api/v1/credits` | GET | Get credit balance |
-| `/metrics` | GET | Prometheus metrics |
-| `/api/v1/config/reload` | POST | Clear caches |
-
-#### Popular YuppBridge Models:
-| Model | Provider | Specialty |
-|-------|----------|-----------|
-| gpt-4o | OpenAI | Most capable |
-| gpt-4o-mini | OpenAI | Fast & efficient |
-| claude-3-opus | Anthropic | Advanced reasoning |
-| claude-3-sonnet | Anthropic | Balanced |
-| gemini-1.5-pro | Google | Multimodal |
-| llama-3-70b | Meta | Open source |
-| mistral-large | Mistral | European AI |
-| deepseek-coder | DeepSeek | Coding specialist |
+Popular models: gpt-4o, gpt-4o-mini, claude-3-opus, claude-3-sonnet, gemini-1.5-pro, llama-3-70b, mistral-large, deepseek-coder.
 
 ---
 
-## Auto Solver Usage
+## AI Solution Generator
 
-⚠️ **Experimental Feature - Use at Your Own Risk**
+- Works on tutorial pages (fills middle code) and code track pages (full solution)
+- Purple "🤖 AI Solution" button appears next to Save/Run
+- Supports 7 providers (see above)
 
-1. Enable both "Enable AI Solver" and "⚡ Auto Solver" in settings
-2. Configure your AI provider and API key
-3. Navigate to a problem page
-4. The auto solver will:
-   - Wait for captcha to be solved (if present)
-   - Click the AI Solution button
-   - Wait for code generation
-   - Click Run to execute
-   - Handle success/failure
-   - Proceed to next problem on success
-5. **Click the STOP button** to halt at any time
+Dynamic OpenRouter model loading (v4.5+): fetches from API, caches 6 hours, groups by provider, lets you search and filter free-only models.
+
+---
+
+## Auto Solver
+
+⚠️ **Experimental — use at your own risk**
+
+Enable "Enable AI Solver" + "⚡ Auto Solver" in settings. The solver:
+
+1. Waits for captcha (if present)
+2. Clicks AI Solution, waits for generation
+3. Runs code, reads result
+4. Proceeds to next problem on success, retries on failure (configurable)
+
+**Click STOP at any time to halt.**
+
+---
+
+## Auto Captcha Solver
+
+Credit: [adithyagenie](https://github.com/adithyagenie/skillrack-captcha-solver)
+
+Uses Tesseract.js OCR. Inverts image colors for better accuracy. Dynamic captcha image detection — works across different pages. If your username has `+` and numbers (e.g. `abcd123+21@xyz`), set it in settings for parsing.
+
+---
+
+## Bypass Details
+
+### 1. Tab Switch Detection
+- `document.visibilityState` always returns `'visible'`
+- `document.hidden` always returns `false`
+- `visibilitychange` listeners blocked
+
+### 2. Copy/Paste/Cut
+- Clipboard events intercepted at capture phase (runs before jQuery)
+- Ctrl+C/V/X/Z work in the code editor
+- `$.fn.bind()` and `$.fn.on()` patched to drop clipboard bindings
+- Native Clipboard API restored
+
+### 3. Drag & Drop
+- `ondragstart`, `ondrop`, `onselectstart` removed from `<body>` and all elements
+- Runs on load and on a periodic timer
+
+### 4. Text Selection
+- CSS: `user-select: text !important` on all elements
+- `selectstart` prevention blocked
+- Right-click context menu restored
+
+### 5. ACE Editor
+
+| What SkillRack does | How it's bypassed |
+|---------------------|-------------------|
+| `commands.addCommand({name:'bte', bindKey:'ctrl-c\|ctrl-v\|...'})` | Blocks command registration |
+| `commands.on("exec",...)` paste block | Filters exec handlers |
+| `container.addEventListener("drop",...)` | Adds working drop handler at capture phase |
+| Anti-bulk-paste (30+ char reset) | Intercepts `setValue()` and change handlers |
+| `cs()` diff check | Overrides to always sync |
+
+### 6. Fullscreen
+- `requestFullscreen()` and `exitFullscreen()` intercepted
+- `document.fullscreenElement` always returns a truthy value
+
+### 7. Multi-Monitor Detection
+- `window.screen.left/top` spoofed to 0, `isExtended` to false
+- Mouse movement normalised
+
+### 8. Heartbeat / Telemetry
+- XHR and Fetch intercepted
+- Proctoring endpoint requests blocked, fake 200 responses returned
+
+---
+
+## Installation
+
+1. Install [Tampermonkey](https://www.tampermonkey.net/) or [Greasemonkey](https://www.greasespot.net/)
+2. Create a new userscript
+3. Paste the contents of `Anti-Cheat Bypass 5.0.user.js`
+4. Save and enable
+5. Accept the disclaimer on first run
+6. Set up your AI provider in Settings
 
 ---
 
 ## How It Works
 
-### Initialization Flow (v4.6)
+### Startup flow
+
 ```
-Script Loads
+Script loads
      ↓
-Check Kill Switch (GitHub kill.txt)
-     ↓ (if enabled)
-Check for Updates (compare versions)
-     ↓ (if up to date)
-Show Disclaimer (first time only)
-     ↓ (if accepted)
-Initialize All Features
+Kill switch check (GitHub kill.txt)
+     ↓ enabled
+Update check
+     ↓ up to date
+Disclaimer (first run only)
+     ↓ accepted
+All features initialised
 ```
 
-### Event Interception Strategy
+### ChatGPT (openai-oauth) flow
+
 ```
-User Action (Ctrl+V)
+"Sign in with ChatGPT" clicked
         ↓
-Capture Phase (our listeners run FIRST)
+OAuth popup → chatgpt.com login
+        ↓
+Extension relays callback → token saved in IndexedDB (encrypted)
+        ↓
+AI Solution requested
+        ↓
+GM_xmlhttpRequest → chatgpt.com/backend-api/codex/responses
+        ↓ on failure
+Fallback → http://127.0.0.1:10531 (npx openai-oauth)
+```
+
+### Event interception
+
+```
+User presses Ctrl+V
+        ↓
+Capture phase (our handler runs first)
   → stopImmediatePropagation()
-  → Native clipboard action proceeds
+  → clipboard action proceeds
         ↓
-Bubbling Phase (site's jQuery handlers)
-  → Event never reaches here (blocked)
+Bubbling phase (site jQuery handlers)
+  → never reached
 ```
 
-### ACE Editor Command Override
+### ACE editor override
+
 ```
-Site tries: txtCode.commands.addCommand({name: 'bte', bindKey: 'ctrl-c|ctrl-v'...})
-                                ↓
-Script intercepts ace.edit() before site code runs
-                                ↓
-Blocks 'bte' command registration
-                                ↓
-Clipboard shortcuts work normally
+Site: txtCode.commands.addCommand({name:'bte', bindKey:'ctrl-c|ctrl-v'...})
+        ↓
+Script intercepts ace.edit() first
+        ↓
+Blocks 'bte' registration
+        ↓
+Shortcuts work normally
 ```
 
-### Dynamic Model Loading (OpenRouter)
+### Dynamic model loading (OpenRouter)
+
 ```
-User opens settings panel
+Settings opened
         ↓
-Fetch models from OpenRouter API
+Fetch from OpenRouter API
         ↓
-Cache for 6 hours
+Cache 6 hours
         ↓
-Group by provider (Free first)
+Group by provider (free first)
         ↓
-Enable search & filtering
+Search & filter enabled
 ```
 
 ---
 
 ## Troubleshooting
 
-### Script not loading?
+### Script not loading
 - Check if you accepted the disclaimer
-- Check browser console for kill switch status
-- Make sure you have the latest version
+- Check browser console for kill switch messages
+- Make sure you're on the latest version
 
-### Clipboard still not working?
-- Check browser console for "Blocked" messages
-- Ensure the script runs at `document-start`
-- Try refreshing the page after enabling the script
+### Clipboard not working
+- Check console for "Blocked" messages
+- Confirm `@run-at document-start` is set
+- Refresh after enabling
 
-### ACE Editor bypass not working?
-- The editor variable might have a different name
-- Check if the editor loads dynamically (increase timeout values)
-- Open browser console to see bypass status messages
+### ACE editor bypass not working
+- Check console for bypass status messages
+- Editor might load dynamically — try increasing timeouts
 
-### Captcha solver not working?
-- Wait for Tesseract.js to load (may take a few seconds on first run)
-- Check console for "Captcha elements not found" message
-- If stuck in a loop, close and reopen the tab
+### Captcha solver not working
+- Wait for Tesseract.js to load (first run takes a few seconds)
+- Check console for "Captcha elements not found"
+- If looping, close and reopen the tab
 
-### AI Solution not appearing?
-- Make sure you've entered your API key in settings
-- Check if the problem description is visible on the page
-- Look for error messages in the browser console
+### AI Solution not appearing
+- Check API key is set (or signed in for ChatGPT provider)
+- Check that the problem description is visible on the page
+- Look for errors in browser console
 
-### OpenRouter models not loading?
-- Click the 🔄 refresh button
-- Check your internet connection
-- Models are cached for 6 hours
+### OpenRouter models not loading
+- Click 🔄 refresh
+- Check internet connection
+- 6-hour cache — wait or force refresh
 
-### Auto Solver stuck?
-- Click the **STOP** button
-- Check console for error messages
-- Increase delay settings if needed
+### Auto Solver stuck
+- Click **STOP**
+- Check console for errors
+- Increase delay settings
+
+### ChatGPT (openai-oauth) not working
+- Confirm [Sign in with ChatGPT](https://chromewebstore.google.com/detail/sign-in-with-chatgpt/odbgboachaefbbbdiffcefhpkekhfcna) is installed
+- Re-sign in from Settings if token expired
+- Optional: run `npx openai-oauth@latest` as proxy fallback
+- Check console for `[openai-oauth]` errors
+- `403` or CORS error = OpenAI patched the endpoint. File an issue.
 
 ---
 
-## Remote Control
+## Remote Kill Switch
 
-### Kill Switch
-The author can remotely disable the script by setting `kill.txt` to `false`:
-- `true` - Script works normally
-- `false` - Script is disabled with a message
+`kill.txt` on GitHub controls the switch:
+- `true` — script runs normally
+- `false` — script disabled, shows message
 
-This is used for:
-- Emergency situations
-- Maintenance periods
-- Security concerns
+Used for emergencies, maintenance, and security incidents.
 
 ---
 
 ## Disclaimer
 
-⚠️ **IMPORTANT - READ CAREFULLY:**
+⚠️ **Read before use:**
 
-- This script is provided **"AS IS"** without any warranty of any kind.
-- The author(s) are **NOT RESPONSIBLE** for any consequences arising from the use of this script, including but not limited to:
-  - Academic penalties or disciplinary actions
-  - Account suspension or termination
-  - Legal consequences
-  - Any damage to your academic record
-- By using this script, you acknowledge that bypassing anti-cheat measures may violate your institution's academic integrity policies.
-- You are **solely responsible** for your actions and any consequences that may result.
-- This script is for **educational purposes only**.
+- Provided "AS IS" with no warranty.
+- The author is **not responsible** for academic penalties, account suspension, legal consequences, or damage to your record.
+- Bypassing anti-cheat may violate your institution's academic integrity policies.
+- You are **solely responsible** for how you use this.
+- For educational purposes only.
+- The openai-oauth integration is unofficial and **not affiliated with OpenAI**. You must comply with OpenAI's [Terms of Use](https://openai.com/policies/terms-of-use/) and [Usage Policies](https://openai.com/policies/usage-policies/). Use only your own ChatGPT account.
 
-**⚠️ Remember to disable this script during actual tests and examinations.**
+**⚠️ Disable during actual tests and exams.**
 
 ---
 
 ## Changelog
 
+### v5.0f
+- 🤖 ChatGPT (openai-oauth) provider — free AI via your own account
+- ⚡ Direct browser mode via `GM_xmlhttpRequest` to `chatgpt.com/backend-api/codex`
+- 🔄 Auto-fallback to `npx openai-oauth` proxy on failure
+- 🎨 Extension footer with GitHub credit (@vishnu-tppr)
+
 ### v5.1
-- ✨ Multiple Fill In the Blank (MFIB) support with JSON response formatting
-- 🔧 Refactored `window.ace` property getter/setter to fix invisible editor errors
-- ⚡ Run-only AutoSolver workflow with stale result prevention
-- 🔌 Updated OpenRouter default and fallback free models (Gemini 2.0 Flash, openrouter/free)
+- ✨ Multiple Fill In the Blank (MFIB) — JSON prompt/response
+- 🔧 `window.ace` interception rewritten (fixes blank editor)
+- ⚡ Run-only AutoSolver with stale result prevention
+- 🔌 OpenRouter: Gemini 2.0 Flash default, `openrouter/free` fallback
 
 ### v5.0
-- 🔧 Fixed C/C++ language tag stripping and comment removal
+- 🔧 C/C++ language tag and comment stripping fixed
 - 🛡️ Code similarity checks and empty response validation
-- 📋 Added YuppBridge AI Provider with 200+ models
-- 🦆 Added DuckDuckGo AI Provider (Completely FREE)
+- 📋 YuppBridge provider (200+ models)
+- 🦆 DuckDuckGo AI provider (completely free)
 
 ### v4.6
-- ✨ Mandatory update check with dialog
-- ✨ First-time disclaimer acceptance
-- ✨ Remote kill switch functionality
-- 🔧 Improved script initialization flow
+- ✨ Mandatory update check
+- ✨ First-time disclaimer
+- ✨ Remote kill switch
+- 🔧 Startup flow refactor
 
 ### v4.5
-- ✨ Dynamic OpenRouter model selection via API
-- ✨ Model search and filtering
-- ✨ "Show free only" filter
-- ✨ Model caching (6 hours)
-- 🔧 Fixed stop button functionality in Auto Solver
+- ✨ Dynamic OpenRouter model loading
+- ✨ Model search and free-only filter
+- ✨ 6-hour model cache
+- 🔧 Auto Solver stop button fixed
 
 ### v4.4
-- ✨ G4F (g4f.space) provider support
-- ✨ Dynamic G4F model loading
-- ✨ Auto Solver feature (experimental)
-- 🔧 Various bug fixes
+- ✨ G4F provider
+- ✨ Auto Solver (experimental)
+- 🔧 Various fixes
 
 ### v4.3
-- ✨ OpenRouter integration with 30+ models
+- ✨ OpenRouter integration (30+ models)
 - ✨ Custom model ID support
-- 🔧 Improved AI prompt engineering
 
 ### v4.2
-- ✨ Improved captcha solver
+- ✨ Captcha solver improvements
 - 🔧 Dynamic captcha image detection
 
 ### v4.1
-- ✨ Settings panel UI
+- ✨ Settings panel
 - ✨ AI Solution Generator
-- ✨ Multiple AI provider support
+- ✨ Multi-provider support
 
 ---
 
 ## License
 
-MIT License
+MIT
 
 ## Credits
 
-- **ToonTamilIndia** - Main development
-- **[adithyagenie](https://github.com/adithyagenie/skillrack-captcha-solver)** - Captcha solver implementation
+- **ToonTamilIndia** — main development
+- **[adithyagenie](https://github.com/adithyagenie/skillrack-captcha-solver)** — captcha solver
+- **[EvanZhouDev/openai-oauth](https://github.com/EvanZhouDev/openai-oauth)** — openai-oauth SDK (Apache-2.0)
+- **[@vishnu-tppr](https://github.com/vishnu-tppr)** — ChatGPT integration & reverse engineering
