@@ -8,6 +8,7 @@ Tampermonkey userscript for [skillrack.com](https://skillrack.com). Kills tab-sw
 
 **Version:** `5.0f` · **Matches:** `*.skillrack.com/*`
 
+> [!IMPORTANT]
 > ⚠️ **CRITICAL DISCLAIMER & WARNING:**
 >
 > - **Educational Purpose Only**: This project is strictly for research and educational purposes. We take absolutely no responsibility for any actions you take, academic penalties you receive, or account bans you experience. You agree to use this entirely at your own risk.
