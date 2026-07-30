@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Anti-Cheat Bypass
+// @name         Project-KillCode
 // @namespace    http://tampermonkey.net/
 // @version      5.0f
 // @description  Bypass tab switching, copy/paste restrictions, full-screen enforcement, auto-solve captcha, and AI-powered solution generator
@@ -17,8 +17,8 @@
 // @connect      auth.openai.com
 // @connect      chatgpt.com
 // @run-at       document-start
-// @downloadURL https://raw.githubusercontent.com/Vishnu-tppr/skillrack-script/refs/heads/main/Anti-Cheat%20Bypass%205.0.user.js
-// @updateURL https://raw.githubusercontent.com/Vishnu-tppr/skillrack-script/refs/heads/main/Anti-Cheat%20Bypass%205.0.user.js
+// @downloadURL https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js
+// @updateURL https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js
 // ==/UserScript==
 
 // 1. Sandbox bridge
