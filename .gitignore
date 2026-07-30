@@ -1,0 +1,10 @@
+# Ignore the bundled openai-oauth subpackage — tracked separately upstream
+openai-oauth/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor folders
+.vscode/
+.idea/

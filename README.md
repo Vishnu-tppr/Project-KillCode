@@ -1,7 +1,7 @@
 # Anti-Cheat Bypass Userscript
 
 <p align="center">
-  <img src="KillCode.jpeg" alt="KillCode Script Icon" width="120">
+  <img src="assets/KillCode.jpeg" alt="KillCode Script Icon" width="120">
 </p>
 
 Tampermonkey/Greasemonkey userscript for SkillRack. Bypasses anti-cheat restrictions and generates AI solutions using your own ChatGPT account — no API key needed.
@@ -75,7 +75,7 @@ npx openai-oauth login
 
 #### How it works end-to-end
 
-![openai-oauth SDK package structure](openai-oauth/assets/package-structure.png)
+![openai-oauth SDK package structure](assets/package-structure.png)
 
 ```
 Script (in browser)
@@ -195,7 +195,7 @@ Click the **⚙️ gear button** (bottom-right) to open settings. All changes sa
 
 ### 🤖 ChatGPT via openai-oauth — FREE ⭐
 
-![Sign in with ChatGPT button](openai-oauth/assets/sign-in-with-chatgpt-button.png)
+![Sign in with ChatGPT button](assets/sign-in-with-chatgpt-button.png)
 
 1. Install [Sign in with ChatGPT](https://chromewebstore.google.com/detail/sign-in-with-chatgpt/odbgboachaefbbbdiffcefhpkekhfcna)
 2. Set provider to **"🤖 ChatGPT (openai-oauth)"**
