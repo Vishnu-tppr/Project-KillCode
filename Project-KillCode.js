@@ -117,7 +117,7 @@ function mainCode() {
     // SCRIPT VERSION & REMOTE URLS
     // ============================================
     const SCRIPT_VERSION = '5.0';
-    const REMOTE_SCRIPT_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/skillrack-script/refs/heads/main/Anti-Cheat%20Bypass%205.0.user.js';
+    const REMOTE_SCRIPT_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js';
     const KILL_SWITCH_URL = 'https://raw.githubusercontent.com/Aron-2005/solid-octo-doodle/refs/heads/main/kill.txt';
     const DISCLAIMER_ACCEPTED_KEY = 'skillrack_bypass_disclaimer_accepted';
     const SCRIPT_DISABLED_KEY = 'skillrack_bypass_disabled_by_killswitch';
