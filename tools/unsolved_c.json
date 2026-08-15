@@ -1,0 +1,289 @@
+{
+ "C - Programming Course (Hands-On)": {},
+ "C - INTRO (Code Solution)": {},
+ "C - STARTER": {},
+ "C - INPUT/OUTPUT (Video Explanation)": {},
+ "C - ARITHMETIC OPERATORS (Video Explanation)": {},
+ "C - IF ELSE (Video Explanation)": {},
+ "C - NESTED IF ELSE (Video Explanation)": {},
+ "C - LOOPS (Video Explanation)": {},
+ "C - NESTED LOOPS AND PATTERNS (Video Explanation)": {},
+ "C - ARRAY (Video Explanation)": {},
+ "C - STRING (Video Explanation)": {},
+ "C - MATRIX (Video Explanation)": {},
+ "C - Relational, Logical Operators and If Else Practice Programs": {},
+ "C - Logical Operators, Switch and Nested If Else Practice Programs": {
+  "C - Logical Operators, Switch and Nested If Else - PART004": [
+   {
+    "row": 0,
+    "id": "6662",
+    "name": "Cross the River"
+   }
+  ],
+  "C - Logical Operators, Switch and Nested If Else - PART005": [
+   {
+    "row": 0,
+    "id": "6660",
+    "name": "Arrival Time"
+   },
+   {
+    "row": 1,
+    "id": "6607",
+    "name": "Open the Door"
+   }
+  ]
+ },
+ "C - Loops Practice Programs": {
+  "C - Loops - PART001": [
+   {
+    "row": 0,
+    "id": "6735",
+    "name": "N Multiples of X"
+   }
+  ],
+  "C - Loops - PART004": [
+   {
+    "row": 0,
+    "id": "6701",
+    "name": "Multiple of 3 - Next Digit"
+   },
+   {
+    "row": 1,
+    "id": "6711",
+    "name": "Most Expensive Pen"
+   },
+   {
+    "row": 2,
+    "id": "6723",
+    "name": "Consecutive Digits"
+   }
+  ],
+  "C - Loops - PART005": [
+   {
+    "row": 0,
+    "id": "6748",
+    "name": "Integers from N to X"
+   }
+  ]
+ },
+ "C - String Practice Programs": {
+  "C - String - PART002": [
+   {
+    "row": 0,
+    "id": "6884",
+    "name": "Two String Reverse Interlace Pattern"
+   }
+  ],
+  "C - String - PART003": [
+   {
+    "row": 0,
+    "id": "6878",
+    "name": "First and Last Character"
+   }
+  ],
+  "C - String - PART004": [
+   {
+    "row": 0,
+    "id": "6886",
+    "name": "Find and Replace"
+   },
+   {
+    "row": 1,
+    "id": "6900",
+    "name": "X Successive Alphabets"
+   },
+   {
+    "row": 2,
+    "id": "6908",
+    "name": "Words with Length N"
+   }
+  ]
+ },
+ "C - Array Practice Programs": {
+  "C - Array - PART001": [
+   {
+    "row": 0,
+    "id": "6949",
+    "name": "Sum of Array Elements"
+   }
+  ],
+  "C - Array - PART002": [
+   {
+    "row": 0,
+    "id": "7695",
+    "name": "Divisible by Unit Digit"
+   },
+   {
+    "row": 1,
+    "id": "6931",
+    "name": "Two Repeating Elements"
+   },
+   {
+    "row": 2,
+    "id": "6961",
+    "name": "Largest Element(s) in Increasing Sequence"
+   }
+  ],
+  "C - Array - PART003": [
+   {
+    "row": 0,
+    "id": "6960",
+    "name": "Non - Decreasing Sequence"
+   }
+  ],
+  "C - Array - PART005": [
+   {
+    "row": 0,
+    "id": "7686",
+    "name": "Product between Negative Integers"
+   },
+   {
+    "row": 1,
+    "id": "6940",
+    "name": "Integers Occurring Odd Number of Times"
+   },
+   {
+    "row": 2,
+    "id": "7679",
+    "name": "Group by Same Elements"
+   }
+  ]
+ },
+ "C - Functions Practice Programs": {},
+ "C -  50 VERY-EASY CHALLENGES": {},
+ "C - 50 EASY CHALLENGES": {
+  "C - EASY - PART002": [
+   {
+    "row": 0,
+    "id": "2579",
+    "name": "Palindrome Missing Alphabet"
+   }
+  ],
+  "C - EASY - PART003": [
+   {
+    "row": 0,
+    "id": "2582",
+    "name": "Betting game - Dice roll"
+   },
+   {
+    "row": 1,
+    "id": "2584",
+    "name": "Reverse String Till Underscore"
+   }
+  ],
+  "C - EASY - PART004": [
+   {
+    "row": 0,
+    "id": "2592",
+    "name": "Characters at multiples of X"
+   },
+   {
+    "row": 1,
+    "id": "2593",
+    "name": "First Repeating Character"
+   },
+   {
+    "row": 2,
+    "id": "2594",
+    "name": "First Repeating Character From Last"
+   }
+  ],
+  "C - EASY - PART005": [
+   {
+    "row": 0,
+    "id": "2602",
+    "name": "Character B follows A"
+   },
+   {
+    "row": 1,
+    "id": "2604",
+    "name": "Arrange Alphabets - Descending Order"
+   }
+  ]
+ },
+ "C - 50 EASY ADD-ON CHALLENGES": {
+  "C - EASY ADDON - PART009 (FUNCTIONS)": [
+   {
+    "row": 0,
+    "id": "5414",
+    "name": "C - Function - Array Elements Sum"
+   },
+   {
+    "row": 1,
+    "id": "6381",
+    "name": "C - Function - Matrix Transpose"
+   }
+  ],
+  "C - EASY ADDON - PART010 (MATRIX)": [
+   {
+    "row": 0,
+    "id": "8316",
+    "name": "Column with More Prime Numbers"
+   },
+   {
+    "row": 1,
+    "id": "8323",
+    "name": "Corner Elements - Matrix"
+   },
+   {
+    "row": 2,
+    "id": "8391",
+    "name": "Minimum Distance between 1's"
+   }
+  ]
+ },
+ "C - 50 AVERAGE CHALLENGES": {
+  "C - AVERAGE - PART001": [
+   {
+    "row": 0,
+    "id": "2614",
+    "name": "Minimum Distance Between Words [AMAZON]"
+   },
+   {
+    "row": 1,
+    "id": "2621",
+    "name": "Series Team Score"
+   }
+  ],
+  "C - AVERAGE - PART002": [
+   {
+    "row": 0,
+    "id": "219",
+    "name": "Filling Cans"
+   }
+  ],
+  "C - AVERAGE - PART004": [
+   {
+    "row": 0,
+    "id": "424",
+    "name": "Absolute difference of the sum across the diagonals"
+   }
+  ],
+  "C - AVERAGE - PART005": [
+   {
+    "row": 0,
+    "id": "2671",
+    "name": "Reverse Pattern Printing - Numbers"
+   }
+  ]
+ },
+ "C - LAB ADD ON": {
+  "Lab - C - Advanced Part 008 FILE HANDLING": [
+   {
+    "row": 0,
+    "id": "13057",
+    "name": "function mergeFileContents"
+   },
+   {
+    "row": 1,
+    "id": "13059",
+    "name": "function mergeTwoArrays"
+   },
+   {
+    "row": 2,
+    "id": "13043",
+    "name": "File - Characters at Odd Positions"
+   }
+  ]
+ }
+}

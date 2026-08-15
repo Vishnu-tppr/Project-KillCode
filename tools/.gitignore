@@ -1,0 +1,9 @@
+# Keep secrets + scraped data out of git.
+# Tools scripts (enum.py, fetch.py, verify.py, compile.py, mkbatch.py, srack.py) ARE tracked.
+cookie.txt
+oam.*.pkt
+.scratch/
+data/*.json
+data/*.txt
+*.log
+__pycache__/
