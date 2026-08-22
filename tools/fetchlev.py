@@ -11,7 +11,8 @@ Output: { "<pid>": {id, name, section, part, description, samples:[{input,output
 import re, json, sys, time, importlib.util, os
 import sack
 
-LOG = '/tmp/sack_fetch_progress.txt'
+import tempfile
+LOG = os.path.join(tempfile.gettempdir(), 'sack_fetch_progress.txt')
 
 
 def log(*a):
@@ -61,7 +62,7 @@ def main():
     if '--lev' in sys.argv:
         lev = int(sys.argv[sys.argv.index('--lev') + 1])
         sack.BASE = sack.base_for(lev)
-    out = '/tmp/sack_stmts.json'
+    out = os.path.join(tempfile.gettempdir(), 'sack_stmts.json')
     if '--out' in sys.argv:
         out = sys.argv[sys.argv.index('--out') + 1]
     ep = load_ep()

@@ -13,10 +13,45 @@ skillrack_context.md
 level1_context.md
 userscript.user.js
 
-# OS noise
+# ── CREDENTIALS — NEVER COMMIT ──────────────────────────────────────────────
+# Cookie files contain live session tokens for SkillRack
+cookie.txt
+tools/cookie.txt
+tools/.scratch/
+*.cookie
+
+# ── Python build artifacts ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ── Scraper data output ──────────────────────────────────────────────────────
+data/
+*.db
+skillrack_questions.db
+tmp/
+
+# ── Test & tool caches ───────────────────────────────────────────────────────
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── OS noise ─────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
-# Editor folders
+# ── Editor folders ───────────────────────────────────────────────────────────
 .vscode/
 .idea/
+
+# ── Claude/AI working files ──────────────────────────────────────────────────
+claude.md
+cline.md
+deep-knitting-hippo.md
+.claude/

@@ -14,10 +14,10 @@ CRAWL CAVEAT: scraped output blocks are polluted with appended `Explanation:`
 prose / HTML entities / leading newline. The verifier normalises whitespace but
 sees the appended prose, so a FAIL may be data pollution, not a code bug.
 """
-import re, json, sys, time, os
+import re, json, sys, time, os, tempfile
 import sack
 
-LOG = '/tmp/sack_fetch_progress.txt'
+LOG = os.path.join(os.path.dirname(__file__), '.scratch', 'sack_fetch_progress.txt')
 
 
 def log(*a):
@@ -107,7 +107,7 @@ def open_section_wrap(pack, sidx):
 def main():
     enum_json = sys.argv[1]
     pack = int(sys.argv[2])
-    out = '/tmp/sack_stmts.json'
+    out = os.path.join(tempfile.gettempdir(), 'sack_stmts.json')
     if '--out' in sys.argv:
         out = sys.argv[sys.argv.index('--out') + 1]
     raw = json.load(open(enum_json))

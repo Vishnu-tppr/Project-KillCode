@@ -22,7 +22,7 @@ Outputs a JSON dict: { "<sub-challenge name>": { "<part name>": [ {row, id, name
 Only unsolved problems are shown by SkillRack.
 The site's problem list is LIVE/rotating (solved entries disappear).
 """
-import re, json, sys, time, html
+import re, json, sys, time, html, tempfile, os
 import sack
 
 PACKS = {0: 'C', 1: 'Java', 2: 'Python', 3: 'C++', 4: 'SQL', 5: 'DS-C', 6: 'DS-Java'}
@@ -143,13 +143,15 @@ def main():
                 sidx=s['sidx'], name=s['name'][:40], c=card['name'], n=len(probs), f=first),
                 flush=True)
             time.sleep(0.15)
-        json.dump(out, open(outjson or '/tmp/sack_enum.json', 'w'), indent=1)
+        _default = os.path.join(tempfile.gettempdir(), 'sack_enum.json')
+        json.dump(out, open(outjson or _default, 'w'), indent=1)
     if outjson:
         json.dump(out, open(outjson, 'w'), indent=1)
         print('wrote', outjson)
     else:
-        json.dump(out, open('/tmp/sack_enum.json', 'w'), indent=1)
-        print('wrote /tmp/sack_enum.json')
+        _default = os.path.join(tempfile.gettempdir(), 'sack_enum.json')
+        json.dump(out, open(_default, 'w'), indent=1)
+        print('wrote', _default)
 
 
 if __name__ == '__main__':
