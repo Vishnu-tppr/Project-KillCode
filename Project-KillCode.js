@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Project-KillCode
 // @namespace    http://tampermonkey.net/
-// @version      5.0f
+// @version      5.1a
 // @description  Bypass tab switching, copy/paste restrictions, full-screen enforcement, auto-solve captcha, and AI-powered solution generator
 // @author       ToonTamilIndia (Captcha solver by adithyagenie)
 // @match        https://*.skillrack.com/*
@@ -9,11 +9,14 @@
 // @require      https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js
 // @require      https://js.puter.com/v2/
 // @grant        GM_xmlhttpRequest
+// @grant        GM_cookie
+// @grant        GM.cookie
 // @grant        unsafeWindow
 // @connect      integrate.api.nvidia.com
 // @connect      127.0.0.1
 // @connect      localhost
 // @connect      api.openai.com
+// @connect      skillrack.com
 // @connect      auth.openai.com
 // @connect      chatgpt.com
 // @run-at       document-start
@@ -29,8 +32,77 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
         if (typeof puter !== 'undefined') unsafeWindow.puter = puter;
     }
 
+    // Helper to fetch cookies from all GM cookie APIs
+    async function collectGmCookies() {
+        const cookieMap = new Map();
+
+        const addCookies = (arr) => {
+            if (Array.isArray(arr)) {
+                for (const c of arr) {
+                    if (c && c.name && c.value) {
+                        cookieMap.set(c.name, c.value);
+                    }
+                }
+            }
+        };
+
+        // 1. GM_cookie.list callback API
+        if (typeof GM_cookie !== 'undefined' && typeof GM_cookie.list === 'function') {
+            const queryGmCookie = (details) => new Promise((res) => {
+                try {
+                    GM_cookie.list(details, (list, err) => {
+                        if (!err && list) res(list);
+                        else res([]);
+                    });
+                } catch (e) {
+                    res([]);
+                }
+            });
+
+            const [r1, r2, r3, r4] = await Promise.all([
+                queryGmCookie({ url: window.location.href }),
+                queryGmCookie({ url: window.location.origin }),
+                queryGmCookie({ domain: 'skillrack.com' }),
+                queryGmCookie({})
+            ]);
+            addCookies(r1);
+            addCookies(r2);
+            addCookies(r3);
+            addCookies(r4);
+        }
+
+        // 2. GM.cookie.list Promise API (GM4 / Violentmonkey / Tampermonkey v5)
+        if (typeof GM !== 'undefined' && GM && GM.cookie && typeof GM.cookie.list === 'function') {
+            try {
+                const gmList1 = await GM.cookie.list({ url: window.location.href }).catch(() => []);
+                const gmList2 = await GM.cookie.list({ domain: 'skillrack.com' }).catch(() => []);
+                const gmList3 = await GM.cookie.list({}).catch(() => []);
+                addCookies(gmList1);
+                addCookies(gmList2);
+                addCookies(gmList3);
+            } catch (e) {}
+        }
+
+        // 3. Fallback: Parse document.cookie
+        if (typeof document !== 'undefined' && document.cookie) {
+            for (const part of document.cookie.split(';')) {
+                const eqIdx = part.indexOf('=');
+                if (eqIdx > 0) {
+                    const k = part.slice(0, eqIdx).trim();
+                    const v = part.slice(eqIdx + 1).trim();
+                    if (k && !cookieMap.has(k)) {
+                        cookieMap.set(k, v);
+                    }
+                }
+            }
+        }
+
+        if (cookieMap.size === 0) return '';
+        return Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
+    }
+
     // Listen for requests from the webpage context
-    window.addEventListener('message', (event) => {
+    window.addEventListener('message', async (event) => {
         if (event.data && event.data.type === 'GM_XHR_REQUEST') {
             const { id, options } = event.data;
             GM_xmlhttpRequest({
@@ -56,6 +128,24 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
                     }, '*');
                 }
             });
+        } else if (event.data && event.data.type === 'GM_GET_COOKIES_REQUEST') {
+            const { id } = event.data;
+            try {
+                const cookieStr = await collectGmCookies();
+                console.debug('[KillCode:GM_cookie] Collected cookies (keys: ' + (cookieStr.split(';').length) + ', length: ' + cookieStr.length + ')');
+                window.postMessage({
+                    type: 'GM_GET_COOKIES_RESPONSE',
+                    id: id,
+                    cookies: cookieStr
+                }, '*');
+            } catch (e) {
+                console.warn('[KillCode:GM_cookie] Error collecting cookies:', e);
+                window.postMessage({
+                    type: 'GM_GET_COOKIES_RESPONSE',
+                    id: id,
+                    cookies: document.cookie || ''
+                }, '*');
+            }
         }
     });
 
@@ -73,7 +163,7 @@ function mainCode() {
     const gmFetch = (url, options = {}) => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substr(2, 9);
-            
+
             const handleMessage = (event) => {
                 if (event.data && event.data.type === 'GM_XHR_RESPONSE' && event.data.id === requestId) {
                     window.removeEventListener('message', handleMessage);
@@ -84,6 +174,7 @@ function mainCode() {
                             ok: event.data.status >= 200 && event.data.status < 300,
                             status: event.data.status,
                             statusText: event.data.statusText,
+                            responseHeadersRaw: event.data.responseHeaders || '',
                             headers: {
                                 get: (name) => {
                                     const headersText = event.data.responseHeaders || '';
@@ -97,9 +188,7 @@ function mainCode() {
                     }
                 }
             };
-            
-            window.addEventListener('message', handleMessage);
-            
+
             window.postMessage({
                 type: 'GM_XHR_REQUEST',
                 id: requestId,
@@ -113,12 +202,70 @@ function mainCode() {
         });
     };
 
+    // Helper to extract jsessionid from DOM links or form attributes
+    function extractJSessionIdFromDOM() {
+        try {
+            const els = document.querySelectorAll('form[action*="jsessionid="], a[href*="jsessionid="], link[href*="jsessionid="], script[src*="jsessionid="]');
+            for (const el of els) {
+                const attr = el.getAttribute('action') || el.getAttribute('href') || el.getAttribute('src') || '';
+                const match = attr.match(/jsessionid=([A-Za-z0-9.\-_]+)/i);
+                if (match && match[1]) return match[1];
+            }
+            const match = (document.documentElement.innerHTML || '').match(/[;?&]jsessionid=([A-Za-z0-9.\-_]{16,})/i);
+            if (match && match[1]) return match[1];
+        } catch (e) {}
+        return '';
+    }
+
+    // A wrapper to extract full SkillRack cookies (including httpOnly) via GM_cookie bridge
+    const gmGetCookies = () => {
+        return new Promise((resolve) => {
+            const requestId = Math.random().toString(36).substr(2, 9);
+            const timer = setTimeout(() => {
+                window.removeEventListener('message', handleMessage);
+                let fallback = document.cookie || '';
+                const domJ = extractJSessionIdFromDOM();
+                if (domJ && !fallback.includes('JSESSIONID')) {
+                    fallback = `JSESSIONID=${domJ}; ` + fallback;
+                }
+                const saved = storage.getValue('skillrack_custom_cookie', '');
+                if (saved && !fallback.includes('JSESSIONID')) {
+                    fallback = saved + '; ' + fallback;
+                }
+                resolve(fallback);
+            }, 1500);
+
+            const handleMessage = (event) => {
+                if (event.data && event.data.type === 'GM_GET_COOKIES_RESPONSE' && event.data.id === requestId) {
+                    clearTimeout(timer);
+                    window.removeEventListener('message', handleMessage);
+                    let resCookies = event.data.cookies || document.cookie || '';
+                    const domJ = extractJSessionIdFromDOM();
+                    if (domJ && !resCookies.includes('JSESSIONID')) {
+                        resCookies = `JSESSIONID=${domJ}; ` + resCookies;
+                    }
+                    const saved = storage.getValue('skillrack_custom_cookie', '');
+                    if (saved && !resCookies.includes('JSESSIONID')) {
+                        resCookies = saved + '; ' + resCookies;
+                    }
+                    resolve(resCookies);
+                }
+            };
+
+            window.addEventListener('message', handleMessage);
+            window.postMessage({
+                type: 'GM_GET_COOKIES_REQUEST',
+                id: requestId
+            }, '*');
+        });
+    };
+
     // ============================================
     // SCRIPT VERSION & REMOTE URLS
     // ============================================
     const SCRIPT_VERSION = '5.0';
     const REMOTE_SCRIPT_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js';
-    const KILL_SWITCH_URL = 'https://raw.githubusercontent.com/Aron-2005/solid-octo-doodle/refs/heads/main/kill.txt';
+    const KILL_SWITCH_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/kill.txt';
     const DISCLAIMER_ACCEPTED_KEY = 'skillrack_bypass_disclaimer_accepted';
     const SCRIPT_DISABLED_KEY = 'skillrack_bypass_disabled_by_killswitch';
 
@@ -575,7 +722,7 @@ function mainCode() {
         puterModel: "gpt-5.4-nano",
         puterCustomModel: "",
         puterEnableReasoning: false,
-        puterReasoningEffort: "low", 
+        puterReasoningEffort: "low",
 
         // ========== G4F SETTINGS (NEW) ==========
         g4fApiKey: "",
@@ -601,6 +748,12 @@ function mainCode() {
         nvidiaModel: "deepseek-ai/deepseek-v4-pro",
         // =========================================
 
+        // ========== OMNIROUTE SETTINGS (NEW) ==========
+        omnirouteBaseUrl: "http://localhost:20128/v1",
+        omnirouteApiKey: "",
+        omnirouteModel: "kr/claude-haiku-4.5",
+        // ==============================================
+
         // ========== AUTO SOLVER SETTINGS ==========
         enableAutoSolver: false,
         autoSolverMaxRetries: 3,
@@ -610,6 +763,11 @@ function mainCode() {
         // ========== FIND INCOMPLETE SETTINGS ==========
         enableFindIncomplete: true,
         // ===============================================
+
+        // ========== FASTAPI QUESTIONS PANEL SETTINGS ==========
+        enableFastAPIQuestions: true,
+        fastAPIBaseUrl: 'http://127.0.0.1:8000',
+        // =======================================================
     };
 
     // Load settings from localStorage or use defaults
@@ -1054,7 +1212,7 @@ function mainCode() {
 
             // Open a small, centred popup — current page stays intact
             const pw = 520, ph = 640;
-            const pl = Math.round(window.screenX + (window.outerWidth  - pw) / 2);
+            const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
             const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
             const popup = window.open(
                 authUrl.toString(),
@@ -1230,11 +1388,11 @@ function mainCode() {
         // Codex / ChatGPT-plan fallback models
         const OAUTH_FALLBACK_MODELS = [
             { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', category: 'GPT-5 (Codex)', ownedBy: 'openai' },
-            { id: 'gpt-5.6-sol',   name: 'GPT-5.6 Sol',   category: 'GPT-5 (Codex)', ownedBy: 'openai' },
-            { id: 'gpt-5.5',       name: 'GPT-5.5',        category: 'GPT-5 (Codex)', ownedBy: 'openai' },
-            { id: 'gpt-5.4',       name: 'GPT-5.4',        category: 'GPT-5 (Codex)', ownedBy: 'openai' },
-            { id: 'gpt-5.4-mini',  name: 'GPT-5.4 Mini',   category: 'GPT-5 (Codex)', ownedBy: 'openai' },
-            { id: 'gpt-5.4-nano',  name: 'GPT-5.4 Nano',   category: 'GPT-5 (Codex)', ownedBy: 'openai' },
+            { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', category: 'GPT-5 (Codex)', ownedBy: 'openai' },
+            { id: 'gpt-5.5', name: 'GPT-5.5', category: 'GPT-5 (Codex)', ownedBy: 'openai' },
+            { id: 'gpt-5.4', name: 'GPT-5.4', category: 'GPT-5 (Codex)', ownedBy: 'openai' },
+            { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', category: 'GPT-5 (Codex)', ownedBy: 'openai' },
+            { id: 'gpt-5.4-nano', name: 'GPT-5.4 Nano', category: 'GPT-5 (Codex)', ownedBy: 'openai' },
         ];
 
         // ---- helpers ----
@@ -1468,8 +1626,8 @@ function mainCode() {
                     .filter(m => {
                         const id = (m.id || '').toLowerCase();
                         return chatModelPatterns.some(p => id.includes(p)) &&
-                               !excludePatterns.some(p => id.includes(p)) &&
-                               isChatCapable(m);
+                            !excludePatterns.some(p => id.includes(p)) &&
+                            isChatCapable(m);
                     })
                     .map(normalizeModel)
                     .sort((a, b) => {
@@ -1574,7 +1732,7 @@ function mainCode() {
                                             }
                                         }
                                     }
-                                } catch (e) {}
+                                } catch (e) { }
                             }
                         }
                         return fullText;
@@ -2362,10 +2520,14 @@ function mainCode() {
     })();
 
     // G4F wrapper function (NEW)
-    const generateWithG4F = async (prompt) => {
+    const generateWithG4F = async (prompt, systemInstruction = '') => {
         const model = SETTINGS.g4fModel || 'auto';
+        const sysPrompt = systemInstruction || (SETTINGS.aiSystemPrompt ? SETTINGS.aiSystemPrompt.trim() : '');
+        const messages = [];
+        if (sysPrompt) messages.push({ role: 'system', content: sysPrompt });
+        messages.push({ role: 'user', content: prompt });
         return await G4FProvider.generateCompletion(
-            [{ role: 'user', content: prompt }],
+            messages,
             { model: model, temperature: SETTINGS.aiTemperature, max_tokens: 2048 }
         );
     };
@@ -2486,10 +2648,14 @@ function mainCode() {
     })();
 
     // DuckDuckGo wrapper function
-    const generateWithDuckDuckGo = async (prompt) => {
+    const generateWithDuckDuckGo = async (prompt, systemInstruction = '') => {
         const model = SETTINGS.duckduckgoModel || 'gpt-4o-mini';
+        const sysPrompt = systemInstruction || (SETTINGS.aiSystemPrompt ? SETTINGS.aiSystemPrompt.trim() : '');
+        const messages = [];
+        if (sysPrompt) messages.push({ role: 'system', content: sysPrompt });
+        messages.push({ role: 'user', content: prompt });
         return await DuckDuckGoProvider.generateCompletion(
-            [{ role: 'user', content: prompt }],
+            messages,
             {
                 model: model,
                 includeReasoning: SETTINGS.duckduckgoIncludeReasoning,
@@ -2791,10 +2957,14 @@ function mainCode() {
     })();
 
     // YuppBridge wrapper function
-    const generateWithYuppBridge = async (prompt) => {
+    const generateWithYuppBridge = async (prompt, systemInstruction = '') => {
         const model = SETTINGS.yuppbridgeModel || 'gpt-4o';
+        const sysPrompt = systemInstruction || (SETTINGS.aiSystemPrompt ? SETTINGS.aiSystemPrompt.trim() : '');
+        const messages = [];
+        if (sysPrompt) messages.push({ role: 'system', content: sysPrompt });
+        messages.push({ role: 'user', content: prompt });
         return await YuppBridgeProvider.generateCompletion(
-            [{ role: 'user', content: prompt }],
+            messages,
             { model: model, temperature: SETTINGS.aiTemperature, max_tokens: 2048 }
         );
     };
@@ -2915,7 +3085,7 @@ function mainCode() {
                 if (Date.now() - timestamp < CONFIG.CACHE_TTL) return models;
                 localStorage.removeItem(CONFIG.CACHE_KEY);
             } catch (e) {
-                try { localStorage.removeItem(CONFIG.CACHE_KEY); } catch (_) {}
+                try { localStorage.removeItem(CONFIG.CACHE_KEY); } catch (_) { }
             }
             return null;
         }
@@ -2929,7 +3099,7 @@ function mainCode() {
         }
 
         function clearCache() {
-            try { localStorage.removeItem(CONFIG.CACHE_KEY); } catch (e) {}
+            try { localStorage.removeItem(CONFIG.CACHE_KEY); } catch (e) { }
         }
 
         async function fetchModels(forceRefresh = false) {
@@ -2974,7 +3144,7 @@ function mainCode() {
                     const errBody = await response.json();
                     detail = errBody?.detail || errBody?.message || errBody?.error?.message || '';
                 } catch (_) {
-                    try { detail = await response.text(); } catch (_2) {}
+                    try { detail = await response.text(); } catch (_2) { }
                 }
                 if (response.status === 401) {
                     console.warn('[NVIDIA] 401 Unauthorized — check your API key at build.nvidia.com');
@@ -3006,7 +3176,7 @@ function mainCode() {
 
             // Exclude non-chat models (embeddings, image, etc.)
             const excludePatterns = /embed|vision|diffusion|tts|whisper|moderation|image|audio|clip|owl/i;
-                        // Filter to verified free-tier coding models
+            // Filter to verified free-tier coding models
             const VERIFIED_FREE_MODELS = new Set([
                 "abacusai/dracarys-llama-3.1-70b-instruct",
                 "ai21labs/jamba-1.5-large-instruct",
@@ -3051,7 +3221,7 @@ function mainCode() {
                 "z-ai/glm-5.2"
             ]);
             const normalized = modelArray
-            .filter(m => m && m.id && VERIFIED_FREE_MODELS.has(m.id))
+                .filter(m => m && m.id && VERIFIED_FREE_MODELS.has(m.id))
                 .map(m => normalizeModel(m))
                 .sort((a, b) => {
                     if (a.group !== b.group) return a.group.localeCompare(b.group);
@@ -3099,8 +3269,200 @@ function mainCode() {
         return { CONFIG, fetchModels, filterModels, groupModels, clearCache, validateApiKey, FALLBACK_MODELS };
     })();
 
+    // ==============================================================
+    // OMNIROUTE PROVIDER (Self-Hosted OpenAI-Compatible Gateway)
+    // ==============================================================
+    const OmniRouteProvider = (() => {
+        const CONFIG = {
+            BASE_URL: () => (SETTINGS.omnirouteBaseUrl || 'http://localhost:20128/v1').replace(/\/$/, ''),
+            MODELS_URL: () => `${CONFIG.BASE_URL()}/models`,
+            CHAT_URL: () => `${CONFIG.BASE_URL()}/chat/completions`,
+            CACHE_KEY: 'omniroute_models_cache',
+            CACHE_TTL: 6 * 60 * 60 * 1000, // 6 hours
+            DEFAULT_MODEL: 'cl/nvidia/nemotron-3-ultra-550b-a55b:free'
+        };
+
+        function getCachedModels() {
+            try {
+                const cached = localStorage.getItem(CONFIG.CACHE_KEY);
+                if (!cached) return null;
+                const { timestamp, models } = JSON.parse(cached);
+                if (Date.now() - timestamp > CONFIG.CACHE_TTL) return null;
+                return models;
+            } catch (_) { return null; }
+        }
+
+        function setCachedModels(models) {
+            try {
+                localStorage.setItem(CONFIG.CACHE_KEY, JSON.stringify({ timestamp: Date.now(), models }));
+            } catch (_) { }
+        }
+
+        function clearCache() {
+            try { localStorage.removeItem(CONFIG.CACHE_KEY); } catch (_) { }
+        }
+
+        function normalizeModel(raw) {
+            const id = raw.id || raw.model || '';
+            const name = raw.name || raw.id || id;
+            let group = 'OmniRoute';
+            if (id.startsWith('oc/') || id.startsWith('opencode/')) group = 'OpenCode';
+            else if (id.startsWith('agy/') || id.startsWith('antigravity/')) group = 'Antigravity';
+            else if (id.startsWith('kr/') || id.startsWith('kiro/')) group = 'Kiro';
+            else if (id.startsWith('qwen') || id.startsWith('Qwen')) group = 'Qwen';
+            else if (id.startsWith('deepseek') || id.startsWith('DeepSeek')) group = 'DeepSeek';
+            else if (id.startsWith('claude') || id.startsWith('Claude')) group = 'Claude';
+            else if (id.startsWith('gemini') || id.startsWith('Gemini')) group = 'Gemini';
+            else if (id.startsWith('gpt') || id.startsWith('GPT') || id.startsWith('o1') || id.startsWith('o3')) group = 'OpenAI';
+            else if (id.startsWith('llama') || id.startsWith('Llama')) group = 'Llama';
+            else if (id.startsWith('nemotron') || id.startsWith('Nemotron')) group = 'Nemotron';
+            else if (id.startsWith('glm') || id.startsWith('GLM')) group = 'GLM';
+            else if (id.startsWith('minimax') || id.startsWith('MiniMax')) group = 'MiniMax';
+            return { id, name, group, tags: raw.tags || '', context: raw.context_window || raw.max_tokens || '' };
+        }
+
+        async function fetchModels(forceRefresh = false) {
+            if (!forceRefresh) {
+                const cached = getCachedModels();
+                if (cached) return cached;
+            }
+
+            const apiKey = (SETTINGS.omnirouteApiKey || '').trim();
+            if (!apiKey) {
+                console.warn('[OmniRoute] No API key configured, using default model list');
+                return getCachedModels() || [normalizeModel({ id: CONFIG.DEFAULT_MODEL })];
+            }
+
+            try {
+                const response = await gmFetch(CONFIG.MODELS_URL(), {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+
+                const rawResponse = await response.json();
+                let modelArray = Array.isArray(rawResponse?.data) ? rawResponse.data : (Array.isArray(rawResponse) ? rawResponse : []);
+
+                if (modelArray.length === 0) {
+                    console.warn('[OmniRoute] Fetched 0 models — using cached or default');
+                    return getCachedModels() || [normalizeModel({ id: CONFIG.DEFAULT_MODEL })];
+                }
+
+                const normalized = modelArray
+                    .filter(m => m && m.id)
+                    .map(normalizeModel)
+                    .sort((a, b) => {
+                        if (a.group !== b.group) return a.group.localeCompare(b.group);
+                        return a.name.localeCompare(b.name);
+                    });
+
+                console.log('[OmniRoute] Fetched models:', normalized.length);
+                setCachedModels(normalized);
+                return normalized;
+            } catch (error) {
+                console.error('[OmniRoute] Failed to fetch models:', error.message);
+                const cached = getCachedModels();
+                if (cached) return cached;
+                return [normalizeModel({ id: CONFIG.DEFAULT_MODEL })];
+            }
+        }
+
+        function filterModels(models, query) {
+            if (!query || !Array.isArray(models)) return models || [];
+            const q = query.toLowerCase().trim();
+            if (!q) return models;
+            return models.filter(m =>
+                (m.id || '').toLowerCase().includes(q) ||
+                (m.name || '').toLowerCase().includes(q) ||
+                (m.group || '').toLowerCase().includes(q) ||
+                (m.tags || '').toLowerCase().includes(q)
+            );
+        }
+
+        function groupModels(models) {
+            const groups = {};
+            (models || []).forEach(m => {
+                const g = m.group || 'Other';
+                if (!groups[g]) groups[g] = [];
+                groups[g].push(m);
+            });
+            return groups;
+        }
+
+        return { CONFIG, fetchModels, filterModels, groupModels, clearCache };
+    })();
+
+    // OmniRoute completion helper
+    const generateWithOmniRoute = async (prompt, systemInstruction = '') => {
+        const apiKey = (SETTINGS.omnirouteApiKey || '').trim();
+        if (!apiKey) {
+            throw new Error('OmniRoute API key not configured. Set OMNIROUTE_API_KEY env var or add it in settings.');
+        }
+
+        const model = SETTINGS.omnirouteModel || OmniRouteProvider.CONFIG.DEFAULT_MODEL;
+        const sysPrompt = systemInstruction || (SETTINGS.aiSystemPrompt ? SETTINGS.aiSystemPrompt.trim() : '');
+        const messages = [];
+        if (sysPrompt) messages.push({ role: 'system', content: sysPrompt });
+        messages.push({ role: 'user', content: prompt });
+
+        let response;
+        try {
+            response = await gmFetch(OmniRouteProvider.CONFIG.CHAT_URL(), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model: model,
+                    messages: messages,
+                    temperature: SETTINGS.aiTemperature || 0.1,
+                    top_p: 1,
+                    max_tokens: 16384,
+                    stream: false
+                })
+            });
+        } catch (networkErr) {
+            if (networkErr.message.includes('ECONNREFUSED') || networkErr.message.includes('Failed to fetch') || networkErr.message.includes('NetworkError')) {
+                throw new Error('OmniRoute: Cannot connect to gateway at ' + OmniRouteProvider.CONFIG.BASE_URL() + '. Is OmniRoute running on port 20128?');
+            }
+            throw new Error(`OmniRoute network error: ${networkErr.message}`);
+        }
+
+        if (!response.ok) {
+            let detail = '';
+            try {
+                const errBody = await response.json();
+                detail = errBody?.detail || errBody?.message || errBody?.error?.message || '';
+            } catch (_) {
+                try { detail = await response.text(); } catch (_2) { }
+            }
+
+            if (response.status === 401) {
+                throw new Error('OmniRoute: Invalid API key. Check your OMNIROUTE_API_KEY.');
+            } else if (response.status === 404) {
+                throw new Error(`OmniRoute: Model "${model}" not found. Refresh models list in settings.`);
+            } else if (response.status === 429) {
+                throw new Error('OmniRoute: Rate limit exceeded. Please wait before retrying.');
+            } else if (response.status === 500 || response.status === 503) {
+                throw new Error(`OmniRoute: Service unavailable (${response.status}). Check gateway logs.`);
+            } else {
+                throw new Error(`OmniRoute HTTP ${response.status}${detail ? ': ' + detail : ''}`);
+            }
+        }
+
+        const data = await response.json();
+        return data?.choices?.[0]?.message?.content || '';
+    };
+
     // NVIDIA NIM completion helper
-    const generateWithNvidia = async (prompt) => {
+    const generateWithNvidia = async (prompt, systemInstruction = '') => {
         const apiKey = (SETTINGS.nvidiaApiKey || '').trim();
         if (!apiKey) {
             throw new Error('NVIDIA NIM API key not configured. Get a free key at build.nvidia.com.');
@@ -3110,6 +3472,10 @@ function mainCode() {
         }
 
         const model = SETTINGS.nvidiaModel || NvidiaProvider.CONFIG.DEFAULT_MODEL;
+        const sysPrompt = systemInstruction || (SETTINGS.aiSystemPrompt ? SETTINGS.aiSystemPrompt.trim() : '');
+        const messages = [];
+        if (sysPrompt) messages.push({ role: 'system', content: sysPrompt });
+        messages.push({ role: 'user', content: prompt });
 
         let response;
         try {
@@ -3121,7 +3487,7 @@ function mainCode() {
                 },
                 body: JSON.stringify({
                     model: model,
-                    messages: [{ role: 'user', content: prompt }],
+                    messages: messages,
                     temperature: SETTINGS.aiTemperature || 0.1,
                     top_p: 1,
                     max_tokens: 16384,
@@ -3138,7 +3504,7 @@ function mainCode() {
                 const errBody = await response.json();
                 detail = errBody?.detail || errBody?.message || errBody?.error?.message || '';
             } catch (_) {
-                try { detail = await response.text(); } catch (_2) {}
+                try { detail = await response.text(); } catch (_2) { }
             }
 
             if (response.status === 401) {
@@ -3202,7 +3568,7 @@ function mainCode() {
             document.head.appendChild(ks);
         }
 
-         // Create settings button with custom pixel-art icon
+        // Create settings button with custom pixel-art icon
         const settingsBtn = document.createElement('button');
         settingsBtn.title = 'Bypass Settings';
         settingsBtn.innerHTML = `<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAeDklEQVR42m16Z4xk2XndOd99sUJXde6emZ6ZnbRpZnMO3F2Sq6WkpShSlE0JNGlBpmQbFiAYEJz1QzAMwzYMCIIESLQtS7YlixYlmWYmLW7Ou9wd7uxOjj0znbsr13vv3vv5R1WHodzoHnTXe3Pj+eI5rNVmQBAAAYVCARJQVRAKUDH8IggOXuHgEQgAg183f9n8QxWAgiSGg2+9Nnisg3mGY27NsGMVxOYD1e3Zt4cAANlaxeBv7ngaKAK94SMdrgpOt4bTrf+sCoVyaw7F5og62M6OOXR7j7rjhG5cyeb4Opx96+nWtIBsf6Kqm0MOfmIiIhTcGpKEA/aJjhEWKoCQAghAqKFGWwvV4fs7t6ObG1UFObyb4fCbJ7C1Hx2ch+489BsuYHjKg9vZ+cJgQAN0hvDZWhNBGGBJeVTQ9VCA3sdCIQuFAUJoE1CoIyNoMbzAIVQMVKF2e8Id+9txY9y6FhJK/P+/hlA3aVodDkaAiAG/edgAS9AYyAjBEJQG6AMADhEN1UOhRIWVwnrvK17r6jOKCPcREaUJNQpHEPBkGQigOUU4NJXNeba/NxFNgMbITmTxhr0MbzD4sf07blulhzpiGlBFBwg2j6gErHlE8KOFfnrP1NPTIxebnSvdrNHLVnvZO5nrWxsF5hoYgzmRqDpQiTZAUDahMECZ3ugFdGioKmK6vX4UhiJUbq8QN/gbmDipbC2ZpAdiwAAFUAYUWAdmgQ4ZAyWgAI1qlci9Tii13bsrkrsr6c3V0iPT9cdmx35ysjaWxu81OpH3XZEUGkF7pLnxKIdnP/iMxNZVDExTpN3tPvHwfVleNNsdI+YG+HALmTBpUt5xQXSKVEAgB0LAQ0vAOBCBDSAHq9AEqBGJcyPk/UZv8VnFZlevra91+o1Or9/L7y/H49QP2r06oeCKyMAl6ACfWzjfQg10y4cSCAJptTs//fQTv/YrX/jW959vt7smMNse+UbbCQaWsnlHmgAdhQAR0Ac8Oaa6j2hAE2BBASAl9lBT6qMx70vkwIGZ8i2HguffuJ4VHUWl22Ab95nwHfpz4FVKqsigGegAw80AsekqCLXYBn4QmFar/fRHHv7i5/9283t/3V9YlCSF9yQAJXeEAhKqAg6sc2hEQhAw0BIUQKpYJC8Ac8QcsBc6KpwROOAcJBCzP0R859Hs736ptHuypLbii92TlfrnPjU7O37MFy2KqBqoAxWYgMoOgxs4jM3VE9DAmHa78/QTj/zUTz7Teunl5a9/01Jkc726jfzNUQgTJ5WBSRhFQOQggBKQgAINwP3EOWWNPCI6KWhY17HaVix6RJTZLJ/qtpMPftQ7P7+EMLD5+KG97pe/FJ88gYUF47TttQlmRBWIoZ0h1JVkGZqBUB04lNCYbrf7sccfeuzRR/3y4sHm8lffOP5hWg6993qjD9oRQEyaVLY8vQCOqAIHySaQAXvIOar1GqmPyQ8KfyyNf366Pmb1VGbHCBNEB+CLK9fnnWlHkYoxq2ulN16bP3HuubZ9jsE8CKIHVoAOmA+CPyBED6BicPtGpN/vP/zA3UeP3tkv7Ef2T579yl/+RV/7xmArOG2H9m1nKzusgkoK0Acy4DbqMQG8+zBzM1EYRuFzfX0qiX9tuj6hWMttB3rS+mYQnpXw9aC0HsXOoyVmGeHK1dX/2bKveVlTLFM82CebQLh59aOEAoFXAzVARLq8uPuO2/cdvn319LmP7x299txLr5y/2o0jo34LN0Ok61ZIJsBgmCSoVzABFLDQea8zhvQ6Af7W4Zl7puunrq1++eLyy/3i3PxaJ3fHvR40wTnrRyP5i1Yf3kfkd5u935iuXy7szVHwopcrQAzsUb1GTkP3Ee8pFBRoFzAYevcS2SvsHXcc3TV3oHPx4k88fnfju9//w++9mldr3ut2yACU+jfjsUmTCnekgtNEA5wVthVh4X9zz8TusWq702cUHaqkHxstz3eyVws3bthxetHai85ezD0Vr/WL05m9oxT9VaO7LwnWM+s91lU96bzuM7ICrIEGGgEejIEZuHHoQu52zc1NzM611tY+Ols1b7/1rTd+9EpSVqI99LbcCfrtmDywgSSpDDYZEAJMQmcAL2wU/uNRECuWO/2bxqpz4yOjpTgv3G7vL/bso6Xw6dHS3mrpcj+/0suvWNf0WjJyqpdbr2928/czeyw0/3rP+E+MV3/U6l2yrikC6C5ojxKoF+e86q0hnDFrzqsJH7l5v7zxxrV3j7+UVHNjvGpO+mFOf6Pt7kigTZyUB28MHOgauBs6Sr1YYI8ELeceHImN8Fone2+5Oab6w/XuRav3V5OPzk1+bKb2uen6AyOlJLPLhTcikeJQaH52qvalPeMbrd7caGUuMrsK+06/yEQmgBxsqx4LzRcrycud/D2Lw6ksd/ujExPT85dOnj3XL1U+NKECRjUjdSvEDiyA2JlUEDBpUlEgIqpQBVNAiI7TplVQAso4tNvLX1lujas73ug938mtyH3VOA0MKer1SKX08ZnRer//fLv/xdHyv7nrpsd3je0KTF34O+eXFtv5B+3sSmF7wrJIj4Tzj4Xm1U7+dDX5+9P1P17p1pNgYXV9cWV1r8EFBssUB/SG6cNg2eR27rFZI5EgTZJUBhubAUDWibZ1D0Xhz5bir/XyhFyz/jvdIldczPxrmT3v/QOxOZKGpWqpauT6cuNao73U7c+V4nPN7idmR6fT+PLC6nvX15ser3Szt3L/6V2jD0yNrLZ6HxQuhKrqW53iqWq8SprCF7l/PbfjofYkrKufl6AtMqo+BjoUs+V2NnOg7fKNBGCSpCKABQTcTxREXuinyrEjdxl5K7PGcCyQs4V/v3CnvQ3AcRrNi8sbnfmNTklVgW5WXOnkr2ROcjuR541+kQZyuZu/lbnHE/NLc6NHK+mJ1eZMHO43Zj1zR+LgSBrdEZovr3TGTbDmfcNDiJi6ZEJLWjKnbFVtO9LnHfn1phFXAUTQPlgBRqBNj9VCD4YyGXBfEv3qzMh9I6kr3HJur3ltqV/1EMhUIHD+euFEte/95cy9kbsaOC7seH+uZ9/L7Enrpmjazc5fr7WcyBdG0qvd/B3rn60mK4V7tZk9lIQfOt8NWA2kEENoqJpA+6TbkZ96oAQYaA4Iub0FgvX6jEIjoA4dIej8SsFny9GdsbzYtj8/mkyV4vOeqxutv2znPyiKUUpXtUzuEjNtpAQ41RXn2/ALipLiJhOMCzZUP3Cuo/pAEI6JnLDFs6Wo6dxL8JnBcsf9dBh68LJz58VHgbFAD5z0VoGmmJzUTbSIgqRXharnziQcqmqSpELAEik4Tlwp/E1GPl6Olgv/Yuaq6puK1U7/QuZ+UDgFR4hJMhW2vL/gdUV9AX1qvPzFsXJY+J+sp+esfbWwy6pL3sfCDeCqc4HIKPSE0yKRZqEdpx1wSd110XIgGVgohHSqOdgaQH/znGOoJZTc0WAYhmSCJknKCg2AKbJpfaIsQR4fLT09N3Gh0fmrbl7kftHqa9aOiW96TooYoZDTxhwwMivyTBrOGXm3V7zYL2YoddWOMiAOBFjxSIASmDt33GlDcaFbdJ3OCktwLjRVI03QKkgImFEKMtjKfsgEKCs6EG4mDz9WQg76JrSAAwqFBTvwPityxS/tm3jzw2vfK2winApxq5i6+LdzX6OMC1NgSnja6Q9y91gQNJwLhC3vX8ltR7En0DHqEnQ8CGpB8Jmp0YP1yrevrEwnEaz9k9V2EQSJkWWFV3iCgAUm1XnFkjFGVRUxNAAaJKg7ejg3tAKGEAJgCPEaKxOhgLvh8sJJ4aDqBOXAXFEeMxoAVx2OBcG4wQdWC9XPpOGhNDyb2UBxZxRcLnxTYdVVw/Cf7p96LAmfrKZPjJZPr7YnvH7+8My90/VSs3u8cC3QA4YgkAIZEBGOkpEJoEQZ6IIFWVEUWyvejgokhqkEalCS4jSG3BzIeCjNzLrc9hQzwrPO5mQfyME9cKcdM+iocK/BomLVoZ25s861FE3rT3vtqD6cRv9stpY7vLrWXS3ca6udxW7WVry83JyBXu9mJ/OiRxhFAVahBVkAXTADY2gKDCo4S45DDdClAAigwY4aSIeRmIzJaWDFYZTigU/V4kNjIy81srb171m/DKVhDdhH/aDQJcUIuaRIBR1FR31IzaA9yLz6i949GprPVeMLPfvuRu+pifJ4GLzV7L1pMQE9nrt+p79s/Vu5rwsyyiDZaZKiKEM9MQtYckZtmQQlVV0AZVD5Kwpy0NscFvVJUiGYEeOqqXDD+hGKcf5wKTpYir7Z6J9xdjY0G4qMuB3utEcLLBk5EJq+8Egotxj0yIK4rnoVqKl+NAws2fDaVuSZfaedvVi4AvhMNZ4O5FSuC6ozoj1Va0SBlOwCQobEBDBFNBUbpIDT0A2gBwoQDIt/wZZH0s2iHopL4EHRFaoHWg4rvaweBhXRMlAROKv7BG3ldY8SWPFcKYrRMDjuMCbskFe8LwCqL4s55eCsN147Xv88wzlX7DLmwVDagkNh0LH+kuNug8XC54ocmIY6cJVIFNPEGUUOBJA5+CtgAwC0pOgBjgQ0BCLVNoVQGeyqDBRAH5wNuOJdAL3cdyq8LY2gbFp/1GAWet0pFPcb88nY/FQpcdar6vtWG96XCQcNgD655rVndd76d63fgN8AxoB70/By3x5vZ3siuS2Wc1YtWQB7oCnQBlPVm6kbgAdqwDHRguwCuSJW1KAybLch3K6Q1SRJVUELpEAFGpMLTkETeb8/MnfVSx+tlXrAlX5+yPD1Qg9J+HBijlXiW2tpkrsTuesIVhwyRcu6hHSqqfKy13WwBK55rYrvgbEyhL6X612pCUW+1ytywYTICHEGUiaOBtKh9MiEnBVSeIHiRcrAPuGiiFP1ZJUIoetKQwAMtvxqmwiVR6iJQL3fkwQXuvncSClz9vHQNMLgRJGPS3AkkIjYXU1rUdBnexdlxXkQrdwS9AJVPedtRSRQLEHnjB4yes2772d6KAjqgg45ArTUp+RY0bviXWqig2Kand4VZeBdRDTB64qOqoATUXglzzdEKuWSkiOqG7rdGAtIeMAAFXCdWIGOCuDQVwaqudc3esV/XWjdk5plz6pyfySBSDUKlrrZxdzvC+Rq5hbUD6Jhz3kqLFDA7xW/K5AVlTc1GNd+KLjq/G2hhOAt9dLDnfyFrD8/cfDDyszMxqW1fG3miadngGq17FWt6jHAQ0NF78wZc/hwq5e/+OKbY663IqY/bHRjs7mrSrKkPgO7lJDoUde9gvxfi43dwsnQvJHZFFoXHEmC4z3X6PS+u9o9HMqCh6E47yJgSrjk1QB14ZMRAganrRObNWqzlxRhZ/mRwJtAIuL4RveuOLTefsfR7T52cWnxjrvv+Be//itJHDZanTRJnHdJHJXS5Id/+D/W6nc9/NlPvnF+7WtvXElbZyEmHK6eAAIdZFHAMllTZKp1YlH9t3r5jLCvOmZEFROCdSc1MaOGkeAry92ZODwa4/m1rKcakXsN7434Uq7TwnGDjuKCU4mq+djMWr8HoKJoOlyhT3p2V8BHRsu3VOOnugvfeOdPTnW7dGOtTmdhsUOKH/GBERcGv/vlPzn57vuf+ewnvS2++dqHvr3mjBivAHIOeTCTpBUAVHVkTKRARk4J19UvOQWxoj6n7jNY9TAqM4I3+i4D/9ZofLxTvNgvOtDbIkwbkiwRI4Ie5TJkXIsFNZcmj0ZhohuXS65/0AQdj7lQbq5EDedrUdD1sjvQu2Lz5ocXllQfuPeu+kglTRIA/+53/2h5o/lPfuMfHjqwNwP++zdeX75wclcIIRvDhGKQC6WVAeEmhAPMoNVK3G4YGqaCPYFQzJzgkvNrkAWre0KpC3q5/V7XzaseCvzuwCxAVsFJ6HXIgmIEvpBwtT6nKlqqJep8e2XNuwVKoLg5Ckbj8BsbnXIQ/LCXf7tjfRp/6TOfkImJf/lvf296ov6HX/m6kL/5679MQJ29vND4g68+N9m9mgTBMqCk2WzVDTmykAiAAmyBDlhUXgNr5LKYc5BZ+EXnWh4l6EfKwa9Olbuq/7ltT3o3bfz+0CwpO9BFygLoiBAQ71aDcvPwkzJz2FRH7cxhuem+Xm0GeeuFPPu91W7D+nXl7yw3n+9mUbfxhbmxVFBJ47tuP/KPf+u3K5XSP/8Hn+8uLa+2uiLywaWV1sbKmJEI2oNEwLT6gRUMaRejmgLL4BSUQA84p0yoM+qF7Kv+qOBuCQ4Z5E6/tZGTyKEG7tZALigVqmDNu4tgWdWJKYqiOb4/MobVmkaptJclSSvCKC1XV85ddP1/NZ+XCOPyO0IzMV4beehBP7ur0+5+9tmPVyvlTzx0Zy8rfK0uK2tSjV97/2LaWWHKhiKlxooWh9TOgGZlH2gAIXQVpCKCxsAZjzIwS71s8UAQ3hGbNtHI7fvt/tt931G9PWQTsqLYABvAXuokmYElb5tRJZ+5WYIIRW66G4GzNqku77mzGY+4PcfGpm46Vk5vDXmK6d5H7n3mF3/2VBAgiVuNDQP3hZ//qZXrC2fe/6BWq5iN5cXrK+euXK8yX6VZAefUO2B9SAtwwJHpIJYJ4RQBUQUE2ievkOqdUVbIAwbXrCwBZ9VuKCeFgPaBCrCosMApmiNwfUhMdr23p19WVXVWbW4lkriStBfW4nIr7/VVrhd2lqSws2vv9dlD6+cu/4ff/8pnP/vpSyevBx9e/u5zLz366GOrL52olkcun187feb8XIgAmIEvwHwHt8d6fWZnsysADHCAmqpeBUGOq9/IecCYB0OcslhTLKveb/i+tWmgIjKvaABe4YhZaCqy0uo88OzTz37iyW63J8ZEUdTpdL72v7/zzDNPJlHUXG90v/6NH3bdm1cXc3J1+va834vzFnuNvqkgLkWuK+p8VPHehUEY0rPXGHOdw4ZUvAdxRAGCVN3aySaha6FG9ZriHtF5ZaIeZJO+o2bZI4Smijnisvcb8BMiy17XyUmgAHLVhJjwbj2J773vnsMHD1TKKQCv2mx1jh29LU3i9cWVeJ/vtlZdZfcP/v1vm9n9M0fu25DYUpL+xvjrfza+fql9x09f3XdvlLXgnQZxfuXEyJnn+3HSUNcgOmAJiIBClapDLxQRA8qkBPSBMlEF7qEGQAiUqS3vrzk4chVY9Pquc3MBekBBGLBLTlIViIBKnk1OTd5/37EoMN9/6c2/+PZzjUbzv/zZ/zn+wenV1fXxXdOLy6vpk0/+8OSlts3a++7vRJUg76E8ahn1arv3BuEDrfla4xpMiqgiUSnMs1zCm9WCWIJEQDwkIKGASdMKCAcM/q1DC6BB9sD9AgfkihWLUZpxoSeveH/FFw/ELJPnIW2wDl0B9sHPQjtGgk731md/YmJy8o/+/BvNdueJh+556c33QmOmJsf/21e/uWt6Ytfs1NlTF776nReKbtN572ZudpUaly+79av+lo+sKc6XJ/zoHuu9Rgmzjj/75pGiMWvkrLJKJIpVETvQfpCyRV5SUYAZcICYVj+vvKSYIjecjtOMCxRoeY2AaWGVuAqJoYNa+ybV85ARQdnpq2nt/gfu6fV6754489j9d85Mjr357ofPPPHg7Uf2O+//059+LY2jEy+8sjp/IXj4c7bfcSdfQD9Tihy4z8fl9pHHXdZrFYUv1w2hvVaYt0cNTqokYAysAJH3W2IZk8SV7RYFkIEBcBO0Ch242GtWU+UtoRyLRKHXnDbV1400yQQowDYYqJsdYL2XlQ8d+LlPPXNo356b5na98PoPT5y6sG/PzMzUxH/88p8+dPfRv/e5nzn/3o/eXmi9d2nJ3v6UmT7ozr7OypjMHITN0vZqESR2bC5dPiPdZmdkVpcujy2d7ApXiSlfbFAAFjvIbpNsknwKhKoGWCGVnCIWwHWPhtVn4uBj1Sg2ciiWVuFesW40NF7RVVQJ9X45qkcuO51M/aivn37q3kOHDzc31g/eNHfnbYc/OHPhE088ZIx58O7bHn/w7pffPv77f/zVV19+2c8dxZ5jbK9xfE5bKyBRFGKzvFSn0KTVI2efTy6+u95t2azZIQPIYjoZ+DyEd6DfbI6aJCnvEEdwQN82gRzogh2PZ6Lw0UrkRELhutV9kdlw+k7h2oo2sGrt1bFbfHl6pbWS9dq1kfgffekXRqrVPMtJLQp3/523ACysq1crf/pX3/7w1Pm/8/mf+79vn9qwNPVZdVbq06zNYPmiT6qhsNJbb6d1zftMqw+vnupuXF0A6X2vOuf33NMxSdG6RjGBqh201wc8MVW3uD7xCtW21471gddxY9qeHxau4fXFXpEaGRe82i8C9QJxUQm9DWle210dpYSjo9V4cq9tr9l+/60TV8I0XW10mxsbI6Xkey+8Hgfyq7/4MyfOLnz9xXdx86O0FpVReos8Y1oVMjPx7VffCZxbjasT7ZVLUiq3Fn3e9d4FvnCtRWkvJLAcVPekQlmrTw+kVk5VSIWqH/Tx1Co8AK9V0qpGFAcNQBAqOq5OxBSUqs3L8OvV2fO9LruNWlrbVR+93NywpKmMGaI0Wh8thyuLi8fuezgQLFy59M7F5eiWx9TmgPGrl2V8TmrTpM+sjraXkrw7P3Hgk8e/eqnVPNnvjqfltSCZXb9YF3MtjAFmpBUZZA+s1adVEUAFGFxKqkqgUI1IBQxUyAQwqglBsg947wmOqZty+W4gAcQVXfAsg7Xa1HwyGa1euiVbv6pY3HX7+oGP5GfeTK69WyAqi+wJ/HWgE5QhtBKarM24wihFXEKQQBHBtePaPcvvt/utU6YaH3k8mJizC2cql16fth3SNEgL9MWo6pAf4KaOL1Id6BdE1QAjqg2RMlQBSwZAolpSH6im6knZEOkq9nt7iH6ZpqF0tijgxQQBg4sMOmHSkSjqNafr491+u5a19pOXPAt1d/risimdBiMCzoZ5r0VTU7tm4lHgYdqIeNEHS2GpGNsrRS/uLEVqu2JkKEgkoazVZ7AtGtwqNoe97AHPtt/beQkC1XF18zLoxqJHdsFx7xNqqLpAGaW0glJkOxDJvI+9FxGvnurERN2oGuVd9XbM25YYT86o7yrWaBAEqS00rXdueuS2pZNy/f0Gg7oxqbd99R3Ioita6agmo6Z9XcR4QFVl0F4cbIDbggSoqgEdUIWfUHeVgUAzClQH/QsDFMSMyIOiCrzkGBC7qG87TRSWvFVwq6AJ/sDqXiGBk04fpJ2n2U/uMrSqLzhEwP2hDHsf1i2YMsuThhxZPZcbUyT1tL8x4JpSolB4dVuRV3UH0T1UrnAYDggIqEBGrsEIUAz6kApDKOAAJT8XcE3hgTGyKrjD8HULIzIh/BnDN5weFIwRY4LdxDsOv5AES56PB1z2mhAHDQHcb3DcqgWu0NDnprvK7moRRh6g7VlIKBBFNpQAyk6aflAQBDfI6IYta3Gb4hUh/NBdbWsoBzHQe/2Bw4oHqU8arIMFKIoQasFFyBoQQltKDwWw5tVCV5VfdxgDng20o7DgLtEXHdpeEzEqgapCPRVKQ8ICFJgd/fRtsCtADTYpJ91KqXWopt0E1Q7J6qZSgUptQPZSdxk1YEcRKPYJBtcl4EOBzpKnHLuqVXCXgVV2FYXiZmEJWPJKxYrT0w4jYAvqVbmpm8EOilWHmt2hZW7iZChbM0lc3nkFW09vEHLeyJSr9x7Y8Hqz+l3CecU6MEvsg6+pzjttKL7pcK1whH7odTf1KPxFj5OKOnBAUFJ9zSED6tAqMKI6r2pVd3KQmyjZ1jtvaSV2UMZgrT49ICy30KX6Y7C6QZtKcmSkmud5EEUeaLRacRi6vAiSpFIuZVlWjuOV9Q3aYnR83HrvisICYRhZa/udThBF3SyrVsppFHW73TCOsyxP00StpaLb61nnuEPRwS1N7w0UHzf9jR8Y8aYaYQtkJH5MMbsp1SRxYP9+a20ax5U0DYBKmkZRWKuUx6pVb22llKrznX62Z3Y2NGZifFytLSdJOUkI1CrlSEy9WhmplOMonBobK8VRkWWVcnlifGxtfcOrktAhRnjjsnGjfBQEWatNb0sqtpXjwN8UFw3gKYyjCEAcx0VRxHGcZVmaJP1+FkVRXuRhGDabLVWtVMrqtbCFUKIoKooiSZMsy6Io6vV6qhChiDjnoijKspxCW9jCFtzSxpPbwu+tVfEGm9zcwE5xr94olOcOu1EMalwMUiaheh3Q6CIyODfvfWAMSO/dltjTqycHL0C9inBTOKYkvVcR7tBDcMDCc8vl/42j1GGHXf8fAFH0iB0rhcgAAAAASUVORK5CYII=" alt="Settings" style="width:46px;height:46px;object-fit:cover;border-radius:50%;display:block;transition:transform 0.3s ease,filter 0.3s ease;">`;
@@ -3633,6 +3999,22 @@ function mainCode() {
             }
         });
 
+        // FastAPI Questions Panel toggle
+        const fastAPIQuestionsToggle = createToggle('enableFastAPIQuestions', 'FastAPI Questions', SETTINGS.enableFastAPIQuestions, 'Show incomplete questions from local FastAPI scraper (http://127.0.0.1:8000)');
+        panelContent.appendChild(fastAPIQuestionsToggle);
+        const fastAPIQuestionsCheckbox = fastAPIQuestionsToggle.querySelector('input');
+        fastAPIQuestionsCheckbox.addEventListener('change', () => {
+            if (fastAPIQuestionsCheckbox.checked) {
+                if (window.FastAPIQuestionsPanel) {
+                    window.FastAPIQuestionsPanel.init();
+                }
+            } else {
+                if (window.FastAPIQuestionsPanel) {
+                    window.FastAPIQuestionsPanel.destroy();
+                }
+            }
+        });
+
         // AI Provider selector
         const providerWrapper = document.createElement('div');
         providerWrapper.style.cssText = 'padding: 10px 0; border-bottom: 1px solid #333;';
@@ -3656,6 +4038,7 @@ function mainCode() {
                 <option value="duckduckgo" ${SETTINGS.aiProvider === 'duckduckgo' ? 'selected' : ''}>DuckDuckGo AI (FREE!)</option>
                 <option value="yuppbridge" ${SETTINGS.aiProvider === 'yuppbridge' ? 'selected' : ''}>YuppBridge (200+ Models)</option>
                 <option value="nvidia" ${SETTINGS.aiProvider === 'nvidia' ? 'selected' : ''}>NVIDIA NIM (Free Tier)</option>
+                <option value="omniroute" ${SETTINGS.aiProvider === 'omniroute' ? 'selected' : ''}>OmniRoute (Self-Hosted Gateway)</option>
             </select>
         `;
         const providerSelect = providerWrapper.querySelector('select');
@@ -3694,6 +4077,10 @@ function mainCode() {
             const nvidiaModelWrapper = document.getElementById('nvidia-model-wrapper');
             if (nvidiaModelWrapper) {
                 nvidiaModelWrapper.style.display = providerSelect.value === 'nvidia' ? 'block' : 'none';
+            }
+            const omnirouteModelWrapper = document.getElementById('omniroute-model-wrapper');
+            if (omnirouteModelWrapper) {
+                omnirouteModelWrapper.style.display = providerSelect.value === 'omniroute' ? 'block' : 'none';
             }
         });
         panelContent.appendChild(providerWrapper);
@@ -3966,34 +4353,34 @@ function mainCode() {
             setTimeout(() => {
                 // ---- element refs ----
                 const modeChatGPT = document.getElementById('oai-mode-chatgpt');
-                const modeApiKey  = document.getElementById('oai-mode-apikey');
+                const modeApiKey = document.getElementById('oai-mode-apikey');
                 const chatgptPanel = document.getElementById('oai-chatgpt-panel');
-                const apikeyPanel  = document.getElementById('oai-apikey-panel');
+                const apikeyPanel = document.getElementById('oai-apikey-panel');
                 const labelChatGPT = document.getElementById('oai-mode-chatgpt-label');
-                const labelApikey  = document.getElementById('oai-mode-apikey-label');
+                const labelApikey = document.getElementById('oai-mode-apikey-label');
 
-                const accountDot    = document.getElementById('oai-account-dot');
+                const accountDot = document.getElementById('oai-account-dot');
                 const accountStatus = document.getElementById('oai-account-status');
-                const accountSub    = document.getElementById('oai-account-sub');
-                const loginBtn      = document.getElementById('oai-login-btn');
-                const loginBtnText  = document.getElementById('oai-login-btn-text');
-                const logoutBtn     = document.getElementById('oai-logout-btn');
-                const extNotice     = document.getElementById('oai-ext-notice');
-                const proxyInfo     = document.getElementById('oai-proxy-info');
+                const accountSub = document.getElementById('oai-account-sub');
+                const loginBtn = document.getElementById('oai-login-btn');
+                const loginBtnText = document.getElementById('oai-login-btn-text');
+                const logoutBtn = document.getElementById('oai-logout-btn');
+                const extNotice = document.getElementById('oai-ext-notice');
+                const proxyInfo = document.getElementById('oai-proxy-info');
 
-                const modelSelect  = document.getElementById('openaiModel');
-                const modelSearch  = document.getElementById('openaiModelSearch');
-                const refreshBtn   = document.getElementById('openaiRefreshModels');
-                const modelStatus  = document.getElementById('openaiModelStatus');
+                const modelSelect = document.getElementById('openaiModel');
+                const modelSearch = document.getElementById('openaiModelSearch');
+                const refreshBtn = document.getElementById('openaiRefreshModels');
+                const modelStatus = document.getElementById('openaiModelStatus');
 
-                const apiKeyInput        = document.getElementById('openaiApiKeyInput');
-                const modelSelectApikey  = document.getElementById('openaiModelApikey');
-                const modelSearchApikey  = document.getElementById('openaiModelSearchApikey');
-                const refreshBtnApikey   = document.getElementById('openaiRefreshModelsApikey');
-                const modelStatusApikey  = document.getElementById('openaiModelStatusApikey');
+                const apiKeyInput = document.getElementById('openaiApiKeyInput');
+                const modelSelectApikey = document.getElementById('openaiModelApikey');
+                const modelSearchApikey = document.getElementById('openaiModelSearchApikey');
+                const refreshBtnApikey = document.getElementById('openaiRefreshModelsApikey');
+                const modelStatusApikey = document.getElementById('openaiModelStatusApikey');
 
                 let allModelsChatGPT = [];
-                let allModelsApikey  = [];
+                let allModelsApikey = [];
 
                 // ---- helpers ----
                 const populateModelSelect = (select, models, currentValue, statusEl) => {
@@ -4021,16 +4408,16 @@ function mainCode() {
 
                 const applyMode = (mode) => {
                     if (chatgptPanel) chatgptPanel.style.display = mode === 'chatgpt' ? 'block' : 'none';
-                    if (apikeyPanel)  apikeyPanel.style.display  = mode === 'apikey'  ? 'block' : 'none';
+                    if (apikeyPanel) apikeyPanel.style.display = mode === 'apikey' ? 'block' : 'none';
                     if (labelChatGPT) {
                         labelChatGPT.style.borderColor = mode === 'chatgpt' ? '#22c55e' : '#444';
-                        labelChatGPT.style.background  = mode === 'chatgpt' ? '#0f2a0f' : '#2a2a2a';
-                        labelChatGPT.style.color       = mode === 'chatgpt' ? '#22c55e' : '#888';
+                        labelChatGPT.style.background = mode === 'chatgpt' ? '#0f2a0f' : '#2a2a2a';
+                        labelChatGPT.style.color = mode === 'chatgpt' ? '#22c55e' : '#888';
                     }
                     if (labelApikey) {
                         labelApikey.style.borderColor = mode === 'apikey' ? '#a855f7' : '#444';
-                        labelApikey.style.background  = mode === 'apikey' ? '#280d3d' : '#2a2a2a';
-                        labelApikey.style.color       = mode === 'apikey' ? '#c084fc' : '#888';
+                        labelApikey.style.background = mode === 'apikey' ? '#280d3d' : '#2a2a2a';
+                        labelApikey.style.color = mode === 'apikey' ? '#c084fc' : '#888';
                     }
                 };
 
@@ -4040,21 +4427,21 @@ function mainCode() {
                     const signedIn = OAuthLogin.isSignedIn();
                     if (signedIn) {
                         accountDot.style.background = '#22c55e';
-                        accountDot.style.boxShadow  = '0 0 0 3px rgba(34,197,94,0.2)';
-                        accountStatus.style.color   = '#22c55e';
-                        accountStatus.textContent   = '✅ Signed in with ChatGPT';
-                        accountSub.textContent      = 'Connected via openai-oauth proxy — ready to use!';
-                        if (loginBtn)  loginBtn.style.display  = 'none';
+                        accountDot.style.boxShadow = '0 0 0 3px rgba(34,197,94,0.2)';
+                        accountStatus.style.color = '#22c55e';
+                        accountStatus.textContent = '✅ Signed in with ChatGPT';
+                        accountSub.textContent = 'Connected via openai-oauth proxy — ready to use!';
+                        if (loginBtn) loginBtn.style.display = 'none';
                         if (logoutBtn) logoutBtn.style.display = 'block';
                         if (extNotice) extNotice.style.display = 'none';
                         if (proxyInfo) proxyInfo.style.display = 'block';
                     } else {
                         accountDot.style.background = '#555';
-                        accountDot.style.boxShadow  = '0 0 0 2px #1a1a1a';
-                        accountStatus.style.color   = '#6b7280';
-                        accountStatus.textContent   = 'Not signed in';
-                        accountSub.textContent      = 'Run npx openai-oauth login, then click sign in below';
-                        if (loginBtn)  loginBtn.style.display  = 'flex';
+                        accountDot.style.boxShadow = '0 0 0 2px #1a1a1a';
+                        accountStatus.style.color = '#6b7280';
+                        accountStatus.textContent = 'Not signed in';
+                        accountSub.textContent = 'Run npx openai-oauth login, then click sign in below';
+                        if (loginBtn) loginBtn.style.display = 'flex';
                         if (logoutBtn) logoutBtn.style.display = 'none';
                         if (proxyInfo) proxyInfo.style.display = 'none';
                         const extInstalled = await OAuthLogin.isExtensionInstalled();
@@ -4067,25 +4454,25 @@ function mainCode() {
                     loginBtn.addEventListener('mouseenter', () => {
                         if (!loginBtn.disabled) {
                             loginBtn.style.background = '#f3f4f6';
-                            loginBtn.style.boxShadow  = '0 2px 8px rgba(0,0,0,0.15), 0 6px 24px rgba(0,0,0,0.08)';
-                            loginBtn.style.transform  = 'translateY(-1px)';
+                            loginBtn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15), 0 6px 24px rgba(0,0,0,0.08)';
+                            loginBtn.style.transform = 'translateY(-1px)';
                         }
                     });
                     loginBtn.addEventListener('mouseleave', () => {
                         if (!loginBtn.disabled) {
                             loginBtn.style.background = '#ffffff';
-                            loginBtn.style.boxShadow  = '0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.04)';
-                            loginBtn.style.transform  = 'translateY(0)';
+                            loginBtn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.04)';
+                            loginBtn.style.transform = 'translateY(0)';
                         }
                     });
                     loginBtn.addEventListener('mousedown', () => {
-                        loginBtn.style.transform  = 'translateY(0) scale(0.98)';
-                        loginBtn.style.boxShadow  = '0 1px 2px rgba(0,0,0,0.1)';
+                        loginBtn.style.transform = 'translateY(0) scale(0.98)';
+                        loginBtn.style.boxShadow = '0 1px 2px rgba(0,0,0,0.1)';
                     });
                     loginBtn.addEventListener('click', async () => {
                         loginBtn.disabled = true;
                         loginBtn.style.opacity = '0.7';
-                        loginBtn.style.cursor  = 'wait';
+                        loginBtn.style.cursor = 'wait';
                         if (loginBtnText) loginBtnText.textContent = 'Opening login…';
                         try {
                             const result = await OAuthLogin.initiateLogin();
@@ -4095,7 +4482,7 @@ function mainCode() {
                                 window.open(result.installUrl, '_blank');
                                 loginBtn.disabled = false;
                                 loginBtn.style.opacity = '1';
-                                loginBtn.style.cursor  = 'pointer';
+                                loginBtn.style.cursor = 'pointer';
                                 if (loginBtnText) setTimeout(() => { loginBtnText.textContent = 'Sign in with ChatGPT'; }, 3000);
 
                             } else if (result.status === 'started' && result.popup) {
@@ -4107,7 +4494,7 @@ function mainCode() {
                                         clearInterval(pollTimer);
                                         loginBtn.disabled = false;
                                         loginBtn.style.opacity = '1';
-                                        loginBtn.style.cursor  = 'pointer';
+                                        loginBtn.style.cursor = 'pointer';
                                         if (loginBtnText) loginBtnText.textContent = 'Sign in with ChatGPT';
                                         await refreshAccountStatus();
                                         if (OAuthLogin.isSignedIn()) loadChatGPTModels(true);
@@ -4125,7 +4512,7 @@ function mainCode() {
                             if (loginBtnText) loginBtnText.textContent = 'Error — try again';
                             loginBtn.disabled = false;
                             loginBtn.style.opacity = '1';
-                            loginBtn.style.cursor  = 'pointer';
+                            loginBtn.style.cursor = 'pointer';
                             setTimeout(() => { if (loginBtnText) loginBtnText.textContent = 'Sign in with ChatGPT'; }, 3000);
                         }
                     });
@@ -5248,9 +5635,88 @@ function mainCode() {
         panelContent.appendChild(createNvidiaModelSelector());
         // =========================================================
 
+        // ========== OMNIROUTE API KEY + MODEL SELECTOR ==========
+        panelContent.appendChild(createTextInput('omnirouteApiKey', 'OmniRoute API Key', SETTINGS.omnirouteApiKey, 'OMNIROUTE_API_KEY (or leave empty for keyless local gateway)'));
+        panelContent.appendChild(createTextInput('omnirouteBaseUrl', 'OmniRoute Base URL', SETTINGS.omnirouteBaseUrl, 'Default: http://localhost:20128/v1'));
+
+        const createOmniRouteModelSelector = () => {
+            const wrapper = document.createElement('div');
+            wrapper.id = 'omniroute-model-wrapper';
+            wrapper.style.cssText = `padding: 10px 0; border-bottom: 1px solid #333; display: ${SETTINGS.aiProvider === 'omniroute' ? 'block' : 'none'};`;
+
+            // Models from opencode.json omniroute provider
+            const omnirouteModels = [
+                { id: 'cl/nvidia/nemotron-3-ultra-550b-a55b:free', name: 'Nemotron 3 Ultra 550B (Default)' },
+                { id: 'oc/big-pickle', name: 'Big Pickle (OpenCode Free) · Free' },
+                { id: 'oc/deepseek-v4-flash-free', name: 'DeepSeek V4 Flash Free (OpenCode Free) · Free' },
+                { id: 'agy/claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Antigravity) · Free' },
+                { id: 'agy/claude-opus-4-6-thinking', name: 'Claude Opus 4.6 Thinking (Antigravity) · Free' },
+                { id: 'agy/gemini-3.1-pro-high', name: 'Gemini 3.1 Pro High (Antigravity) · Free' },
+                { id: 'kr/claude-sonnet-4.5', name: 'Claude Sonnet 4.5 (Kiro) · Free' },
+                { id: 'kr/claude-haiku-4.5', name: 'Claude Haiku 4.5 (Kiro) · Free' },
+                { id: 'kr/deepseek-3.2', name: 'DeepSeek V3.2 (Kiro) · Free' },
+                { id: 'kr/minimax-m2.5', name: 'MiniMax M2.5 (Kiro) · Free' },
+                { id: 'kr/glm-5', name: 'GLM 5 (Kiro) · Free' },
+                { id: 'kr/qwen3-coder-next', name: 'Qwen 3 Coder Next (Kiro) · Free' },
+            ];
+
+            const currentValue = SETTINGS.omnirouteModel || OmniRouteProvider.CONFIG.DEFAULT_MODEL;
+
+            wrapper.innerHTML = `
+                <div style="color: #fff; font-size: 17px; margin-bottom: 6px;">OmniRoute Model</div>
+                <input type="text" id="omnirouteModel" list="omnirouteModels" placeholder="Type to search models (e.g., claude, deepseek, qwen, gemini, nemotron)" style="
+                    width: 100%;
+                    padding: 8px;
+                    border: 1px solid #444;
+                    border-radius: 6px;
+                    background: #000000;
+                    color: #2196F3;
+                    font-size: 15px;
+                    box-sizing: border-box;
+                    font-family: 'VT323', monospace;
+                ">
+                <datalist id="omnirouteModels"></datalist>
+                <div id="omnirouteModelStatus" style="color: #666; font-size: 14px; margin-top: 4px;">${omnirouteModels.length} models available from opencode config</div>
+            `;
+
+            setTimeout(() => {
+                const input = document.getElementById('omnirouteModel');
+                const datalist = document.getElementById('omnirouteModels');
+                const statusDiv = document.getElementById('omnirouteModelStatus');
+
+                // Populate datalist with models from opencode.json
+                omnirouteModels.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.label = model.name;
+                    datalist.appendChild(option);
+                });
+
+                // Set current value
+                input.value = currentValue;
+
+                // Save on change
+                if (input) {
+                    input.addEventListener('change', () => {
+                        SETTINGS.omnirouteModel = input.value;
+                        saveSettings(SETTINGS);
+                    });
+                    input.addEventListener('blur', () => {
+                        // Also save on blur in case user types a custom model ID
+                        SETTINGS.omnirouteModel = input.value;
+                        saveSettings(SETTINGS);
+                    });
+                }
+            }, 50);
+
+            return wrapper;
+        };
+        panelContent.appendChild(createOmniRouteModelSelector());
+        // =========================================================
+
         const note = document.createElement('div');
         note.style.cssText = 'color:#3f3f46;font-size:14px;padding:14px 4px;text-align:center;font-family:"VT323",monospace;line-height:1.7;border-top:1px solid rgba(255,255,255,0.05);margin-top:4px;';
-        note.innerHTML = 'Reload page after changing settings<br>Keys: <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#4CAF50;">Gemini</a> | <a href="https://openrouter.ai/keys" target="_blank" style="color:#4CAF50;">OpenRouter</a> | <a href="https://g4f.space" target="_blank" style="color:#4CAF50;">G4F</a><br>Puter.js: no API key required | <a href="https://developer.puter.com/ai/" target="_blank" style="color:#2196F3;">Puter AI docs</a><br>DuckDuckGo AI is FREE! | <a href="https://github.com/cloudWaddie/yuppbridge" target="_blank" style="color:#2196F3;">YuppBridge</a><br>NVIDIA NIM: Free key at <a href="https://build.nvidia.com" target="_blank" style="color:#76b900;">build.nvidia.com</a>';
+        note.innerHTML = 'Reload page after changing settings<br>Keys: <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#4CAF50;">Gemini</a> | <a href="https://openrouter.ai/keys" target="_blank" style="color:#4CAF50;">OpenRouter</a> | <a href="https://g4f.space" target="_blank" style="color:#4CAF50;">G4F</a><br>Puter.js: no API key required | <a href="https://developer.puter.com/ai/" target="_blank" style="color:#2196F3;">Puter AI docs</a><br>DuckDuckGo AI is FREE! | <a href="https://github.com/cloudWaddie/yuppbridge" target="_blank" style="color:#2196F3;">YuppBridge</a><br>NVIDIA NIM: Free key at <a href="https://build.nvidia.com" target="_blank" style="color:#76b900;">build.nvidia.com</a><br>OmniRoute: Self-hosted gateway at <a href="http://localhost:20128" target="_blank" style="color:#2196F3;">localhost:20128</a> | <a href="https://github.com/omnigate/omniroute" target="_blank" style="color:#2196F3;">OmniRoute GitHub</a>';
         panelContent.appendChild(note);
 
         panel.appendChild(panelHeader);
@@ -6875,25 +7341,54 @@ function mainCode() {
 
     // ============================================
     // 10. AI SOLUTION GENERATOR
-    // Uses Gemini, OpenAI, OpenRouter, Puter.js, G4F, DuckDuckGo, or YuppBridge to generate code solutions
+    // Uses Gemini, OpenAI, OpenRouter, Puter.js, G4F, DuckDuckGo, YuppBridge, Nvidia, or OmniRoute
+    // Powered by Grandmaster Competitive Programming Prompts for SkillRack
     // ============================================
 
     const getSelectedLanguage = () => {
         const langSelect = document.getElementById('langs_input');
-        if (!langSelect) return 'C';
+        if (langSelect && langSelect.selectedIndex >= 0) {
+            const selectedOption = langSelect.options[langSelect.selectedIndex];
+            if (selectedOption) {
+                const text = (selectedOption.text || selectedOption.textContent || selectedOption.value || '').trim();
+                const textUpper = text.toUpperCase();
+                if (textUpper.includes('SQL') || textUpper.includes('MYSQL') || textUpper.includes('ORACLE') || textUpper.includes('POSTGRES')) return 'SQL';
+                if (textUpper.includes('JAVA') && !textUpper.includes('SCRIPT')) return 'Java';
+                if (textUpper.includes('PYTHON') || textUpper.includes('PY3') || textUpper.includes('PY')) return 'Python';
+                if (textUpper.includes('CPP23') || textUpper.includes('C++23')) return 'C++23';
+                if (textUpper.includes('CPP') || textUpper.includes('C++')) return 'C++';
+                if (textUpper.includes('C#') || textUpper.includes('CSHARP')) return 'C#';
+                if (textUpper.includes('JAVASCRIPT') || textUpper.includes('JS') || textUpper.includes('NODE')) return 'JavaScript';
+                if (textUpper.includes('GOLANG') || textUpper.includes('GO')) return 'Go';
+                if (textUpper.includes('RUST')) return 'Rust';
+                if (textUpper.includes('PHP')) return 'PHP';
+                if (textUpper === 'C' || textUpper.startsWith('C ')) return 'C';
+            }
+        }
 
-        const selectedOption = langSelect.options[langSelect.selectedIndex];
-        if (!selectedOption) return 'C';
+        // Fallback: Check Ace Editor syntax mode if available
+        try {
+            if (window.txtCode && typeof window.txtCode.getSession === 'function') {
+                const modeId = (window.txtCode.getSession().getMode()?.['$id'] || '').toLowerCase();
+                if (modeId.includes('sql')) return 'SQL';
+                if (modeId.includes('java') && !modeId.includes('javascript')) return 'Java';
+                if (modeId.includes('python')) return 'Python';
+                if (modeId.includes('c_cpp')) return 'C++';
+                if (modeId.includes('csharp')) return 'C#';
+                if (modeId.includes('javascript')) return 'JavaScript';
+                if (modeId.includes('golang') || modeId.includes('go')) return 'Go';
+                if (modeId.includes('rust')) return 'Rust';
+            }
+        } catch (_) { }
 
-        const text = selectedOption.text || selectedOption.textContent;
-        if (text.includes('Java')) return 'Java';
-        if (text.includes('Python')) return 'Python';
-        if (text.includes('CPP23')) return 'C++23';
-        if (text.includes('CPP')) return 'C++';
+        // Fallback: Check page keywords
+        const pageText = (document.body?.innerText || '').toLowerCase();
+        if (pageText.includes('select ') && pageText.includes('from ') && (pageText.includes('table') || pageText.includes('database'))) {
+            return 'SQL';
+        }
+
         return 'C';
     };
-
-
 
     const cleanJSONResponse = (text) => {
         if (!text) return '';
@@ -6934,7 +7429,6 @@ function mainCode() {
         let container = null;
 
         // On SkillRack, MFIB blanks are always contained in multifibpanel.
-        // We look for multifibpanel first.
         const mfibPanel = document.getElementById('multifibpanel');
         if (mfibPanel) {
             const inputs = Array.from(mfibPanel.querySelectorAll(inputSelector)).filter(isActualCodingBlank);
@@ -6978,14 +7472,13 @@ function mainCode() {
                     template += `[BLANK_${blankCount}]`;
                     blankInputs.push(node);
                     blankCount++;
-                    return; // do not traverse children
+                    return;
                 }
 
                 // Pre block — grab decoded text content as-is
                 if (tag === 'PRE') {
-                    // .textContent decodes HTML entities (&lt; → <, etc.)
                     template += node.textContent;
-                    return; // do not traverse children (avoid double-counting)
+                    return;
                 }
 
                 // Skip script/style subtrees
@@ -6998,7 +7491,6 @@ function mainCode() {
                     traverse(child);
                 }
             } else if (node.nodeType === Node.TEXT_NODE) {
-                // Plain text nodes between elements (e.g. spaces / newlines)
                 const t = node.textContent;
                 if (t.trim()) template += t;
             }
@@ -7006,6 +7498,95 @@ function mainCode() {
 
         traverse(container);
         return { template: template.trim(), inputs: blankInputs };
+    };
+
+    // Helper to format HTML element to structured Markdown/Text preserving pre, tables, and paragraphs
+    const elementToStructuredMarkdown = (element) => {
+        if (!element) return '';
+        const clone = element.cloneNode(true);
+
+        // Remove unwanted UI elements
+        const unwantedSelectors = [
+            '.ribbon', '.circular', '.image', '#bypass-settings-panel',
+            '#auto-solver-status', 'script', 'style', 'button', '.ui-button'
+        ];
+        unwantedSelectors.forEach(sel => {
+            clone.querySelectorAll(sel).forEach(el => el.remove());
+        });
+
+        const processNode = (node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                return node.textContent;
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE) {
+                return '';
+            }
+
+            const tag = node.tagName.toUpperCase();
+
+            // Code and preformatted blocks: preserve EXACT spacing and newlines
+            if (tag === 'PRE' || tag === 'CODE') {
+                const content = node.textContent.replace(/\r\n/g, '\n');
+                return `\n\`\`\`\n${content}\n\`\`\`\n`;
+            }
+
+            // Tables: convert to clean markdown table representation
+            if (tag === 'TABLE') {
+                const rows = Array.from(node.querySelectorAll('tr'));
+                if (rows.length === 0) return '';
+                let tableText = '\n';
+                rows.forEach((tr, rIdx) => {
+                    const cells = Array.from(tr.querySelectorAll('th, td')).map(c => c.textContent.trim().replace(/\s+/g, ' '));
+                    if (cells.length > 0) {
+                        tableText += '| ' + cells.join(' | ') + ' |\n';
+                        if (rIdx === 0) {
+                            tableText += '| ' + cells.map(() => '---').join(' | ') + ' |\n';
+                        }
+                    }
+                });
+                return tableText + '\n';
+            }
+
+            // Headers
+            if (/^H[1-6]$/.test(tag)) {
+                return `\n\n### ${node.textContent.trim()}\n\n`;
+            }
+
+            // Bold / strong labels
+            if (tag === 'B' || tag === 'STRONG') {
+                const txt = node.textContent.trim();
+                if (txt.toLowerCase().includes('example') || txt.toLowerCase().includes('input') ||
+                    txt.toLowerCase().includes('output') || txt.toLowerCase().includes('boundary') ||
+                    txt.toLowerCase().includes('constraint') || txt.toLowerCase().includes('explanation')) {
+                    return `\n\n**${txt}**\n`;
+                }
+                return ` **${txt}** `;
+            }
+
+            // List items
+            if (tag === 'LI') {
+                return `\n- ${Array.from(node.childNodes).map(processNode).join('').trim()}`;
+            }
+
+            // Paragraphs and divs
+            if (tag === 'P' || tag === 'DIV') {
+                const inner = Array.from(node.childNodes).map(processNode).join('').trim();
+                return inner ? `\n\n${inner}\n\n` : '';
+            }
+
+            // Line breaks
+            if (tag === 'BR') {
+                return '\n';
+            }
+
+            // Default: process child nodes
+            return Array.from(node.childNodes).map(processNode).join('');
+        };
+
+        let result = processNode(clone);
+        // Normalize multiple blank lines (max 2 consecutive newlines)
+        result = result.replace(/\n{3,}/g, '\n\n').trim();
+        return result;
     };
 
     const getProblemDescription = () => {
@@ -7021,14 +7602,12 @@ function mainCode() {
                 break;
             }
         }
-        // Fallback: use first card if no ribbon card is found (common on exams/tests)
         if (!card && cards.length > 0) {
             card = cards[0];
         }
 
         if (card) {
             let problemTitle = '';
-            let description = '';
             let tutorialHint = '';
             let preCode = '';
             let postCode = '';
@@ -7046,18 +7625,16 @@ function mainCode() {
                 }
             }
 
-            // For tutor pages, get the tutorial highlight (explanation)
+            // For tutor pages, get tutorial hint
             if (isTutorPage) {
                 const tutorHighlight = card.querySelector('.tutorhighlight');
                 if (tutorHighlight) {
                     tutorialHint = tutorHighlight.textContent.trim();
                 }
 
-                // Get pre-code and post-code from the code editor panel
                 const preCodes = document.querySelectorAll('#codeeditorpanel pre, .ui-outputpanel pre');
                 preCodes.forEach((pre, index) => {
                     const text = pre.textContent.trim();
-                    // Skip empty or very short snippets
                     if (text.length > 5) {
                         if (index === 0 || pre.closest('#j_id_7a, [id*="_7a"]')) {
                             preCode = text;
@@ -7067,7 +7644,6 @@ function mainCode() {
                     }
                 });
 
-                // Alternative: find pre/post code by position in card
                 if (!preCode || !postCode) {
                     const allPres = card.querySelectorAll('pre');
                     if (allPres.length >= 1 && !preCode) preCode = allPres[0].textContent.trim();
@@ -7077,42 +7653,23 @@ function mainCode() {
 
             // For code track pages, get pre-code and post-code (inline code)
             if (isCodeTrackPage) {
-                // Look for pre elements in the code editor panel
                 const codeEditorPanel = document.getElementById('codeeditorpanel');
                 if (codeEditorPanel) {
                     const preCodes = codeEditorPanel.querySelectorAll('pre');
                     preCodes.forEach((pre) => {
                         const text = pre.textContent.trim();
-                        // Skip empty snippets
                         if (text.length > 5) {
-                            // Check if this is post-code (in #j_id_8t or similar)
                             if (pre.closest('#j_id_8t, [id*="_8t"]')) {
-                                if (!postCode) {
-                                    postCode = text;
-                                }
+                                if (!postCode) postCode = text;
                             } else if (pre.closest('#j_id_8n, [id*="_8n"]')) {
-                                // This is pre-code
-                                if (!preCode) {
-                                    preCode = text;
-                                }
+                                if (!preCode) preCode = text;
                             } else if (!preCode) {
-                                // Fallback: first pre element is likely pre-code
                                 preCode = text;
                             }
                         }
                     });
                 }
 
-                // Also check for pre elements in the problem card itself
-                const cardPres = card.querySelectorAll('pre');
-                cardPres.forEach((pre) => {
-                    const text = pre.textContent.trim();
-                    if (text.length > 5 && !preCode) {
-                        preCode = text;
-                    }
-                });
-
-                // Fallback: Get all pres in codediv area
                 if (!preCode || !postCode) {
                     const codeDivPres = document.querySelectorAll('#codediv pre, #codediv .ui-outputpanel pre');
                     const presList = Array.from(codeDivPres);
@@ -7121,61 +7678,21 @@ function mainCode() {
                 }
             }
 
-            // Get the problem description text
-            const allText = card.textContent;
-            const labelMatch = allText.indexOf(problemTitle);
-            if (labelMatch !== -1) {
-                const afterTitle = allText.substring(labelMatch + problemTitle.length);
-                const maxExecIdx = afterTitle.indexOf('Max Execution');
-                description = maxExecIdx !== -1 ? afterTitle.substring(0, maxExecIdx) : afterTitle;
-            } else {
-                description = card.textContent;
-            }
-
-            // Also get paragraphs for cleaner description
-            const paragraphs = card.querySelectorAll('p');
-            let pText = '';
-            paragraphs.forEach(p => {
-                const txt = p.textContent.trim();
-                if (txt && !txt.includes('Max Execution')) {
-                    pText += txt + '\n';
-                }
-            });
-            if (pText) {
-                description = pText.trim();
-            }
-
-            // Clean up description (remove formatting lines and leading/trailing whitespace)
-            description = description.replace(/\s+/g, ' ').trim();
+            // Structured markdown extraction from problem card (preserves table, pre, bold labels, sample I/O)
+            const structuredDescription = elementToStructuredMarkdown(card);
 
             // Build full context for AI
-            let fullDescription = description;
-            if (isTutorPage) {
-                fullDescription = '';
-                if (tutorialHint) {
-                    fullDescription += `Tutorial Hint: ${tutorialHint}\n\n`;
+            let fullDescription = structuredDescription;
+            if (isTutorPage && tutorialHint) {
+                fullDescription = `**Tutorial Hint:**\n${tutorialHint}\n\n${fullDescription}`;
+            }
+
+            if (preCode || postCode) {
+                if (preCode) {
+                    fullDescription += `\n\n### Pre-written Code (Provided by System):\n\`\`\`\n${preCode}\n\`\`\`\n`;
                 }
-                fullDescription += `Task: ${description}\n`;
-                if (SETTINGS.includePrePostCode) {
-                    if (preCode) {
-                        fullDescription += `\nPre-written code (DO NOT include this, it's already provided):\n\`\`\`\n${preCode}\n\`\`\`\n`;
-                    }
-                    if (postCode) {
-                        fullDescription += `\nPost-code that will run after your solution (DO NOT include this):\n\`\`\`\n${postCode}\n\`\`\`\n`;
-                    }
-                    fullDescription += `\nIMPORTANT: Write ONLY the middle part of the code. The pre-code and post-code are already provided by the system.`;
-                }
-            } else if (isCodeTrackPage && (preCode || postCode)) {
-                // For code track with inline code (pre-code and/or post-code)
-                fullDescription = `Task: ${description}\n`;
-                if (SETTINGS.includePrePostCode) {
-                    if (preCode) {
-                        fullDescription += `\nPre-written code (DO NOT include this, it's already provided):\n\`\`\`\n${preCode}\n\`\`\`\n`;
-                    }
-                    if (postCode) {
-                        fullDescription += `\nPost-code that will run after your solution (DO NOT include this):\n\`\`\`\n${postCode}\n\`\`\`\n`;
-                    }
-                    fullDescription += `\nIMPORTANT: Write ONLY the middle part of the code. The pre-code and post-code are already provided by the system.`;
+                if (postCode) {
+                    fullDescription += `\n\n### Post-written Code (Provided by System):\n\`\`\`\n${postCode}\n\`\`\`\n`;
                 }
             }
 
@@ -7193,6 +7710,7 @@ function mainCode() {
                 blankInputs: mfib.inputs
             };
         }
+
         const mfib = extractMFIBTemplate();
         return { title: '', description: '', isTutor: false, isCodeTrack: false, preCode: '', postCode: '', isMFIB: mfib.inputs.length > 0, mfibTemplate: mfib.template, blankInputs: mfib.inputs };
     };
@@ -7201,12 +7719,15 @@ function mainCode() {
     const getErrorInfo = () => {
         let errorInfo = {
             hasError: false,
-            errorType: null,  // 'wrong_output', 'compilation_error', or 'runtime_error'
+            errorType: null,  // 'hidden_test_failed', 'wrong_output', 'compilation_error', or 'runtime_error'
             input: '',
             expectedOutput: '',
             yourOutput: '',
             compilationError: '',
-            currentCode: ''
+            currentCode: '',
+            passedCount: 0,
+            failedCount: 0,
+            rawMessage: ''
         };
 
         // Get current code from editor
@@ -7218,123 +7739,178 @@ function mainCode() {
         const growlItems = document.querySelectorAll('.ui-growl-item');
         for (const item of growlItems) {
             if (item.textContent.includes('Incorrect Captcha')) {
-                return errorInfo; // Not a code error
+                return errorInfo;
             }
         }
 
-        // Check for error panel
+        // Check error panel
         const errorPanel = document.getElementById('errormsg');
-        if (!errorPanel) return errorInfo;
+        const panelContent = document.getElementById('errormsg_content') || errorPanel;
+        const panelText = (panelContent ? panelContent.textContent.trim() : '');
 
-        const panelContent = document.getElementById('errormsg_content');
-        if (!panelContent) return errorInfo;
+        // Also inspect growl messages or error text across page
+        let fullErrorText = panelText;
+        growlItems.forEach(g => { fullErrorText += '\n' + g.textContent.trim(); });
 
-        // Check if it's visible/has content
-        const panelText = panelContent.textContent.trim();
-        if (!panelText) return errorInfo;
+        if (!fullErrorText.trim()) return errorInfo;
 
-        errorInfo.hasError = true;
+        const panelTextLower = fullErrorText.toLowerCase();
 
-        // Check for compilation error (has error messages like "error:", "undefined reference", etc.)
+        // Check for Compilation Error
         const compilationIndicators = [
             'error:', 'undefined reference', 'multiple definition',
             'ld returned', 'collect2:', 'fatal error', 'syntax error',
             'expected', 'undeclared', 'implicit declaration'
         ];
-
-        // Check for runtime errors
-        const runtimeIndicators = [
-            'segmentation fault', 'core dumped', 'bus error', 'floating point exception',
-            'abort', 'timeout', 'time limit exceeded', 'memory limit', 'stack overflow',
-            'runtime error', 'killed', 'signal'
-        ];
-
-        const panelTextLower = panelText.toLowerCase();
         const isCompilationError = compilationIndicators.some(indicator =>
             panelTextLower.includes(indicator.toLowerCase())
         );
 
+        // Check for Runtime Errors
+        const runtimeIndicators = [
+            'segmentation fault', 'core dumped', 'bus error', 'floating point exception',
+            'abort', 'time limit exceeded', 'memory limit', 'stack overflow',
+            'runtime error', 'killed', 'signal'
+        ];
         const isRuntimeError = runtimeIndicators.some(indicator =>
             panelTextLower.includes(indicator.toLowerCase())
         );
 
+        // Check for Private / Hidden Test Case Failures
+        const isHiddenTestFailure = panelTextLower.includes('private') ||
+            panelTextLower.includes('hidden') ||
+            (panelTextLower.includes('passed') && panelTextLower.includes('failed')) ||
+            panelTextLower.includes('did not pass the execution');
+
+        errorInfo.hasError = true;
+        errorInfo.rawMessage = fullErrorText;
+
+        // Parse Passed / Failed counts if present (e.g. "9 Passed 3 Failed")
+        const passedMatch = fullErrorText.match(/(\d+)\s*Passed/i);
+        const failedMatch = fullErrorText.match(/(\d+)\s*Failed/i);
+        if (passedMatch) errorInfo.passedCount = parseInt(passedMatch[1], 10);
+        if (failedMatch) errorInfo.failedCount = parseInt(failedMatch[1], 10);
+
         if (isCompilationError) {
             errorInfo.errorType = 'compilation_error';
-            // Get the compilation error text
-            const errorDiv = panelContent.querySelector('div[style*="word-wrap"]');
+            const errorDiv = panelContent?.querySelector?.('div[style*="word-wrap"]');
             if (errorDiv) {
                 errorInfo.compilationError = errorDiv.textContent.replace(/\s+/g, ' ').trim();
             } else {
-                errorInfo.compilationError = panelText;
+                errorInfo.compilationError = panelText || fullErrorText;
             }
         } else if (isRuntimeError) {
             errorInfo.errorType = 'runtime_error';
-            // Extract Input, Expected Output, Your Output (runtime error shows these)
-            const cards = panelContent.querySelectorAll('.ui-card-content');
-            const labels = panelContent.querySelectorAll('.ui.label');
+            const cards = panelContent ? panelContent.querySelectorAll('.ui-card-content') : [];
+            const labels = panelContent ? panelContent.querySelectorAll('.ui.label') : [];
 
             labels.forEach((label, index) => {
                 const labelText = label.textContent.toLowerCase();
                 const cardContent = cards[index]?.textContent.trim() || '';
-
-                if (labelText.includes('input')) {
-                    errorInfo.input = cardContent;
-                } else if (labelText.includes('expected')) {
-                    errorInfo.expectedOutput = cardContent;
-                } else if (labelText.includes('your program') || labelText.includes('your output')) {
-                    errorInfo.yourOutput = cardContent;
-                }
+                if (labelText.includes('input')) errorInfo.input = cardContent;
+                else if (labelText.includes('expected')) errorInfo.expectedOutput = cardContent;
+                else if (labelText.includes('your program') || labelText.includes('your output')) errorInfo.yourOutput = cardContent;
             });
+        } else if (isHiddenTestFailure && (!errorInfo.input && !errorInfo.expectedOutput)) {
+            // Hidden test case failure: no visible sample I/O provided by judge
+            errorInfo.errorType = 'hidden_test_failed';
         } else {
             errorInfo.errorType = 'wrong_output';
-
-            // Extract Input, Expected Output, Your Output
-            const cards = panelContent.querySelectorAll('.ui-card-content');
-            const labels = panelContent.querySelectorAll('.ui.label');
+            const cards = panelContent ? panelContent.querySelectorAll('.ui-card-content') : [];
+            const labels = panelContent ? panelContent.querySelectorAll('.ui.label') : [];
 
             labels.forEach((label, index) => {
                 const labelText = label.textContent.toLowerCase();
                 const cardContent = cards[index]?.textContent.trim() || '';
-
-                if (labelText.includes('input')) {
-                    errorInfo.input = cardContent;
-                } else if (labelText.includes('expected')) {
-                    errorInfo.expectedOutput = cardContent;
-                } else if (labelText.includes('your program') || labelText.includes('your output')) {
-                    errorInfo.yourOutput = cardContent;
-                }
+                if (labelText.includes('input')) errorInfo.input = cardContent;
+                else if (labelText.includes('expected')) errorInfo.expectedOutput = cardContent;
+                else if (labelText.includes('your program') || labelText.includes('your output')) errorInfo.yourOutput = cardContent;
             });
+
+            // If inputs are empty despite being marked wrong_output, mark as hidden failure
+            if (!errorInfo.input && !errorInfo.expectedOutput && (errorInfo.failedCount > 0 || isHiddenTestFailure)) {
+                errorInfo.errorType = 'hidden_test_failed';
+            }
         }
 
         return errorInfo;
     };
 
-    const generateWithGemini = async (prompt) => {
+    // ==============================================================
+    // GRANDMASTER COMPETITIVE PROGRAMMING SYSTEM PROMPTS
+    // ==============================================================
+    const GRANDMASTER_SYSTEM_PROMPT = `You are a Grandmaster Competitive Programmer solving a coding challenge on SkillRack.
+Your response will be automatically parsed, compiled, and evaluated against both public test cases and strict private hidden test cases with large boundary constraints.
+Accuracy is mandatory. Follow these rules strictly:
+
+[CRITICAL COMPETITIVE PROGRAMMING RULES]
+1. PREVENT 64-BIT INTEGER OVERFLOW (MOST COMMON HIDDEN TEST CASE FAILURE):
+   - In C/C++: Use 'long long' for all counters, sums, products, coordinates, array accumulators, or any value that can exceed 2*10^9 or reach 10^18.
+   - When multiplying two integers, cast to 64-bit first: (1LL * a * b) to prevent overflow before assignment!
+   - In Java: Use 'long' for all accumulators and large values; use BigInteger if numbers exceed 10^18.
+   - For floating point: use double or long double.
+
+2. PREVENT TIME LIMIT EXCEEDED (TLE) ON HIDDEN TEST CASES:
+   - Max constraint analysis: If N <= 10^5, time complexity MUST be O(N) or O(N log N). Never use O(N^2) nested loops for N > 1000.
+   - In C++: Always enable Fast I/O at the start of main():
+     std::ios_base::sync_with_stdio(false);
+     std::cin.tie(NULL);
+   - In Python: Use sys.stdin.read().split() to read all tokens in one pass efficiently into a list. Avoid string += inside loops (use ''.join()).
+   - In Java: Use fast I/O or Scanner properly.
+
+3. SKILLRACK I/O STREAM & NEWLINE QUIRKS:
+   - In C: When reading a string/char with fgets() or scanf("%[^\n]") after reading an integer, unconsumed newlines '\\n' in stdin cause immediate empty reads. Always consume whitespace using scanf(" %c", &ch) or scanf(" %[^\n]", str).
+   - In C++: Use cin >> ws before std::getline(cin, str) to clear leading whitespace and newlines.
+   - In Python: sys.stdin.read().split() seamlessly handles both newline-separated and space-separated tokens without input buffer issues.
+   - In Java: Call sc.nextLine() after sc.nextInt() before reading next string line. Class name MUST be 'Hello'.
+
+4. HIDDEN TEST CASE CORNER CASES:
+   - Mentally verify handling for: N = 0, N = 1, negative numbers, 0, all elements identical, sorted vs reverse-sorted, empty strings, single character, upper/lower case sensitivity, maximum boundary constraints.
+
+5. EXACT OUTPUT FORMATTING:
+   - Output ONLY what is requested. Never print input prompts like "Enter n:" or descriptive labels like "Answer:".
+   - Follow exact spacing and newline rules shown in sample outputs.
+   - For rounded floating point numbers, format to the exact decimal places specified (e.g. printf("%.2f\\n", ans) in C, std::fixed << std::setprecision(2) in C++, "{:.2f}".format() in Python).
+
+6. SQL SPECIFICATIONS:
+   - Emit the entire SQL solution as a SINGLE LINE query with spaces between clauses. No newlines, no markdown fences.
+   - Do NOT use CREATE TABLE or INSERT unless explicitly asked. Use exact column and table names from problem schema.`;
+
+    const generateWithGemini = async (prompt, systemInstruction = '') => {
         const apiKey = SETTINGS.geminiApiKey;
         if (!apiKey) {
             throw new Error('Gemini API key not configured. Please add it in settings.');
         }
 
         const model = SETTINGS.geminiModel || 'gemini-2.5-flash';
+        const requestBody = {
+            contents: [{
+                parts: [{ text: prompt }]
+            }],
+            generationConfig: {
+                temperature: SETTINGS.aiTemperature || 0,
+                maxOutputTokens: 8192,
+            }
+        };
+
+        const sysPrompt = systemInstruction || (SETTINGS.aiSystemPrompt ? SETTINGS.aiSystemPrompt.trim() : GRANDMASTER_SYSTEM_PROMPT);
+        if (sysPrompt) {
+            requestBody.system_instruction = {
+                parts: [{ text: sysPrompt }]
+            };
+        }
+
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                contents: [{
-                    parts: [{ text: prompt }]
-                }],
-                generationConfig: {
-                    temperature: SETTINGS.aiTemperature,
-                    maxOutputTokens: 8192,
-                }
-            })
+            body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error?.message || 'Gemini API request failed');
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error?.message || `Gemini API request failed: HTTP ${response.status}`);
         }
 
         const data = await response.json();
@@ -7342,7 +7918,6 @@ function mainCode() {
     };
 
     // ---- OpenAI OAuth proxy health check ----
-    // Returns { ok, modelsCount, error, baseUrl }
     const checkOpenAIOAuthProxy = async () => {
         const baseUrl = OpenAIProvider.getOAuthBaseUrl();
         try {
@@ -7364,10 +7939,16 @@ function mainCode() {
         }
     };
 
-    // Thin wrapper — all logic lives in OpenAIProvider.generateCompletion
-    const generateWithOpenAI = async (prompt) => {
+    const generateWithOpenAI = async (prompt, systemInstruction = '') => {
+        const sysPrompt = systemInstruction || (SETTINGS.aiSystemPrompt ? SETTINGS.aiSystemPrompt.trim() : GRANDMASTER_SYSTEM_PROMPT);
+        const messages = [];
+        if (sysPrompt) {
+            messages.push({ role: 'system', content: sysPrompt });
+        }
+        messages.push({ role: 'user', content: prompt });
+
         return OpenAIProvider.generateCompletion(
-            [{ role: 'user', content: prompt }],
+            messages,
             { model: SETTINGS.openaiModel, temperature: SETTINGS.aiTemperature }
         );
     };
@@ -7379,33 +7960,34 @@ function mainCode() {
         minIntervalMs: 3000
     };
 
-    const generateWithOpenRouter = async (prompt) => {
+    const generateWithOpenRouter = async (prompt, systemInstruction = '') => {
         const apiKey = SETTINGS.openrouterApiKey;
         if (!apiKey) {
             throw new Error('OpenRouter API key not configured. Please add it in settings.');
         }
 
         const primaryModel = SETTINGS.openrouterModel || 'openai/gpt-oss-120b:free';
-
-        // Reasoning models reject temperature/top_p — detect by name
         const isReasoning = (m) => /gpt-oss|\bo[134]\b|deepseek-r1|qwen.*think|nemotron.*ultra|nemotron.*super|nemotron.*nano|laguna|liquid.*think|lfm.*think/i.test(m);
 
+        const sysPrompt = systemInstruction || (SETTINGS.aiSystemPrompt ? SETTINGS.aiSystemPrompt.trim() : GRANDMASTER_SYSTEM_PROMPT);
 
-        // Build OpenAI-SDK-compatible request body for a given model
         const buildBody = (model) => {
+            const messages = [];
+            if (sysPrompt) {
+                messages.push({ role: 'system', content: sysPrompt });
+            }
+            messages.push({ role: 'user', content: prompt });
+
             const body = {
                 model,
-                messages: [{ role: 'user', content: prompt }]
+                messages
             };
-            // Reasoning models must NOT have temperature — causes 422/429 provider errors
             if (!isReasoning(model)) {
-                body.temperature = 0;
+                body.temperature = SETTINGS.aiTemperature || 0;
             }
             return body;
         };
 
-        // Read Retry-After header from a 429 response and return wait time in ms.
-        // `response` may be undefined (e.g. network-error path) — guard accordingly.
         const getRetryAfterMs = (response, fallbackMs) => {
             if (!response || typeof response.headers?.get !== 'function') {
                 return fallbackMs;
@@ -7415,26 +7997,19 @@ function mainCode() {
                 if (retryAfter) {
                     const secs = parseFloat(retryAfter);
                     if (!isNaN(secs) && secs > 0) {
-                        console.log(`[OpenRouter] Retry-After header: ${secs}s`);
-                        return Math.ceil(secs * 1000) + 500; // add 500ms buffer
+                        return Math.ceil(secs * 1000) + 500;
                     }
                 }
 
-                // Some gateways expose reset timestamp headers
                 const resetUnix = response.headers.get('x-ratelimit-reset');
                 if (resetUnix) {
                     const parsed = parseFloat(resetUnix);
                     if (!isNaN(parsed) && parsed > 0) {
                         const ms = parsed > 1e12 ? parsed - Date.now() : (parsed * 1000) - Date.now();
-                        if (ms > 0) {
-                            console.log(`[OpenRouter] x-ratelimit-reset header wait: ${Math.ceil(ms / 1000)}s`);
-                            return Math.ceil(ms) + 500;
-                        }
+                        if (ms > 0) return Math.ceil(ms) + 500;
                     }
                 }
-            } catch (headerErr) {
-                console.warn('[OpenRouter] Failed to read Retry-After header:', headerErr.message);
-            }
+            } catch (headerErr) { }
             return fallbackMs;
         };
 
@@ -7458,12 +8033,10 @@ function mainCode() {
         const waitForRequestSlot = async (label = 'OpenRouter cooldown') => {
             const waitMs = OPENROUTER_RATE_STATE.nextAllowedAt - nowMs();
             if (waitMs > 0) {
-                console.log(`[OpenRouter] Global gate wait ${Math.ceil(waitMs / 1000)}s (${label})`);
                 await countdownWait(waitMs, label);
             }
         };
 
-        // Helper to update UI button status during rate limit countdown
         const updateBtnStatus = (msg) => {
             const btn = document.getElementById('ai-solution-btn');
             if (btn) {
@@ -7483,10 +8056,8 @@ function mainCode() {
             updateBtnStatus('Generating...');
         };
 
-        // Single fetch attempt — returns { ok, status, content, errMsg, response }
         const attempt = async (model) => {
             await waitForRequestSlot('OpenRouter cooldown');
-            console.log(`[OpenRouter] → POST model="${model}" reasoning=${isReasoning(model)}`);
             let response;
             try {
                 response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -7511,14 +8082,11 @@ function mainCode() {
                     return { ok: false, status: 200, errMsg: `Failed to parse response JSON: ${parseErr.message}` };
                 }
 
-                // Validate we actually received generated content
                 const content = data?.choices?.[0]?.message?.content;
                 if (typeof content !== 'string' || content.trim() === '') {
-                    // Surface provider-level errors returned inside a 200 response
                     const providerErr = data?.error?.message
                         || data?.choices?.[0]?.finish_reason
                         || 'Empty response from model';
-                    console.warn(`[OpenRouter] model="${model}" 200 OK but empty content — reason: ${providerErr}`);
                     return { ok: false, status: 200, errMsg: providerErr };
                 }
 
@@ -7526,7 +8094,6 @@ function mainCode() {
                 return { ok: true, status: 200, content };
             }
 
-            // Parse error body safely
             let errMsg = `HTTP ${response.status}`;
             try {
                 const errData = await response.json();
@@ -7534,11 +8101,9 @@ function mainCode() {
             } catch (_) {
                 try { errMsg = await response.text(); } catch (_2) { }
             }
-            console.warn(`[OpenRouter] model="${model}" status=${response.status} err="${errMsg}"`);
             return { ok: false, status: response.status, errMsg, response };
         };
 
-        // Unified request executor that retries a model on transient errors (429, 503, provider issues, etc.)
         const requestModelWithRetry = async (model, maxRetries = 3) => {
             const delays = [5000, 10000, 20000, 30000];
             let lastRes;
@@ -7548,17 +8113,13 @@ function mainCode() {
                     const waitMs = lastRes?.status === 429
                         ? mark429Cooldown(lastRes?.response, delays[i - 1] || 10000)
                         : (delays[i - 1] || 10000);
-                    console.log(`[OpenRouter] Retrying model "${model}" in ${waitMs / 1000}s (Retry ${i}/${maxRetries})...`);
                     await countdownWait(waitMs, `Rate limit (${model.split('/')[1] || model})`);
                 }
 
-                // Global pacing safety buffer even when no explicit cooldown header exists
                 await new Promise(r => setTimeout(r, jitter(OPENROUTER_RATE_STATE.minIntervalMs)));
 
                 lastRes = await attempt(model);
-                if (lastRes.ok) {
-                    return lastRes;
-                }
+                if (lastRes.ok) return lastRes;
 
                 const isTransient = lastRes.status === 429
                     || lastRes.status === 424
@@ -7568,22 +8129,14 @@ function mainCode() {
                     || lastRes.status === 0
                     || /rate.limit|overload|busy|provider.returned.error|too.many.requests/i.test(lastRes.errMsg || '');
 
-                if (!isTransient) {
-                    console.log(`[OpenRouter] Non-transient error for "${model}": ${lastRes.errMsg}`);
-                    break; // break early on API auth errors, 400 bad request, etc.
-                }
+                if (!isTransient) break;
             }
             return lastRes;
         };
 
-        // Try primary model first with retries
-        console.log(`[OpenRouter] Trying primary model: "${primaryModel}"`);
         let lastResult = await requestModelWithRetry(primaryModel, 3);
-        if (lastResult.ok) {
-            return lastResult.content;
-        }
+        if (lastResult.ok) return lastResult.content;
 
-        // Fallback to other free models if the primary model failed and is a free model
         const isFreeModel = primaryModel.endsWith(':free');
         if (isFreeModel) {
             const fallbackModels = [
@@ -7595,12 +8148,8 @@ function mainCode() {
             ].filter(m => m !== primaryModel);
 
             for (const fallbackModel of fallbackModels) {
-                console.log(`[OpenRouter] Primary model "${primaryModel}" failed. Trying fallback model: "${fallbackModel}"`);
                 const fallbackResult = await requestModelWithRetry(fallbackModel, 1);
-                if (fallbackResult.ok) {
-                    console.log(`[OpenRouter] Fallback model "${fallbackModel}" succeeded.`);
-                    return fallbackResult.content;
-                }
+                if (fallbackResult.ok) return fallbackResult.content;
             }
         }
 
@@ -7608,7 +8157,7 @@ function mainCode() {
         throw new Error(`OpenRouter (${primaryModel}): ${primaryErr}`);
     };
 
-    const generateWithPuter = async (prompt) => {
+    const generateWithPuter = async (prompt, systemInstruction = '') => {
         if (typeof puter === 'undefined' || !puter?.ai?.chat) {
             throw new Error('Puter.js is not loaded. Reload the page or reinstall the userscript.');
         }
@@ -7623,11 +8172,12 @@ function mainCode() {
             options.reasoning_effort = SETTINGS.puterReasoningEffort || 'low';
         }
 
-        const response = await puter.ai.chat(prompt, options);
+        const sysPrompt = systemInstruction || (SETTINGS.aiSystemPrompt ? SETTINGS.aiSystemPrompt.trim() : GRANDMASTER_SYSTEM_PROMPT);
+        const fullPrompt = sysPrompt ? `${sysPrompt}\n\n${prompt}` : prompt;
 
-        if (typeof response === 'string') {
-            return response;
-        }
+        const response = await puter.ai.chat(fullPrompt, options);
+
+        if (typeof response === 'string') return response;
 
         if (Array.isArray(response)) {
             return response
@@ -7637,9 +8187,7 @@ function mainCode() {
         }
 
         const messageContent = response?.message?.content;
-        if (typeof messageContent === 'string') {
-            return messageContent;
-        }
+        if (typeof messageContent === 'string') return messageContent;
         if (Array.isArray(messageContent)) {
             return messageContent
                 .map(part => part?.text || part?.content || '')
@@ -7647,31 +8195,9 @@ function mainCode() {
                 .join('\n');
         }
 
-        if (typeof response?.text === 'string') {
-            return response.text;
-        }
+        if (typeof response?.text === 'string') return response.text;
 
         return JSON.stringify(response || '', null, 2);
-    };
-
-    const stripComments = (code, language) => {
-        let result = code;
-        const lang = language.toLowerCase();
-
-        if (lang === 'python') {
-            result = result.replace(/#.*$/gm, '');
-            result = result.replace(/'''[\s\S]*?'''/g, '');
-            result = result.replace(/"""[\s\S]*?"""/g, '');
-        } else if (lang === 'c' || lang === 'c++' || lang === 'c++23' || lang === 'java') {
-            result = result.replace(/\/\/.*$/gm, '');
-            result = result.replace(/\/\*[\s\S]*?\*\//g, '');
-        }
-
-        result = result.replace(/^\s*[\r\n]/gm, '\n');
-        result = result.replace(/\n{3,}/g, '\n\n');
-        result = result.trim();
-
-        return result;
     };
 
     const extractCode = (response, language) => {
@@ -7679,10 +8205,8 @@ function mainCode() {
 
         // Handle JSON responses (strip JSON wrapper if present)
         try {
-            // Check if response looks like JSON
             if (normalizedResponse.trim().startsWith('{') && normalizedResponse.includes('"content"')) {
                 const jsonData = JSON.parse(normalizedResponse);
-                // Try to extract content from various JSON structures
                 if (jsonData.choices && jsonData.choices[0]?.message?.content) {
                     normalizedResponse = jsonData.choices[0].message.content;
                 } else if (jsonData.content) {
@@ -7691,19 +8215,15 @@ function mainCode() {
                     normalizedResponse = jsonData.text;
                 }
             }
-        } catch (e) {
-            // Not JSON, continue with string processing
-        }
+        } catch (_) { }
 
         let code = '';
 
-        // Match code blocks with language specifiers (c++, ++23, cpp, c, python, etc.)
-        // Pattern: ```languageName followed by code and closing ```
+        // Match code blocks with language specifiers (c++, cpp, c, python, java, sql, etc.)
         const codeBlockRegex = /```(?:[a-zA-Z0-9_+-]*)?\n?([\s\S]*?)```/g;
         const matches = [...normalizedResponse.matchAll(codeBlockRegex)];
 
         if (matches.length > 0) {
-            // Find the longest match (most likely the actual code)
             let bestMatch = matches[0][1].trim();
             for (const match of matches) {
                 const trimmed = match[1].trim();
@@ -7719,13 +8239,10 @@ function mainCode() {
             if (openMatch) {
                 code = openMatch[1].trim();
             } else {
-                // Last resort: use entire response and clean it
                 code = normalizedResponse.trim();
-                // Remove common explanatory prefixes
-                const prefixes = ['Here is', 'Here\'s', 'The fixed code', 'The solution', 'Fixed code:', 'Solution:', 'Here\'s the code:', 'Here is the code:'];
+                const prefixes = ['Here is', "Here's", 'The fixed code', 'The solution', 'Fixed code:', 'Solution:', "Here's the code:", 'Here is the code:'];
                 for (const prefix of prefixes) {
-                    const lowerCode = code.toLowerCase();
-                    if (lowerCode.startsWith(prefix.toLowerCase())) {
+                    if (code.toLowerCase().startsWith(prefix.toLowerCase())) {
                         code = code.substring(prefix.length).trim();
                         break;
                     }
@@ -7733,33 +8250,23 @@ function mainCode() {
             }
         }
 
-        // CRITICAL FIX: Remove language specifiers that might have leaked in
-        // Remove lines that only contain language tags like "c++", "++23", "cpp", etc.
-        const languageTagRegex = /^(?:c|c\+\+|cpp|cpp11|cpp14|cpp17|cpp20|cpp23|\+\+|\+\+11|\+\+14|\+\+17|\+\+20|\+\+23|python|py|java|javascript|js|typescript|ts|go|rust|ruby|php|kotlin|swift)$/i;
+        // Clean standalone language tags
+        const languageTagRegex = /^(?:c|c\+\+|cpp|cpp11|cpp14|cpp17|cpp20|cpp23|\+\+|\+\+11|\+\+14|\+\+17|\+\+20|\+\+23|python|py|java|sql|mysql|postgresql|oracle|javascript|js|typescript|ts|go|rust|ruby|php|kotlin|swift)$/i;
         const lines = code.split('\n');
         code = lines.filter(line => {
             const trimmed = line.trim();
-            // Skip lines that are ONLY language tags (case-insensitive, support c++, cpp, cpp23, ++, ++23, etc.)
-            // Language tags: c, c++, cpp, cpp23, ++, ++23, python, java, javascript, typescript, etc.
-            if (languageTagRegex.test(trimmed)) {
-                return false; // This is likely a language tag, skip it
-            }
-            return true;
+            return !languageTagRegex.test(trimmed);
         }).join('\n');
 
-        // Remove any backticks that leaked in (at line start/end only)
+        // Remove leftover backticks
         code = code.replace(/^```[a-zA-Z0-9+]*\s*/gm, '');
         code = code.replace(/\s*```$/gm, '');
-
-        // Also remove any standalone language tags on their own lines (more aggressive)
-        code = code.split('\n').filter(line => {
-            const trimmed = line.trim();
-            return !(languageTagRegex.test(trimmed));
-        }).join('\n');
-
         code = code.trim();
 
-        code = stripComments(code, language);
+        // For SQL: collapse into single line with spaces if multi-line
+        if (language === 'SQL') {
+            code = code.replace(/\s+/g, ' ').trim();
+        }
 
         return code;
     };
@@ -7772,7 +8279,6 @@ function mainCode() {
 
     // ========== UTILITY: Compare code similarity ==========
     const calculateCodeSimilarity = (code1, code2) => {
-        // Simple similarity check: compare normalized code strings
         const normalize = (code) => {
             return code
                 .replace(/\s+/g, ' ')
@@ -7784,9 +8290,8 @@ function mainCode() {
         const norm1 = normalize(code1);
         const norm2 = normalize(code2);
 
-        if (norm1 === norm2) return 1.0; // Identical
+        if (norm1 === norm2) return 1.0;
 
-        // Simple character-based similarity
         const minLen = Math.min(norm1.length, norm2.length);
         let matches = 0;
         for (let i = 0; i < minLen; i++) {
@@ -7796,7 +8301,7 @@ function mainCode() {
         return matches / Math.max(norm1.length, norm2.length);
     };
 
-    // ==========  generateAISolution FUNCTION ==========
+    // ========== generateAISolution FUNCTION ==========
     const generateAISolution = async () => {
         if (!SETTINGS.enableAISolver) return;
         if (isAiGenerationInProgress) {
@@ -7807,7 +8312,7 @@ function mainCode() {
 
         const language = getSelectedLanguage();
         const problem = getProblemDescription();
-        const errorInfo = getErrorInfo();  // NEW: Check for errors
+        const errorInfo = getErrorInfo();
 
         if (!problem.title && !problem.description && !errorInfo.hasError) {
             notifyPopup('Could not find problem description on this page.');
@@ -7823,10 +8328,8 @@ function mainCode() {
             prompt = `${customSystemPrompt}${pageText}${FULLSCREEN_COPY_PROMPT}`.trim();
         }
 
-        // Helper: build full code by wrapping middle code with pre/post code
         const hasPrePost = problem.preCode || problem.postCode;
         const wrapWithPrePost = (middleCode) => {
-            // If includePrePostCode is disabled, include the pre/post code in the AI request
             if (!SETTINGS.includePrePostCode && hasPrePost) {
                 let full = '';
                 if (problem.preCode) full += problem.preCode + '\n';
@@ -7834,7 +8337,6 @@ function mainCode() {
                 if (problem.postCode) full += '\n' + problem.postCode;
                 return full;
             }
-            // If includePrePostCode is enabled, only send middle code to AI
             return middleCode;
         };
 
@@ -7842,13 +8344,13 @@ function mainCode() {
         if (!prompt && problem.isMFIB) {
             prompt = customSystemPrompt + `You are a ${language} expert solving a SkillRack "Fill In the Blanks" (MFIB) challenge.
 
-The code template below has [BLANK_0], [BLANK_1], etc. marking positions where text has been removed.
-Your job is to determine the exact text that belongs at each blank position so the program compiles and runs correctly.
+The code template below has [BLANK_0], [BLANK_1], etc. marking positions where code tokens have been removed.
+Determine the exact literal token that belongs at each blank position so the program compiles and passes all test cases.
 
 IMPORTANT RULES:
-- Each blank answer is the LITERAL text that goes directly into that position in the source code.
-- Include any necessary punctuation that is part of the expression (quotes, semicolons, operators).
-- Do NOT add text that already exists in the surrounding code (e.g. if the code already has '(' before the blank, do NOT add '(' in your answer).
+- Each blank answer is the LITERAL string that goes directly into that position.
+- Include necessary punctuation/operators/delimiters that are part of that blank.
+- Do NOT repeat syntax that already surrounds the blank.
 - Preserve correct ${language} syntax, data types, and case-sensitivity.
 
 PROBLEM: ${problem.title}
@@ -7859,22 +8361,58 @@ CODE TEMPLATE:
 ${problem.mfibTemplate}
 \`\`\`
 
-Respond with ONLY a JSON array where element [i] is the answer for [BLANK_i].
-No markdown fences. No explanations. No extra keys. Just the raw JSON array.
-
-Example: if template is: printf([BLANK_0]);
-  and the answer is the string "Hello", respond: ["\"Hello\""]
-
-Now provide answers:`;
+Respond with ONLY a valid JSON array of strings matching the blanks in order: ["ans0", "ans1", ...]
+No explanations. No markdown fences. Just the raw JSON array.`;
         }
-        // ========== Error fix mode ==========
-        else if (!prompt && errorInfo.hasError && errorInfo.currentCode) {
-            // When includePrePostCode is off, wrap current code with pre/post
+        // ========== Error fix mode: Hidden Test Case Failure ==========
+        else if (!prompt && errorInfo.hasError && errorInfo.errorType === 'hidden_test_failed' && errorInfo.currentCode) {
+            const effectiveCode = wrapWithPrePost(errorInfo.currentCode);
+            const stats = (errorInfo.passedCount || errorInfo.failedCount)
+                ? `Test Status: ${errorInfo.passedCount} Passed, ${errorInfo.failedCount} Failed.`
+                : 'Test Status: Sample test cases passed, but Private Hidden Test Cases FAILED.';
+
+            prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer fixing code for a SkillRack problem.
+${stats}
+
+The current code passes public sample test cases, but FAILS private hidden test cases!
+Your job is to identify the hidden flaw (integer overflow, TLE complexity, missing edge case, unconsumed newline, or rounding/format error) and output the completely corrected ${language} code.
+
+PROBLEM: ${problem.title}
+${problem.description}
+
+CURRENT CODE:
+\`\`\`${language.toLowerCase()}
+${effectiveCode}
+\`\`\`
+
+DIAGNOSTIC & FIXING CHECKLIST (Apply All):
+1. 64-BIT INTEGER OVERFLOW (MOST COMMON BUG):
+   - ${language === 'Java' ? 'Use long instead of int for all counters, sums, and accumulator variables. If values exceed 10^18, use BigInteger.' : 'Use long long instead of int for all accumulators, sums, products, combination counts, and array elements. Use (1LL * a * b) when multiplying.'}
+   - Check if any intermediate calculation overflows before being stored in a 64-bit variable.
+2. TIME COMPLEXITY & FAST I/O:
+   - Ensure the algorithm is O(N) or O(N log N) for N up to 10^5. Replace O(N^2) loops with frequency maps, prefix sums, binary search, or two pointers.
+   ${language === 'C++' || language === 'C++23' ? '- Add fast I/O: ios_base::sync_with_stdio(false); cin.tie(NULL);' : ''}
+   ${language === 'Python' ? '- Use sys.stdin.read().split() to parse all tokens at once. Avoid string concatenation in loops.' : ''}
+3. INPUT STREAM BUFFER HYGIENE:
+   ${language === 'C' ? '- In C, reading a string/char after reading an integer will fail due to leftover newline. Use scanf(" %c", &c) or scanf(" %[^\n]", s).' : ''}
+   ${language === 'C++' || language === 'C++23' ? '- In C++, use cin >> ws before getline(cin, s) to consume unread newlines.' : ''}
+   ${language === 'Java' ? '- In Java, call sc.nextLine() after sc.nextInt() before reading next string line. Class must be Hello.' : ''}
+4. CORNER & BOUNDARY CASES:
+   - Check N = 0, N = 1, single element arrays, empty strings, all elements duplicate, negative numbers, 0, sorted ascending vs descending.
+5. OUTPUT FORMATTING:
+   - Format floating point decimals to exact precision (e.g. %.2f) if specified.
+   - Do NOT print extra prompts or labels.
+
+Output ONLY the corrected, complete ${language} code:
+
+\`\`\`${language.toLowerCase()}`;
+        }
+        // ========== Error fix mode: Compilation Error ==========
+        else if (!prompt && errorInfo.hasError && errorInfo.errorType === 'compilation_error' && errorInfo.currentCode) {
             const effectiveCode = wrapWithPrePost(errorInfo.currentCode);
 
-            if (errorInfo.errorType === 'compilation_error') {
-                prompt = customSystemPrompt + `You are a senior competitive programmer solving a SkillRack problem.
-Fix the ${language} compilation error below. Output ONLY the corrected code, no explanations or comments.
+            prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer fixing a SkillRack compilation error.
+Output ONLY the corrected ${language} code, no explanations or comments.
 
 PROBLEM: ${problem.title}
 ${problem.description}
@@ -7888,16 +8426,19 @@ COMPILATION ERROR:
 ${errorInfo.compilationError}
 
 FIXING RULES:
-1. Fix the compilation error and return a working program.
-2. Keep input/output behavior compatible with the problem requirements.
-3. Do NOT add extra output or debug statements.
-${language.toLowerCase() === 'python' ? '4. If a function is defined (e.g. solve/main), make sure it is CALLED at the very end.' : ''}
+1. Fix all compiler syntax and type errors.
+2. Ensure data types use 64-bit integers (${language === 'Java' ? 'long' : 'long long'}) to prevent overflow.
+3. Keep input/output behavior 100% compliant with problem requirements.
+${language.toLowerCase() === 'python' ? '4. If a function is defined, ensure it is CALLED at the bottom of the script.' : ''}
 
 \`\`\`${language.toLowerCase()}`;
+        }
+        // ========== Error fix mode: Runtime Error ==========
+        else if (!prompt && errorInfo.hasError && errorInfo.errorType === 'runtime_error' && errorInfo.currentCode) {
+            const effectiveCode = wrapWithPrePost(errorInfo.currentCode);
 
-            } else if (errorInfo.errorType === 'runtime_error') {
-                prompt = customSystemPrompt + `You are a senior competitive programmer solving a SkillRack problem.
-Fix the ${language} runtime error below. Output ONLY the corrected code, no explanations or comments.
+            prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer fixing a SkillRack runtime crash.
+Output ONLY the corrected ${language} code, no explanations or comments.
 
 PROBLEM: ${problem.title}
 ${problem.description}
@@ -7907,160 +8448,142 @@ BUGGY CODE:
 ${effectiveCode}
 \`\`\`
 
-RUNTIME ERROR CONTEXT:
-Input:    ${errorInfo.input}
-Expected: ${errorInfo.expectedOutput}
-Got:      ${errorInfo.yourOutput || '(CRASH / no output)'}
+CRASH CONTEXT:
+Input:    ${errorInfo.input || '(Hidden / Standard input)'}
+Expected: ${errorInfo.expectedOutput || '(Valid output)'}
+Got:      ${errorInfo.yourOutput || '(CRASH / Segmentation Fault / TLE / Memory Limit)'}
 
 FIXING STEPS:
-1. Trace through the code with the given input.
-2. Identify the crash source: out-of-bounds access, null pointer, division by zero, stack overflow, etc.
-3. Fix the root cause without changing the correct parts of the logic.
+1. Trace potential causes: array out-of-bounds, division by zero, null pointer, recursion depth overflow, or stack overflow.
+2. Ensure array sizes handle maximum boundary constraints (e.g., N = 10^5).
+3. Use 64-bit data types (${language === 'Java' ? 'long' : 'long long'}).
+4. Return the complete, robust program.
 
 \`\`\`${language.toLowerCase()}`;
+        }
+        // ========== Error fix mode: Wrong Output ==========
+        else if (!prompt && errorInfo.hasError && errorInfo.currentCode) {
+            const effectiveCode = wrapWithPrePost(errorInfo.currentCode);
+            const isEmptyOutput = !errorInfo.yourOutput || errorInfo.yourOutput.trim() === '' || errorInfo.yourOutput.trim() === '&nbsp;';
 
-            } else if (errorInfo.errorType === 'wrong_output') {
-                const isEmptyOutput = !errorInfo.yourOutput || errorInfo.yourOutput.trim() === '' || errorInfo.yourOutput.trim() === '&nbsp;';
-
-                prompt = customSystemPrompt + `You are a senior competitive programmer solving a SkillRack problem.
-The program produces wrong output. Rewrite it so it passes all test cases.
-Output ONLY the corrected code, no explanations or comments.
+            prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer fixing a SkillRack problem with incorrect output.
+Output ONLY the corrected ${language} code, no explanations or comments.
 
 PROBLEM: ${problem.title}
 ${problem.description}
 
-CURRENT (WRONG) CODE:
+CURRENT CODE:
 \`\`\`${language.toLowerCase()}
 ${effectiveCode}
 \`\`\`
 
 FAILING TEST CASE:
-Input:    ${errorInfo.input}
-Expected: ${errorInfo.expectedOutput}
-Got:      ${errorInfo.yourOutput || '(EMPTY)'}
-${isEmptyOutput && language.toLowerCase() === 'python' ? '\nNOTE: Empty output likely means a function is defined but not called. Add a call at the END of the file.' : ''}
+Input:    ${errorInfo.input || '(Hidden input)'}
+Expected: ${errorInfo.expectedOutput || '(Expected output)'}
+Got:      ${errorInfo.yourOutput || '(EMPTY / WRONG)'}
+${isEmptyOutput && language.toLowerCase() === 'python' ? '\nNOTE: Output is empty. Ensure your top-level script executes or calls main().' : ''}
 
-DEBUGGING STRATEGY (follow in order):
-1. TRUST THE EXPECTED OUTPUT — it is the ground truth. If the problem description seems to say otherwise, ignore the description.
-2. Manually trace the current code with the given Input. Confirm it really produces the wrong output.
-3. Identify the bug category:
-   a. Wrong formula or arithmetic?
-   b. Wrong variable mapping / input order? (e.g., variables A,B,C,D assigned in wrong order)
-   c. Missing step or off-by-one?
-   d. Wrong operator or sign?
-   e. Pattern/series problem (reverse-engineer from expected output)?
-4. Fix the identified bug. Do NOT restructure the whole program unnecessarily.
-5. Verify mentally with the given test case before outputting.
+DEBUGGING STRATEGY:
+1. TRUST THE EXPECTED OUTPUT — it is absolute ground truth.
+2. Check for 64-bit integer overflow (${language === 'Java' ? 'use long' : 'use long long'}).
+3. Check for off-by-one errors (0-based vs 1-based indexing, <= vs <).
+4. Check input token ordering and string newline consumption.
+5. Check decimal place rounding and spacing formatting.
 
 \`\`\`${language.toLowerCase()}`;
-            }
         }
-        // ========== Normal mode (no error) ==========
+        // ========== Normal mode: SQL Problem ==========
+        else if (!prompt && language === 'SQL') {
+            prompt = customSystemPrompt + `You are a Database and SQL Expert solving a SkillRack SQL challenge.
+Write the exact SQL query required. Output ONLY the single-line SQL query.
+
+PROBLEM: ${problem.title}
+${problem.description}
+
+SQL RULES (STRICT):
+1. Output the ENTIRE SQL query on a SINGLE CONTINUOUS LINE. No line breaks anywhere.
+2. Do NOT wrap in markdown fences. Do NOT add explanations or comments.
+3. Use exact table names and column names from the problem statement and schema.
+4. Use standard SQL / MySQL dialect matching SkillRack's judge.
+5. Match column order, column aliases, JOIN conditions, WHERE filters, GROUP BY, and ORDER BY exactly as required by the sample output.
+6. Do NOT write CREATE TABLE or INSERT unless the statement explicitly requires "CREATE TABLE ... AS SELECT".
+
+SQL Solution:`;
+        }
+        // ========== Normal mode: Tutor Mode (Middle Code) ==========
         else if (!prompt && problem.isTutor) {
             if (SETTINGS.includePrePostCode) {
-                prompt = customSystemPrompt + `You are a senior competitive programmer solving a SkillRack tutor problem.
-Write ONLY the missing middle section of ${language} code. No imports, no main function, no comments.
+                prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer solving a SkillRack tutor problem.
+Write ONLY the missing middle section of ${language} code. No headers, no main wrapper, no comments.
 
 PROBLEM: ${problem.title}
 ${problem.description}
 
 RULES FOR TUTOR MODE:
 1. Variables declared in pre-code are already available — use them directly.
-2. Variables required by post-code must be computed and assigned.
-3. Write ONLY the middle logic; pre-code and post-code are already provided by the system.
-4. If the description conflicts with the sample output shown, trust the sample output.
+2. Variables/results required by post-code must be computed and assigned.
+3. Use 64-bit types (${language === 'Java' ? 'long' : 'long long'}) to prevent integer overflow on large test cases.
+4. Write ONLY the middle logic; pre-code and post-code are already provided.
 
 \`\`\`${language.toLowerCase()}`;
             } else {
-                prompt = customSystemPrompt + `You are a senior competitive programmer solving a SkillRack problem.
-Write a complete, correct ${language} program that passes ALL test cases.
+                prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer solving a SkillRack problem.
+Write a complete, optimal, and 100% correct ${language} program that passes ALL public and hidden test cases.
 Output ONLY the code, no explanations or comments.
+${language === 'Java' ? 'Class name must be: Hello\n' : ''}
 
 PROBLEM: ${problem.title}
 ${problem.description}
 
-SOLVING APPROACH:
-1. Carefully read all sample inputs and expected outputs given in the problem.
-2. Reverse-engineer the formula or pattern from the examples if the description is unclear.
-3. Handle all edge cases visible in the samples.
-4. Trust sample output over problem description if they conflict.
+REQUIREMENTS:
+1. Prevent Integer Overflow: Use ${language === 'Java' ? 'long' : 'long long'} for all accumulator variables, sums, products, and counters.
+2. Optimal Complexity: O(N) or O(N log N) for N <= 10^5 to prevent TLE.
+3. Handle all edge cases: N = 0, N = 1, negative numbers, all elements equal, empty strings.
+4. Match sample output formatting character-for-character.
 
 \`\`\`${language.toLowerCase()}`;
             }
-        } else if (!prompt && problem.isCodeTrack && hasPrePost) {
-            if (SETTINGS.includePrePostCode) {
-                prompt = customSystemPrompt + `You are a senior competitive programmer solving a SkillRack code-track problem.
-Write ONLY the missing middle ${language} code. No headers, no main declaration, no comments.
+        }
+        // ========== Normal mode: Code Track Mode (Middle Code) ==========
+        else if (!prompt && problem.isCodeTrack && hasPrePost && SETTINGS.includePrePostCode) {
+            prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer solving a SkillRack code-track problem.
+Write ONLY the missing middle ${language} code snippet. No duplicate headers, no duplicate main function.
 
 PROBLEM: ${problem.title}
 ${problem.description}
 
-RULES FOR CODE-TRACK MODE:
-1. Your code will be inserted DIRECTLY into the gap between pre-code and post-code. It must connect perfectly.
-2. Pre-code and post-code are already provided by the system — do NOT repeat them.
-3. If the post-code starts with a brace '{' or an 'else', your middle code must provide the corresponding 'if' or statement.
-4. Use variables/functions from pre-code. Produce variables/results required by post-code.
-5. Trust sample output over problem description if they conflict.
+RULES:
+1. Your code is inserted directly between pre-code and post-code.
+2. Use variables and inputs from pre-code, produce outputs/variables required by post-code.
+3. Prevent overflow with 64-bit types.
 
 \`\`\`${language.toLowerCase()}`;
-            } else {
-                const ioHint = (language === 'C++' || language === 'C++23') ? 'Use getline() for strings with spaces.' :
-                    (language === 'C') ? 'Use fgets() for strings with spaces.' : '';
+        }
+        // ========== Normal mode: Standard Full Code Problem ==========
+        else if (!prompt) {
+            const ioHint = (language === 'C++' || language === 'C++23') ?
+                'Enable fast I/O (ios_base::sync_with_stdio(false); cin.tie(NULL);). Use cin >> ws before getline(cin, str).' :
+                (language === 'C') ?
+                    'Consume newlines after reading numbers using scanf(" %c", &c) or scanf(" %[^\n]", s).' :
+                    (language === 'Python') ?
+                        'Use sys.stdin.read().split() for robust whitespace-agnostic token parsing.' :
+                        (language === 'Java') ?
+                            'Class name must be Hello. Consume newline with sc.nextLine() after sc.nextInt().' : '';
 
-                prompt = customSystemPrompt + `You are a senior competitive programmer solving a SkillRack problem.
-Write a complete, correct ${language} program that passes ALL test cases.
+            prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer solving a SkillRack challenge.
+Write a complete, optimal, and robust ${language} program that passes ALL public sample cases and ALL private hidden test cases.
 Output ONLY the code, no explanations or comments.
+${language === 'Java' ? 'Class name must be: Hello\n' : ''}
 
 PROBLEM: ${problem.title}
 ${problem.description}
-${ioHint ? '\nI/O HINT: ' + ioHint : ''}
+${ioHint ? '\nI/O GUIDANCE:\n' + ioHint : ''}
 
-SOLVING APPROACH:
-1. Carefully read all sample inputs and expected outputs given in the problem.
-2. Reverse-engineer the formula or pattern from the examples if the description is unclear.
-3. Handle all edge cases visible in the samples.
-4. Trust sample output over problem description if they conflict.
-
-\`\`\`${language.toLowerCase()}`;
-            }
-        } else if (!prompt && problem.isCodeTrack) {
-            const ioHint = (language === 'C++' || language === 'C++23') ? 'Use getline() for strings with spaces.' :
-                (language === 'C') ? 'Use fgets() for strings with spaces.' : '';
-
-            prompt = customSystemPrompt + `You are a senior competitive programmer solving a SkillRack problem.
-Write a complete, correct ${language} program that passes ALL test cases.
-Output ONLY the code, no explanations or comments.
-
-PROBLEM: ${problem.title}
-${problem.description}
-${ioHint ? '\nI/O HINT: ' + ioHint : ''}
-
-SOLVING APPROACH:
-1. Carefully read all sample inputs and expected outputs given in the problem.
-2. Reverse-engineer the formula or pattern from the examples if the description is unclear.
-3. Handle all edge cases visible in the samples.
-4. Trust sample output over problem description if they conflict.
-
-\`\`\`${language.toLowerCase()}`;
-        } else if (!prompt) {
-            const ioHint = (language === 'C++' || language === 'C++23') ? 'Use getline() for strings with spaces.' :
-                (language === 'C') ? 'Use fgets() for strings with spaces.' : '';
-
-            prompt = customSystemPrompt + `You are a senior competitive programmer solving a SkillRack problem.
-Write a complete, correct ${language} program that passes ALL test cases.
-Output ONLY the code, no explanations or comments.
-${language === 'Java' ? '\nClass name must be: Hello' : ''}
-
-PROBLEM: ${problem.title}
-${problem.description}
-${ioHint ? '\nI/O HINT: ' + ioHint : ''}
-
-SOLVING APPROACH:
-1. Carefully read all sample inputs and expected outputs given in the problem.
-2. Reverse-engineer the formula or pattern from the examples if the description is unclear.
-3. Pay attention to input variable order — SkillRack problems sometimes swap variable meanings.
-4. Handle all edge cases visible in the samples.
-5. Trust sample output over problem description if they conflict.
+CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
+1. PREVENT 64-BIT INTEGER OVERFLOW: Use ${language === 'Java' ? 'long' : 'long long'} for all sums, products, counters, coordinates, and intermediate accumulators. Use 1LL for multipliers.
+2. OPTIMAL TIME COMPLEXITY: Target O(N) or O(N log N) when N <= 10^5 to prevent Time Limit Exceeded (TLE).
+3. HANDLE ALL EDGE CASES: Test N = 1, N = 0, negative values, all elements identical, sorted vs reverse-sorted arrays, single character strings, empty inputs.
+4. EXACT OUTPUT MATCH: Output only what is requested with exact spacing and decimal precision.
 
 \`\`\`${language.toLowerCase()}`;
         }
@@ -8077,13 +8600,13 @@ SOLVING APPROACH:
             const requestFromProvider = async (promptText) => {
                 switch (SETTINGS.aiProvider) {
                     case 'gemini':
-                        return await generateWithGemini(promptText);
+                        return await generateWithGemini(promptText, GRANDMASTER_SYSTEM_PROMPT);
                     case 'openrouter':
-                        return await generateWithOpenRouter(promptText);
+                        return await generateWithOpenRouter(promptText, GRANDMASTER_SYSTEM_PROMPT);
                     case 'puter':
-                        return await generateWithPuter(promptText);
+                        return await generateWithPuter(promptText, GRANDMASTER_SYSTEM_PROMPT);
                     case 'openai':
-                        return await generateWithOpenAI(promptText);
+                        return await generateWithOpenAI(promptText, GRANDMASTER_SYSTEM_PROMPT);
                     case 'g4f':
                         return await generateWithG4F(promptText);
                     case 'duckduckgo':
@@ -8092,6 +8615,8 @@ SOLVING APPROACH:
                         return await generateWithYuppBridge(promptText);
                     case 'nvidia':
                         return await generateWithNvidia(promptText);
+                    case 'omniroute':
+                        return await generateWithOmniRoute(promptText);
                     default:
                         throw new Error(`Unknown AI provider: ${SETTINGS.aiProvider}`);
                 }
@@ -8112,14 +8637,11 @@ SOLVING APPROACH:
                             answers = response.split('\n').map(l => l.replace(/^[-\s*"\']+|["\',\s*]+$/g, '')).filter(Boolean);
                         }
                     } else if (problem.blankInputs.length === 1) {
-                        // Fallback when only 1 blank and no JSON array: treat the extracted code block (or whole text) as the single answer
                         answers = [extractCode(response, language)];
                     } else {
-                        // Fallback for multiple blanks: split by line and clean list markers
                         answers = response.split('\n')
                             .map(l => {
                                 let clean = l.trim();
-                                // Strip list markers (e.g. "- ", "* ", "1. ")
                                 clean = clean.replace(/^[-*•#]\s+/, '').replace(/^\d+\.\s*/, '').trim();
                                 return clean;
                             })
@@ -8129,8 +8651,6 @@ SOLVING APPROACH:
 
                 if (Array.isArray(answers) && answers.length > 0) {
                     problem.blankInputs.forEach((input, index) => {
-                        // Use the answer as-is — the AI already returns the exact
-                        // text for the blank (may include quotes, semicolons, etc.)
                         const val = answers[index] !== undefined ? String(answers[index]) : '';
                         input.value = val;
                         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -8139,7 +8659,6 @@ SOLVING APPROACH:
                     });
                     console.log('[AutoSolver] MFIB blanks filled successfully');
 
-                    // Sync reconstructed code to raw textarea if needed
                     const $ = window.jQuery || window.$;
                     if ($ && $("#txtCode").length) {
                         const fullCode = reconstructFullMFIBCode(problem.mfibTemplate, answers);
@@ -8151,49 +8670,40 @@ SOLVING APPROACH:
             } else {
                 let code = extractCode(response, language);
 
-                // Validate code is not empty
-                if (!code || code.trim().length < 10) {
+                if (!code || code.trim().length < 5) {
                     notifyPopup('Failed to extract valid code from AI response. Please try again.');
                     return;
                 }
 
-                // Check if code is similar to existing code
+                // Check if code is identical to existing code
                 let existingCode = '';
                 if (window.txtCode && window.txtCode.getSession) {
                     existingCode = window.txtCode.getSession().getValue();
                 }
 
                 if (existingCode && calculateCodeSimilarity(code, existingCode) > 0.99) {
-                    console.warn('Generated code is too similar to existing code, retrying with lenient prompt');
+                    console.warn('Generated code is too similar to existing code, retrying with distinct prompt');
 
-                    const lenientRetryPrompt = `${prompt}\n\nRETRY INSTRUCTION:\nThe previous answer was identical to the existing code. Provide a DIFFERENT corrected implementation that still follows required input/output format and solves the problem.`;
+                    const lenientRetryPrompt = `${prompt}\n\nRETRY INSTRUCTION:\nThe previous answer was identical to the existing buggy code. Provide an ALTERNATIVE corrected implementation fixing integer overflow (using 64-bit long long/long) and edge cases.`;
 
                     response = await requestFromProvider(lenientRetryPrompt);
                     code = extractCode(response, language);
 
-                    if (!code || code.trim().length < 10) {
+                    if (!code || code.trim().length < 5) {
                         notifyPopup('Failed to extract valid code from AI retry response. Please try again.');
-                        return;
-                    }
-
-                    if (calculateCodeSimilarity(code, existingCode) > 0.99) {
-                        notifyPopup('⚠️ AI returned code too similar to existing code even after retry. Please try again.');
                         return;
                     }
                 }
 
                 if (code && window.txtCode) {
                     if (typeof window.txtCode.getSession === 'function') {
-                        // Insert the code into ACE editor
                         window.txtCode.getSession().setValue(code);
                     } else if ('value' in window.txtCode) {
-                        // Fallback for raw textarea element
                         window.txtCode.value = code;
                         window.txtCode.dispatchEvent(new Event('input', { bubbles: true }));
                         window.txtCode.dispatchEvent(new Event('change', { bubbles: true }));
                     }
 
-                    // Sync with hidden textarea element in DOM
                     const $ = window.jQuery || window.$;
                     if ($ && $("#txtCode").length) {
                         $("#txtCode").val(code);
@@ -8209,7 +8719,6 @@ SOLVING APPROACH:
             notifyPopup('Error: ' + error.message);
         } finally {
             isAiGenerationInProgress = false;
-            // Reset button
             if (aiBtn) {
                 aiBtn.disabled = false;
                 aiBtn.innerHTML = getAiButtonMarkup('AI Solution');
@@ -8509,6 +9018,14 @@ SOLVING APPROACH:
             const panelContent = document.getElementById('errormsg_content') || errEl;
             const rawError = (panelContent?.textContent || errEl?.textContent || '').trim();
             const cards = readResultCards();
+
+            if (resultType === 'hidden_failed' || (resultType === 'failed' && (rawError.toLowerCase().includes('private') || rawError.toLowerCase().includes('hidden')))) {
+                return {
+                    retryType: 'hidden_test_failed',
+                    label: 'hidden test case failure',
+                    contextText: rawError || 'Private (Hidden) Test Cases Failed.'
+                };
+            }
 
             if (resultType === 'compilation_error') {
                 const lines = rawError.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 10);
@@ -8837,18 +9354,31 @@ SOLVING APPROACH:
                         return 'success';
                     }
 
-                    // Standard success/error elements
-                    if (hasText('#successmsg', 'passed') || hasText('.ui-panel-title', 'passed')) return 'success';
+                    // Check error elements FIRST to avoid "9 Passed 3 Failed" matching "passed"
+                    const errPanelText = ((document.querySelector('#errormsg')?.innerText || '') + ' ' + (document.querySelector('#errormsg_content')?.innerText || '')).toLowerCase();
+                    if (errPanelText.includes('private') || errPanelText.includes('hidden') || errPanelText.includes('did not pass') || errPanelText.includes('failed') || (errPanelText.includes('passed') && errPanelText.includes('failed'))) {
+                        if (errPanelText.includes('error:') || errPanelText.includes('compilation')) return 'compilation_error';
+                        if (errPanelText.includes('segmentation') || errPanelText.includes('runtime')) return 'runtime_error';
+                        if (errPanelText.includes('private') || errPanelText.includes('hidden')) return 'hidden_failed';
+                        return 'failed';
+                    }
+
                     if (hasText('#errormsg', 'error:') || hasText('#errormsg', 'compilation')) return 'compilation_error';
                     if (hasText('#errormsg', 'segmentation') || hasText('#errormsg', 'runtime')) return 'runtime_error';
                     if (hasText('#errormsg', 'did not pass') || hasText('#errormsg', 'wrong') || hasText('#errormsg', 'execution')) return 'failed';
+
+                    // Standard success elements
+                    if (hasText('#successmsg', 'passed') || hasText('.ui-panel-title', 'passed')) return 'success';
 
                     // PrimeFaces growl messages (fallback when errormsg is absent)
                     const growlItems = document.querySelectorAll('.ui-growl-item-container, .ui-growl-item');
                     for (const g of growlItems) {
                         const gt = (g.innerText || '').toLowerCase();
+                        if (gt.includes('error') || gt.includes('fail') || gt.includes('wrong') || gt.includes('private') || gt.includes('hidden')) {
+                            if (gt.includes('private') || gt.includes('hidden')) return 'hidden_failed';
+                            return 'failed';
+                        }
                         if (gt.includes('pass') || gt.includes('success') || gt.includes('correct')) return 'success';
-                        if (gt.includes('error') || gt.includes('fail') || gt.includes('wrong')) return 'failed';
                     }
 
                     await sleep(100);
@@ -9290,9 +9820,41 @@ SOLVING APPROACH:
     // 12. FIND INCOMPLETE MODULE
     // Scans viewsolved.xhtml for started-but-incomplete parts,
     // navigates to the lowest-ratio one, optionally triggers AutoSolver.
+    // ALSO includes Language Pack Scanner (from incomplete-questions-module.js)
     // ============================================
     const FindIncompleteModule = (function () {
         'use strict';
+
+        // ── Language Pack Constants (from incomplete-questions-module.js) ──────
+        const LANGUAGE_PACKS = {
+            0: { name: 'C', icon: '🅲' },
+            1: { name: 'Java', icon: '☕' },
+            2: { name: 'Python', icon: '🐍' },
+            3: { name: 'C++', icon: '➕' },
+            4: { name: 'SQL', icon: '🗄️' },
+            5: { name: 'DS-C', icon: '📊' },
+            6: { name: 'DS-Java', icon: '📈' }
+        };
+
+        const BASE_URL = 'https://skillrack.com/faces/candidate/codeprogramgroup.xhtml?gt=CODETUTOR';
+        const CODENV_URL = 'https://skillrack.com/faces/candidate/codeprogram.xhtml';
+
+        // ── Scan Mode ────────────────────────────────────────────────────────
+        const SCAN_MODE = Object.freeze({
+            TRACKS: 'tracks',        // Original: scans viewsolved.xhtml for incomplete tracks
+            LANG_PACKS: 'langPacks', // JS port: scans language packs via GM_xmlhttpRequest
+            BRIDGE_API: 'bridgeApi'  // Python tools via local bridge server
+        });
+        let currentScanMode = SCAN_MODE.TRACKS;
+
+        // ── Bridge API Config ────────────────────────────────────────────────
+        const BRIDGE_API_URL = 'http://localhost:8000';
+        const PACK_NAMES = ['C', 'Java', 'Python', 'C++', 'SQL', 'DS-C', 'DS-Java'];
+
+        // ── Auto Solver State ────────────────────────────────────────────────
+        let autoSolverEnabled = false;
+        let autoSolverQueue = [];
+        let autoSolverCurrentIndex = -1;
 
         // ── State Machine ────────────────────────────────────────────────────
         const STATE = Object.freeze({
@@ -9308,6 +9870,11 @@ SOLVING APPROACH:
         let cachedTrackData = null; // Caching: map of Level -> Track -> parts array
         let activeSolvedCounts = null; // Caching: current solved counts for comparison
 
+        // ── Language Pack State ──────────────────────────────────────────────
+        let langPackResults = {}; // Results from language pack scanning
+        let langPackCacheTimestamp = null;
+        let langPackCachedData = null;
+
         // ── JSF ViewState & Sequential Request Queue ─────────────────────────
         let currentViewState = null;
         let queuePromise = Promise.resolve();
@@ -9319,7 +9886,7 @@ SOLVING APPROACH:
                 () => fn(),
                 () => fn()
             );
-            queuePromise = nextLink.catch(() => {});
+            queuePromise = nextLink.catch(() => { });
             return nextLink;
         }
 
@@ -9390,13 +9957,13 @@ SOLVING APPROACH:
                     if (freshState) {
                         currentViewState = freshState;
                         console.log("Got fresh ViewState. Retrying original request...");
-                        
+
                         if (options.method === 'POST') {
                             let bodyParams = new URLSearchParams(options.body || '');
                             bodyParams.set('jakarta.faces.ViewState', freshState);
                             options.body = bodyParams.toString();
                         }
-                        
+
                         return queuedFetch(url, options, retries, delay);
                     }
                     throw new Error("JSF session expired and could not be restored.");
@@ -9410,7 +9977,7 @@ SOLVING APPROACH:
             const signal = activeController ? activeController.signal : null;
             const controller = new AbortController();
             const id = setTimeout(() => controller.abort(), timeout);
-            
+
             const cleanupObj = {};
             const combinedSignal = signal ? createCombinedSignal([signal, controller.signal], cleanupObj) : controller.signal;
 
@@ -9437,11 +10004,11 @@ SOLVING APPROACH:
             const abort = () => ctrl.abort();
             const activeSignals = signals.filter(Boolean);
             activeSignals.forEach(s => s.addEventListener('abort', abort));
-            
+
             cleanupObj.cleanup = () => {
                 activeSignals.forEach(s => s.removeEventListener('abort', abort));
             };
-            
+
             return ctrl.signal;
         }
 
@@ -9456,15 +10023,15 @@ SOLVING APPROACH:
                         }
                     }
                 }
-            } catch (_) {}
+            } catch (_) { }
             try {
                 const doc = new DOMParser().parseFromString(html, 'text/html');
                 const el = doc.querySelector('input[name="jakarta.faces.ViewState"]');
                 if (el) return el.value;
-            } catch (_) {}
+            } catch (_) { }
             const m = html.match(/jakarta\.faces\.ViewState.*?value="([^"]+)"/) || html.match(/value="([^"]+)".*?jakarta\.faces\.ViewState/);
             if (m) return m[1];
-            
+
             const xmlMatch = html.match(/<update[^>]*id="jakarta\.faces\.ViewState"[^>]*><!\[CDATA\[([^\]]+)\]\]><\/update>/) || html.match(/id="jakarta\.faces\.ViewState"[^>]*><!\[CDATA\[([^\]]+)\]\]>/);
             return xmlMatch ? xmlMatch[1] : null;
         }
@@ -9476,17 +10043,17 @@ SOLVING APPROACH:
                     if (typeof GM_getValue !== 'undefined') {
                         return GM_getValue(key, def);
                     }
-                } catch (_) {}
+                } catch (_) { }
                 const val = localStorage.getItem(key);
                 return val !== null ? val : def;
             },
             setValue(key, value) {
                 try {
-                    if (typeof GM_setValue !== 'undefined') {
+                    if (typeof GM_getValue !== 'undefined') {
                         GM_setValue(key, value);
                         return;
                     }
-                } catch (_) {}
+                } catch (_) { }
                 localStorage.setItem(key, value);
             },
             deleteValue(key) {
@@ -9495,10 +10062,233 @@ SOLVING APPROACH:
                         GM_deleteValue(key);
                         return;
                     }
-                } catch (_) {}
+                } catch (_) { }
                 localStorage.removeItem(key);
             }
         };
+
+        // ── Language Pack Scanning Logic (from incomplete-questions-module.js) ──
+        // GM_xmlhttpRequest wrapper for httpOnly cookie support
+        function gmFetch(url, options = {}) {
+            return new Promise((resolve, reject) => {
+                const requestId = Math.random().toString(36).substr(2, 9);
+
+                const handleMessage = (event) => {
+                    if (event.data && event.data.type === 'GM_XHR_RESPONSE' && event.data.id === requestId) {
+                        window.removeEventListener('message', handleMessage);
+                        if (event.data.error) {
+                            reject(new Error(event.data.error));
+                        } else {
+                            resolve({
+                                ok: event.data.status >= 200 && event.data.status < 300,
+                                status: event.data.status,
+                                statusText: event.data.statusText,
+                                responseText: event.data.responseText,
+                                responseHeaders: event.data.responseHeaders
+                            });
+                        }
+                    }
+                };
+
+                window.addEventListener('message', handleMessage);
+
+                window.postMessage({
+                    type: 'GM_XHR_REQUEST',
+                    id: requestId,
+                    options: {
+                        method: options.method || 'GET',
+                        url: url,
+                        headers: options.headers || {},
+                        data: options.body || options.data
+                    }
+                }, '*');
+
+                // Timeout
+                setTimeout(() => {
+                    window.removeEventListener('message', handleMessage);
+                    reject(new Error('Request timeout'));
+                }, 30000);
+            });
+        }
+
+        function extractViewStateLangPack(html, formId = null) {
+            if (!html) return null;
+
+            if (formId) {
+                const formPos = html.indexOf(`id="${formId}"`);
+                if (formPos !== -1) {
+                    html = html.substring(formPos);
+                }
+            }
+
+            const match = html.match(/name="jakarta\.faces\.ViewState"[^>]*value="([^"]*)"/);
+            return match ? match[1] : null;
+        }
+
+        async function openPack(packIndex) {
+            // Get base page
+            let html = await gmFetch(BASE_URL);
+            let viewState = extractViewStateLangPack(html, 'pkglistform');
+
+            if (!viewState) {
+                throw new Error('Could not extract ViewState');
+            }
+
+            // POST pack button
+            const formData = {
+                'pkglistform_SUBMIT': '1',
+                [`pkglistform:cttbl:${packIndex}:j_id_41`]: `pkglistform:cttbl:${packIndex}:j_id_41`,
+                'jakarta.faces.ViewState': viewState
+            };
+
+            html = await gmFetch(BASE_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                data: new URLSearchParams(formData).toString()
+            });
+
+            if (html.includes('Expired') || html.length < 5000) {
+                throw new Error('Failed to open pack - session may be expired');
+            }
+
+            return html;
+        }
+
+        function extractSubChallenges(html) {
+            const subChallenges = [];
+            const regex = /id="pkglistform:j_id_49:(\d+):j_id_4h"/g;
+            let match;
+
+            while ((match = regex.exec(html)) !== null) {
+                const sidx = parseInt(match[1]);
+                const start = Math.max(0, match.index - 1200);
+                const segment = html.substring(start, match.index);
+
+                const nameMatch = segment.match(/<div class="ui header black">([^<]+)<\/div>/);
+                const name = nameMatch ? nameMatch[1].trim() : '?';
+
+                subChallenges.push({ sidx, name });
+            }
+
+            return subChallenges.sort((a, b) => a.sidx - b.sidx);
+        }
+
+        async function clickSubChallenge(html, sidx) {
+            const viewState = extractViewStateLangPack(html, 'pkglistform');
+
+            const formData = {
+                'pkglistform_SUBMIT': '1',
+                [`pkglistform:j_id_49:${sidx}:j_id_4h`]: `pkglistform:j_id_49:${sidx}:j_id_4h`,
+                'jakarta.faces.ViewState': viewState
+            };
+
+            return gmFetch(BASE_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                data: new URLSearchParams(formData).toString()
+            });
+        }
+
+        function extractPartCards(html) {
+            const parts = [];
+            const regex = /<button id="cttbl:(\d+):j_id_4u"/g;
+            let match;
+
+            while ((match = regex.exec(html)) !== null) {
+                const row = parseInt(match[1]);
+                const start = Math.max(0, match.index - 1800);
+                const segment = html.substring(start, match.index);
+
+                const nameMatch = segment.match(/<b>([^<]+)<\/b>/);
+                const name = nameMatch ? nameMatch[1].trim() : '?';
+
+                parts.push({ row, name });
+            }
+
+            return parts.sort((a, b) => a.row - b.row);
+        }
+
+        async function clickPart(html, row) {
+            const viewState = extractViewStateLangPack(html, 'codetracks');
+
+            const formData = {
+                'codetracks_SUBMIT': '1',
+                [`cttbl:${row}:j_id_4u`]: `cttbl:${row}:j_id_4u`,
+                'jakarta.faces.ViewState': viewState
+            };
+
+            return gmFetch(CODENV_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                data: new URLSearchParams(formData).toString()
+            });
+        }
+
+        function extractIncompleteProblems(html) {
+            const problems = [];
+            const regex = /<b>([^<]*?)\s*\(Id-(\d+)\)/g;
+            let match;
+
+            while ((match = regex.exec(html)) !== null) {
+                const name = match[1].trim();
+                const id = match[2];
+                const segment = html.substring(match.index, match.index + 1200);
+
+                const rowMatch = segment.match(/id="pctbl:(\d+):j_id_5w"/);
+                if (!rowMatch) continue;
+
+                const row = parseInt(rowMatch[1]);
+                problems.push({ row, id, name });
+            }
+
+            return problems.sort((a, b) => a.row - b.row);
+        }
+
+        async function scanPackForIncomplete(packIndex, statusCallback) {
+            statusCallback(`Scanning ${LANGUAGE_PACKS[packIndex].name} pack...`);
+
+            let packHtml = await openPack(packIndex);
+            const subChallenges = extractSubChallenges(packHtml);
+
+            statusCallback(`Found ${subChallenges.length} sections in ${LANGUAGE_PACKS[packIndex].name}`);
+
+            const results = {};
+
+            for (let i = 0; i < subChallenges.length; i++) {
+                const sub = subChallenges[i];
+                statusCallback(`[${i + 1}/${subChallenges.length}] ${sub.name.substring(0, 40)}...`);
+
+                try {
+                    const subHtml = await clickSubChallenge(packHtml, sub.sidx);
+                    const parts = extractPartCards(subHtml);
+
+                    results[sub.name] = {};
+
+                    for (const part of parts) {
+                        const partHtml = await clickPart(subHtml, part.row);
+                        const problems = extractIncompleteProblems(partHtml);
+
+                        if (problems.length > 0) {
+                            results[sub.name][part.name] = problems;
+                        }
+
+                        await sleep(200);
+                    }
+
+                } catch (err) {
+                    console.error(`Error scanning ${sub.name}:`, err);
+                }
+
+                // Refresh pack HTML (ViewState expires after use)
+                packHtml = await openPack(packIndex);
+            }
+
+            return results;
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
 
         // ── Daily-skip patterns ──────────────────────────────────────────────
         const SKIP_PATTERNS = [/daily\s*challenge/i, /daily\s*test/i, /daily\s*quiz/i];
@@ -9515,8 +10305,8 @@ SOLVING APPROACH:
             }
             const doc = new DOMParser().parseFromString(tableHtml, 'text/html');
             const tbody = doc.getElementById('solcnt:tbl_data') ||
-                          doc.querySelector('[id$="tbl_data"]') ||
-                          doc.querySelector('.ui-datatable-data');
+                doc.querySelector('[id$="tbl_data"]') ||
+                doc.querySelector('.ui-datatable-data');
             if (!tbody) return [];
 
             // Row count verification
@@ -9683,7 +10473,7 @@ SOLVING APPROACH:
             }
 
             console.log(`ensureServerAt: Path mismatch. Resetting and navigating to target path of length ${targetPath.length}`);
-            
+
             // 1. Reset state by GET request to levelUrl
             let html = await queuedFetch(levelUrl, { method: 'GET' });
             let freshState = extractViewState(html);
@@ -9722,7 +10512,7 @@ SOLVING APPROACH:
         function getCachedTrackIfUnchanged(levelName, trackName, solvedCounts) {
             if (!cachedTrackData || !cachedTrackData[levelName] || !cachedTrackData[levelName][trackName]) return null;
             const parts = cachedTrackData[levelName][trackName];
-            
+
             // Verify if all parts in cache match fresh solvedCounts
             for (const part of parts) {
                 const fresh = matchSolvedInfo(part.partName, solvedCounts);
@@ -9768,7 +10558,7 @@ SOLVING APPROACH:
                 // Entry page of the level
                 html = await queuedFetch(url, { method: 'GET' });
                 thisPageState = extractViewState(html);
-                
+
                 // Clear any previous state tracking for new level
                 activeServerLevelUrl = levelUrl;
                 currentServerPath = [];
@@ -9796,7 +10586,7 @@ SOLVING APPROACH:
 
                 const txt = card.textContent || '';
                 const isPart = /challenges\s*count/i.test(txt) || CHILD_PART_REGEX.test(name);
-                
+
                 if (isPart) {
                     const clickTarget = card.querySelector('button, input[type="submit"], input[type="button"], a');
                     if (clickTarget) {
@@ -9831,8 +10621,8 @@ SOLVING APPROACH:
             if (partCards.length > 0) {
                 return partCards.map(c => ({
                     partName: c.partName,
-                    buttonPath: [...buttonPath, c.type === 'POST' ? 
-                        { type: 'POST', name: c.partName, btnName: c.btnName } : 
+                    buttonPath: [...buttonPath, c.type === 'POST' ?
+                        { type: 'POST', name: c.partName, btnName: c.btnName } :
                         { type: 'LINK', name: c.partName, href: c.href }
                     ],
                     totalCount: c.totalCount,
@@ -9882,8 +10672,8 @@ SOLVING APPROACH:
             if (partRows.length > 0) {
                 return partRows.map(r => ({
                     partName: r.partName,
-                    buttonPath: [...buttonPath, r.type === 'POST' ? 
-                        { type: 'POST', name: r.partName, btnName: r.btnName } : 
+                    buttonPath: [...buttonPath, r.type === 'POST' ?
+                        { type: 'POST', name: r.partName, btnName: r.btnName } :
                         { type: 'LINK', name: r.partName, href: r.href }
                     ],
                     totalCount: r.totalCount,
@@ -10049,10 +10839,14 @@ SOLVING APPROACH:
         }
 
         async function runFullCrawl() {
+            if (currentScanMode === SCAN_MODE.LANG_PACKS) {
+                return runLanguagePackScan();
+            }
+
             if (currentState === STATE.SCANNING) return;
             setState(STATE.SCANNING);
             visitedPaths.clear(); // Bug fix: reset visited set for each fresh crawl
-            
+
             showStatus('Fetching solved counts...', '📊');
             renderScanningState();
             updateLoadingMessage('Fetching solved counts...');
@@ -10133,7 +10927,7 @@ SOLVING APPROACH:
                 setState(STATE.IDLE);
                 showStatus('Scan completed! 🎉', '✅');
                 setTimeout(hideStatus, 3000);
-                
+
                 if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
                     renderList(allParts);
                 }
@@ -10155,6 +10949,606 @@ SOLVING APPROACH:
             }
         }
 
+        // ── Bridge API Scan (Python tools via local server) ────────────────────
+        async function runBridgeApiScan() {
+            if (currentState === STATE.SCANNING) return;
+            setState(STATE.SCANNING);
+
+            showStatus('Starting bridge API scan...', '🔌');
+            renderScanningState();
+            updateLoadingMessage('Connecting to bridge server...');
+
+            activeController = new AbortController();
+
+            try {
+                let allIncomplete = {};
+                let totalIncomplete = 0;
+
+                // Check bridge server health first
+                try {
+                    const healthRes = await fetchWithTimeout(`${BRIDGE_API_URL}/health`, { method: 'GET' });
+                    const health = JSON.parse(healthRes);
+                    if (!health.status || health.status !== 'ok') {
+                        throw new Error('Bridge server not healthy');
+                    }
+                } catch (err) {
+                    throw new Error('Bridge server not running. Start it with: python bridge_server.py');
+                }
+
+                // Check cookie status
+                try {
+                    const cookieRes = await fetchWithTimeout(`${BRIDGE_API_URL}/cookie/status`, { method: 'GET' });
+                    const cookieStatus = JSON.parse(cookieRes);
+                    if (!cookieStatus.has_cookie) {
+                        throw new Error('No cookie found in bridge server. Add cookie to tools/cookie.txt');
+                    }
+                } catch (err) {
+                    throw new Error('Cookie check failed: ' + err.message);
+                }
+
+                // Enumerate all packs
+                for (let packIndex = 0; packIndex <= 6; packIndex++) {
+                    const packName = PACK_NAMES[packIndex];
+                    updateLoadingMessage(`Enumerating ${packName}...`);
+                    showStatus(`Enumerating ${packName}...`, '🔌');
+
+                    try {
+                        const enumRes = await fetchWithTimeout(`${BRIDGE_API_URL}/enum`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ pack_index: packIndex })
+                        });
+                        const enumData = JSON.parse(enumRes);
+
+                        if (!enumData.success) {
+                            console.warn(`Enum failed for ${packName}:`, enumData.error);
+                            continue;
+                        }
+
+                        if (enumData.total_problems === 0) {
+                            continue;
+                        }
+
+                        // Fetch statements for this pack
+                        updateLoadingMessage(`Fetching statements for ${packName}...`);
+                        showStatus(`Fetching statements for ${packName}...`, '🔌');
+
+                        const fetchRes = await fetchWithTimeout(`${BRIDGE_API_URL}/fetch`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                enum_file: enumData.data ? JSON.stringify(enumData.data) : '',
+                                pack_index: packIndex
+                            })
+                        });
+                        const fetchData = JSON.parse(fetchRes);
+
+                        if (!fetchData.success || !fetchData.data) {
+                            console.warn(`Fetch failed for ${packName}:`, fetchData.error);
+                            continue;
+                        }
+
+                        // Process results - extract incomplete problems
+                        const statements = fetchData.data;
+                        for (const subName in statements) {
+                            const parts = statements[subName];
+                            for (const partName in parts) {
+                                const problems = parts[partName];
+                                for (const problem of problems) {
+                                    // Only add incomplete problems (not solved)
+                                    if (!problem.solved && problem.id) {
+                                        if (!allIncomplete[packName]) allIncomplete[packName] = {};
+                                        if (!allIncomplete[packName][subName]) allIncomplete[packName][subName] = {};
+                                        if (!allIncomplete[packName][subName][partName]) allIncomplete[packName][subName][partName] = [];
+
+                                        allIncomplete[packName][subName][partName].push({
+                                            id: problem.id,
+                                            name: problem.name || `Problem ${problem.id}`,
+                                            row: problem.row || 0
+                                        });
+                                        totalIncomplete++;
+                                    }
+                                }
+                            }
+                        }
+
+                    } catch (err) {
+                        console.error(`Failed to scan ${packName}:`, err);
+                        await sleep(500);
+                    }
+                }
+
+                langPackResults = allIncomplete;
+                langPackCacheTimestamp = Date.now();
+                langPackCachedData = { ...langPackResults };
+
+                // Save to storage
+                const bridgeCacheData = {
+                    results: langPackResults,
+                    timestamp: langPackCacheTimestamp,
+                    source: 'bridge'
+                };
+                storage.setValue('find_incomplete_bridge_cache', JSON.stringify(bridgeCacheData));
+
+                setState(STATE.IDLE);
+                showStatus(`Bridge scan complete! Found ${totalIncomplete} incomplete`, '✅');
+                setTimeout(hideStatus, 3000);
+
+                if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
+                    renderLangPackResults();
+                }
+
+            } catch (err) {
+                if (err.message === 'Cancelled') {
+                    setState(STATE.IDLE);
+                    hideStatus();
+                    return;
+                }
+                setState(STATE.ERROR);
+                showStatus(`Bridge scan failed: ${err.message}`, '❌');
+                renderErrorState(err.message);
+                setTimeout(hideStatus, 8000);
+            } finally {
+                activeController = null;
+            }
+        }
+
+        // ── Language Pack Scan (from incomplete-questions-module.js) ───────────
+        async function runLanguagePackScan() {
+            if (currentState === STATE.SCANNING) return;
+            setState(STATE.SCANNING);
+
+            showStatus('Starting language pack scan...', '🔍');
+            renderScanningState();
+            updateLoadingMessage('Initializing language pack scan...');
+
+            activeController = new AbortController();
+
+            try {
+                langPackResults = {};
+
+                for (let packIndex = 0; packIndex <= 6; packIndex++) {
+                    const packName = LANGUAGE_PACKS[packIndex].name;
+
+                    try {
+                        const results = await scanPackForIncomplete(packIndex, (msg) => {
+                            showStatus(msg, '🔍');
+                            updateLoadingMessage(msg);
+                        });
+
+                        let hasIncomplete = false;
+                        for (const sub in results) {
+                            if (Object.keys(results[sub]).length > 0) {
+                                hasIncomplete = true;
+                                break;
+                            }
+                        }
+
+                        if (hasIncomplete) {
+                            langPackResults[packName] = results;
+                        }
+
+                    } catch (err) {
+                        console.error(`Failed to scan ${packName}:`, err);
+                        await sleep(1000);
+                    }
+                }
+
+                langPackCacheTimestamp = Date.now();
+                langPackCachedData = { ...langPackResults };
+
+                // Save to storage
+                const langPackCacheData = {
+                    results: langPackResults,
+                    timestamp: langPackCacheTimestamp
+                };
+                storage.setValue('find_incomplete_langpack_cache', JSON.stringify(langPackCacheData));
+
+                setState(STATE.IDLE);
+                showStatus('Language pack scan complete! 🎉', '✅');
+                setTimeout(hideStatus, 3000);
+
+                if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
+                    renderLangPackResults();
+                }
+
+            } catch (err) {
+                if (err.message === 'Cancelled') {
+                    setState(STATE.IDLE);
+                    hideStatus();
+                    return;
+                }
+                setState(STATE.ERROR);
+                showStatus(`Scan failed: ${err.message}`, '❌');
+                renderErrorState(err.message);
+                setTimeout(hideStatus, 6000);
+            } finally {
+                activeController = null;
+            }
+        }
+
+        function renderLangPackResults() {
+            if (!dropdown) return;
+            dropdown.innerHTML = '';
+
+            let totalIncomplete = 0;
+            for (const pack in langPackResults) {
+                for (const sub in langPackResults[pack]) {
+                    for (const part in langPackResults[pack][sub]) {
+                        totalIncomplete += langPackResults[pack][sub][part].length;
+                    }
+                }
+            }
+
+            if (totalIncomplete === 0) {
+                let html = `
+                    <div style="text-align: center; padding: 40px;">
+                        <div style="font-size: 48px; margin-bottom: 15px;">✓</div>
+                        <h4 style="margin: 0 0 10px 0; color: #48bb78;">All Questions Complete!</h4>
+                        <p style="color: #666; margin: 0;">No incomplete questions found in language packs.</p>
+                    </div>
+                `;
+                // Still show auto-solver toggle in Bridge API mode even when no incomplete found
+                if (currentScanMode === SCAN_MODE.BRIDGE_API) {
+                    html += `
+                        <div style="margin: 15px 0; padding: 12px; background: rgba(237, 137, 54, 0.1); border: 1px solid rgba(237, 137, 54, 0.3); border-radius: 6px;">
+                            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; color: #e2e8f0;">
+                                <input type="checkbox" id="auto-solver-toggle" ${autoSolverEnabled ? 'checked' : ''} style="width: 18px; height: 18px; accent-color: #ed8936;">
+                                <span style="font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                                    🤖 Auto Solver
+                                    <span id="auto-solver-status" style="font-size: 10px; background: ${autoSolverEnabled ? 'rgba(237,137,54,0.2)' : 'rgba(255,255,255,0.1)'}; color: ${autoSolverEnabled ? '#ed8936' : '#a1a1aa'}; padding: 1px 6px; border-radius: 3px; font-weight: 500;">${autoSolverEnabled ? 'ON' : 'OFF'}</span>
+                                </span>
+                            </label>
+                            <div id="auto-solver-progress" style="margin-top: 8px; display: none;">
+                                <div style="font-size: 11px; color: #94a3b8; margin-bottom: 4px;">
+                                    <span id="auto-solver-current">0</span> / <span id="auto-solver-total">0</span> problems
+                                </div>
+                                <div style="height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;">
+                                    <div id="auto-solver-bar" style="width: 0%; height: 100%; background: #ed8936; transition: width 0.3s;"></div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                dropdown.innerHTML = html;
+
+                // Add event listener for auto-solver toggle (Bridge API mode only)
+                if (currentScanMode === SCAN_MODE.BRIDGE_API) {
+                    const autoSolverToggle = document.getElementById('auto-solver-toggle');
+                    if (autoSolverToggle) {
+                        autoSolverToggle.addEventListener('change', (e) => {
+                            e.stopPropagation();
+                            autoSolverEnabled = e.target.checked;
+                            const statusEl = document.getElementById('auto-solver-status');
+                            const progressEl = document.getElementById('auto-solver-progress');
+                            if (statusEl) {
+                                statusEl.textContent = autoSolverEnabled ? 'ON' : 'OFF';
+                                statusEl.style.background = autoSolverEnabled ? 'rgba(237,137,54,0.2)' : 'rgba(255,255,255,0.1)';
+                                statusEl.style.color = autoSolverEnabled ? '#ed8936' : '#a1a1aa';
+                            }
+                            if (progressEl) {
+                                progressEl.style.display = autoSolverEnabled ? 'block' : 'none';
+                            }
+                            if (autoSolverEnabled && totalIncomplete > 0) {
+                                startAutoSolverQueue();
+                            }
+                        });
+                    }
+                }
+                return;
+            }
+
+            let html = `<div style="margin-bottom: 15px; padding: 10px; background: #f0f9ff; border-radius: 6px;">
+                <strong>Found ${totalIncomplete} incomplete question${totalIncomplete !== 1 ? 's' : ''} in language packs</strong>
+            </div>`;
+
+            for (const packName in langPackResults) {
+                const packData = langPackResults[packName];
+                const packInfo = LANGUAGE_PACKS[Object.keys(LANGUAGE_PACKS).find(k => LANGUAGE_PACKS[k].name === packName)];
+                const icon = packInfo?.icon || '📝';
+
+                html += `<div style="margin-bottom: 20px;"><h4 style="display: flex; align-items: center; gap: 8px; margin: 0 0 12px 0;"><span style="font-size: 18px;">${icon}</span> ${packName}</h4>`;
+
+                for (const subName in packData) {
+                    const parts = packData[subName];
+                    if (Object.keys(parts).length === 0) continue;
+
+                    html += `<div style="margin-bottom: 15px; padding: 12px; background: #f9fafb; border-radius: 6px;">
+                        <div style="font-weight: 600; color: #374151; margin-bottom: 10px; font-size: 13px;">${subName}</div>`;
+
+                    for (const partName in parts) {
+                        const problems = parts[partName];
+                        if (problems.length === 0) continue;
+
+                        html += `<div style="margin-bottom: 10px;">
+                            <div style="font-size: 12px; color: #9ca3af; margin-bottom: 6px;">${partName}</div>`;
+
+                        for (const problem of problems) {
+                            html += `<div style="padding: 8px 12px; background: white; border: 1px solid #e5e7eb; border-radius: 4px; margin-bottom: 5px; cursor: pointer; transition: all 0.2s;"
+                                    onmouseover="this.style.background='#f3f4f6'; this.style.borderColor='#667eea';"
+                                    onmouseout="this.style.background='white'; this.style.borderColor='#e5e7eb';"
+                                    onclick="window.open('${CODENV_URL}?id=${problem.id}', '_blank')">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <span style="color: #1f2937; font-size: 13px;">${problem.name}</span>
+                                    <span style="color: #9ca3af; font-size: 11px;">ID: ${problem.id}</span>
+                                </div>
+                            </div>`;
+                        }
+
+                        html += `</div>`;
+                    }
+
+                    html += `</div>`;
+                }
+
+                html += `</div>`;
+            }
+
+            // Add auto-solver toggle and refresh button
+            if (currentScanMode === SCAN_MODE.BRIDGE_API) {
+                html += `
+                    <div style="margin: 15px 0; padding: 12px; background: rgba(237, 137, 54, 0.1); border: 1px solid rgba(237, 137, 54, 0.3); border-radius: 6px;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; color: #e2e8f0;">
+                            <input type="checkbox" id="auto-solver-toggle" ${autoSolverEnabled ? 'checked' : ''} style="width: 18px; height: 18px; accent-color: #ed8936;">
+                            <span style="font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                                🤖 Auto Solver
+                                <span id="auto-solver-status" style="font-size: 10px; background: ${autoSolverEnabled ? 'rgba(237,137,54,0.2)' : 'rgba(255,255,255,0.1)'}; color: ${autoSolverEnabled ? '#ed8936' : '#a1a1aa'}; padding: 1px 6px; border-radius: 3px; font-weight: 500;">${autoSolverEnabled ? 'ON' : 'OFF'}</span>
+                            </span>
+                        </label>
+                        <div id="auto-solver-progress" style="margin-top: 8px; display: none;">
+                            <div style="font-size: 11px; color: #94a3b8; margin-bottom: 4px;">
+                                <span id="auto-solver-current">0</span> / <span id="auto-solver-total">0</span> problems
+                            </div>
+                            <div style="height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;">
+                                <div id="auto-solver-bar" style="width: 0%; height: 100%; background: #ed8936; transition: width 0.3s;"></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Add refresh button
+            html += `
+                <div style="text-align: center; padding: 10px 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);">
+                    <button id="lang-pack-refresh-btn" style="background: #667eea; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">
+                        🔄 Re-scan Language Packs
+                    </button>
+                </div>
+            `;
+
+            dropdown.innerHTML = html;
+
+            // Add event listener for refresh button
+            const refreshBtn = document.getElementById('lang-pack-refresh-btn');
+            if (refreshBtn) {
+                refreshBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    loadAndRenderTracks(true);
+                });
+            }
+
+            // Add event listener for auto-solver toggle (Bridge API mode only)
+            if (currentScanMode === SCAN_MODE.BRIDGE_API) {
+                const autoSolverToggle = document.getElementById('auto-solver-toggle');
+                if (autoSolverToggle) {
+                    autoSolverToggle.addEventListener('change', (e) => {
+                        e.stopPropagation();
+                        autoSolverEnabled = e.target.checked;
+                        const statusEl = document.getElementById('auto-solver-status');
+                        const progressEl = document.getElementById('auto-solver-progress');
+                        if (statusEl) {
+                            statusEl.textContent = autoSolverEnabled ? 'ON' : 'OFF';
+                            statusEl.style.background = autoSolverEnabled ? 'rgba(237,137,54,0.2)' : 'rgba(255,255,255,0.1)';
+                            statusEl.style.color = autoSolverEnabled ? '#ed8936' : '#a1a1aa';
+                        }
+                        if (progressEl) {
+                            progressEl.style.display = autoSolverEnabled ? 'block' : 'none';
+                        }
+                        if (autoSolverEnabled && totalIncomplete > 0) {
+                            startAutoSolverQueue();
+                        }
+                    });
+                }
+            }
+        }
+
+        // ── Auto Solver Queue Processing (persisted across page loads) ────────────────
+        const AUTO_SOLVER_STORAGE_KEY = 'find_incomplete_auto_solver_queue';
+        let originalAutoSolverSetting = false;
+        let originalAISolverSetting = false;
+
+        function saveAutoSolverQueue() {
+            const data = {
+                queue: autoSolverQueue,
+                currentIndex: autoSolverCurrentIndex,
+                enabled: autoSolverEnabled,
+                paused: autoSolverPaused,
+                timestamp: Date.now()
+            };
+            storage.setValue(AUTO_SOLVER_STORAGE_KEY, JSON.stringify(data));
+        }
+
+        function loadAutoSolverQueue() {
+            try {
+                const raw = storage.getValue(AUTO_SOLVER_STORAGE_KEY);
+                if (raw) {
+                    const data = JSON.parse(raw);
+                    // Only restore if recent (within 1 hour)
+                    if (Date.now() - data.timestamp < 3600000) {
+                        autoSolverQueue = data.queue || [];
+                        autoSolverCurrentIndex = data.currentIndex || 0;
+                        autoSolverEnabled = data.enabled || false;
+                        autoSolverPaused = Boolean(data.paused);
+                        return true;
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to load auto-solver queue:', e);
+            }
+            return false;
+        }
+
+        function clearAutoSolverQueue() {
+            storage.setValue(AUTO_SOLVER_STORAGE_KEY, '');
+            autoSolverQueue = [];
+            autoSolverCurrentIndex = 0;
+            autoSolverEnabled = false;
+            autoSolverPaused = false;
+            // Restore original settings
+            if (originalAutoSolverSetting !== undefined) SETTINGS.enableAutoSolver = originalAutoSolverSetting;
+            if (originalAISolverSetting !== undefined) SETTINGS.enableAISolver = originalAISolverSetting;
+        }
+
+        function enableAutoSolverSettings() {
+            // Save original settings
+            originalAutoSolverSetting = SETTINGS.enableAutoSolver;
+            originalAISolverSetting = SETTINGS.enableAISolver;
+            // Enable for auto-solving
+            SETTINGS.enableAutoSolver = true;
+            SETTINGS.enableAISolver = true;
+        }
+
+        function disableAutoSolverSettings() {
+            // Restore original settings
+            SETTINGS.enableAutoSolver = originalAutoSolverSetting;
+            SETTINGS.enableAISolver = originalAISolverSetting;
+        }
+
+        async function startAutoSolverQueue() {
+            if (!autoSolverEnabled) return;
+
+            // Enable AutoSolver settings for the queue
+            enableAutoSolverSettings();
+
+            // Flatten all incomplete problems into a queue
+            autoSolverQueue = [];
+            for (const packName in langPackResults) {
+                for (const subName in langPackResults[packName]) {
+                    for (const partName in langPackResults[packName][subName]) {
+                        const problems = langPackResults[packName][subName][partName];
+                        for (const problem of problems) {
+                            autoSolverQueue.push({
+                                packName,
+                                subName,
+                                partName,
+                                problemId: problem.id,
+                                problemName: problem.name
+                            });
+                        }
+                    }
+                }
+            }
+
+            autoSolverCurrentIndex = 0;
+            autoSolverPaused = false;
+
+            // Save to storage for persistence across page loads
+            saveAutoSolverQueue();
+
+            // Update progress UI
+            updateAutoSolverProgress();
+
+            if (autoSolverQueue.length === 0) {
+                showStatus('No problems to auto-solve', 'ℹ️');
+                disableAutoSolverSettings();
+                return;
+            }
+
+            showStatus(`Auto Solver: Starting ${autoSolverQueue.length} problems...`, '🤖');
+
+            // Navigate to first problem
+            await navigateToNextProblem();
+        }
+
+        async function processAutoSolverQueue() {
+            // This runs on the problem page after AutoSolver completes
+            // Check if we're on a problem page and have a pending queue
+            if (!autoSolverEnabled || autoSolverCurrentIndex >= autoSolverQueue.length) {
+                // All done or not enabled
+                if (autoSolverEnabled && autoSolverCurrentIndex >= autoSolverQueue.length) {
+                    showStatus('Auto Solver: All problems processed!', '✅');
+                    setTimeout(hideStatus, 5000);
+                    clearAutoSolverQueue();
+                } else if (!autoSolverEnabled) {
+                    showStatus('Auto Solver: Stopped by user', '⏹️');
+                    setTimeout(hideStatus, 3000);
+                    clearAutoSolverQueue();
+                }
+                return;
+            }
+
+            if (autoSolverPaused) {
+                showStatus(`Auto Solver: Paused at ${autoSolverQueue[autoSolverCurrentIndex].problemName} (${autoSolverCurrentIndex + 1}/${autoSolverQueue.length})`, '⏸');
+                updateAutoSolverProgress();
+                return;
+            }
+
+            // We're on a problem page, wait for AutoSolver to complete
+            showStatus(`Auto Solver: Processing ${autoSolverQueue[autoSolverCurrentIndex].problemName} (${autoSolverCurrentIndex + 1}/${autoSolverQueue.length})`, '🤖');
+            updateAutoSolverProgress();
+        }
+
+        async function navigateToNextProblem() {
+            if (!autoSolverEnabled || autoSolverPaused || autoSolverCurrentIndex >= autoSolverQueue.length) {
+                return;
+            }
+
+            const item = autoSolverQueue[autoSolverCurrentIndex];
+            const problemUrl = `${CODENV_URL}?id=${item.problemId}`;
+
+            // Save current state before navigation
+            saveAutoSolverQueue();
+
+            showStatus(`Auto Solver: Navigating to ${item.problemName}...`, '🚀');
+
+            // Navigate to the problem page
+            window.location.href = problemUrl;
+        }
+
+        function updateAutoSolverProgress() {
+            const currentEl = document.getElementById('auto-solver-current');
+            const totalEl = document.getElementById('auto-solver-total');
+            const barEl = document.getElementById('auto-solver-bar');
+            const progressEl = document.getElementById('auto-solver-progress');
+
+            if (currentEl) currentEl.textContent = autoSolverCurrentIndex;
+            if (totalEl) totalEl.textContent = autoSolverQueue.length;
+            if (barEl) {
+                const pct = autoSolverQueue.length > 0 ? Math.round((autoSolverCurrentIndex / autoSolverQueue.length) * 100) : 0;
+                barEl.style.width = `${pct}%`;
+            }
+            if (progressEl) progressEl.style.display = autoSolverEnabled && autoSolverQueue.length > 0 ? 'block' : 'none';
+        }
+
+        // Check for pending auto-solver queue on page load
+        function checkPendingAutoSolverQueue() {
+            const hasQueue = loadAutoSolverQueue();
+            if (hasQueue && autoSolverEnabled && autoSolverQueue.length > 0) {
+                if (autoSolverPaused) {
+                    updateAutoSolverProgress();
+                    showStatus(`Auto Solver: Paused (${autoSolverCurrentIndex + 1}/${autoSolverQueue.length})`, '⏸');
+                    return;
+                }
+
+                // Enable AutoSolver settings for the pending queue
+                enableAutoSolverSettings();
+
+                // We have a pending queue, check if we're on a problem page
+                const isProblemPage = window.location.href.includes('codeprogram.xhtml');
+                if (isProblemPage) {
+                    updateAutoSolverProgress();
+                    showStatus(`Auto Solver: Ready to solve ${autoSolverQueue[autoSolverCurrentIndex].problemName} (${autoSolverCurrentIndex + 1}/${autoSolverQueue.length})`, '🤖');
+
+                    window.addEventListener('beforeunload', () => {
+                        autoSolverCurrentIndex++;
+                        saveAutoSolverQueue();
+                    }, { once: true });
+                } else {
+                    navigateToNextProblem();
+                }
+            }
+        }
+
         async function updateSolvedCountsSilently(cachedParts) {
             try {
                 const solvedCounts = await getSolvedCounts();
@@ -10165,13 +11559,13 @@ SOLVING APPROACH:
                         part.ratio = part.totalCount > 0 ? (part.solvedCount / part.totalCount) : 1.0;
                     }
                 });
-                
+
                 const cacheData = {
                     parts: cachedParts,
                     timestamp: Date.now()
                 };
                 storage.setValue('find_incomplete_cache_v2', JSON.stringify(cacheData));
-                
+
                 if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
                     renderList(cachedParts);
                 }
@@ -10187,6 +11581,48 @@ SOLVING APPROACH:
                 return;
             }
 
+            // Handle Bridge API mode
+            if (currentScanMode === SCAN_MODE.BRIDGE_API) {
+                let cache = null;
+                if (!forceRefresh) {
+                    try {
+                        const raw = storage.getValue('find_incomplete_bridge_cache');
+                        if (raw) cache = JSON.parse(raw);
+                    } catch (e) { console.error('Failed to parse bridge cache:', e); }
+                }
+
+                if (forceRefresh || !cache || !cache.results) {
+                    await runBridgeApiScan();
+                } else {
+                    langPackResults = cache.results;
+                    langPackCacheTimestamp = cache.timestamp;
+                    renderLangPackResults();
+                }
+                return;
+            }
+
+            // Handle Language Pack mode
+            if (currentScanMode === SCAN_MODE.LANG_PACKS) {
+                let cache = null;
+                if (!forceRefresh) {
+                    try {
+                        const raw = storage.getValue('find_incomplete_langpack_cache');
+                        if (raw) cache = JSON.parse(raw);
+                    } catch (e) { console.error('Failed to parse langpack cache:', e); }
+                }
+
+                // Only use cache if it's from Language Packs mode (not Bridge API)
+                if (forceRefresh || !cache || !cache.results || cache.source === 'bridge') {
+                    await runLanguagePackScan();
+                } else {
+                    langPackResults = cache.results;
+                    langPackCacheTimestamp = cache.timestamp;
+                    renderLangPackResults();
+                }
+                return;
+            }
+
+            // Default: Track mode
             let cache = null;
             if (!forceRefresh) {
                 try {
@@ -10209,10 +11645,10 @@ SOLVING APPROACH:
             setState(STATE.NAVIGATING);
             showStatus(`Navigating to ${item.partName}...`, '🚀');
             hideDropdown();
-            
+
             try {
                 let currentUrl = item.levelUrl;
-                
+
                 // Step 1: GET currentUrl to get initial ViewState
                 const html = await queuedFetch(currentUrl, { method: 'GET' });
                 let freshState = extractViewState(html);
@@ -10269,7 +11705,7 @@ SOLVING APPROACH:
                 } else if (lastStep.type === 'LINK') {
                     window.location.href = lastStep.href;
                 }
-                
+
                 setState(STATE.IDLE);
             } catch (err) {
                 setState(STATE.IDLE);
@@ -10292,53 +11728,133 @@ SOLVING APPROACH:
                     from { transform: rotate(0deg); }
                     to { transform: rotate(360deg); }
                 }
+                @keyframes pulseGlow {
+                    0%, 100% { box-shadow: 0 0 10px rgba(99, 179, 237, 0.2); }
+                    50% { box-shadow: 0 0 18px rgba(99, 179, 237, 0.45); }
+                }
                 .find-inc-item {
                     display: flex;
                     flex-direction: column;
-                    padding: 8px 12px;
-                    border-radius: 8px;
+                    padding: 10px 12px;
+                    border-radius: 9px;
                     cursor: pointer;
-                    margin-bottom: 6px;
-                    transition: background 0.2s, transform 0.1s;
-                    border: 1px solid transparent;
+                    margin-bottom: 7px;
+                    background: rgba(255, 255, 255, 0.03);
+                    border: 1px solid rgba(255, 255, 255, 0.07);
+                    transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+                    user-select: none;
                 }
                 .find-inc-item:hover {
                     background: rgba(99, 179, 237, 0.1) !important;
-                    border-color: rgba(99, 179, 237, 0.2) !important;
+                    border-color: rgba(99, 179, 237, 0.35) !important;
                     transform: translateY(-1px);
                 }
                 .find-inc-item:active {
                     transform: translateY(0);
                 }
-                .find-inc-failed:hover {
-                    background: rgba(239, 68, 68, 0.08) !important;
-                    border-color: rgba(239, 68, 68, 0.25) !important;
-                }
                 .find-inc-title {
                     font-weight: 600;
-                    font-size: 13px;
-                    color: #e4e4e7;
+                    font-size: 13.5px;
+                    color: #f4f4f5;
+                    line-height: 1.35;
                 }
                 .find-inc-meta {
                     font-size: 11px;
                     color: #a1a1aa;
-                    margin-top: 2px;
+                    margin-top: 3px;
                     display: flex;
                     justify-content: space-between;
+                    overflow-wrap: break-word;
                 }
-                .find-inc-progress-bg {
-                    width: 100%;
-                    height: 6px;
-                    background: rgba(255, 255, 255, 0.08);
-                    border-radius: 3px;
-                    margin-top: 6px;
-                    overflow: hidden;
+                .api-ctrl-btn {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 4px;
+                    padding: 4px 8px;
+                    border-radius: 6px;
+                    font-family: 'VT323', monospace;
+                    font-size: 13px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    border: 1px solid transparent;
+                    transition: all 0.15s ease;
+                    user-select: none;
+                    background: rgba(255, 255, 255, 0.06);
+                    color: #e4e4e7;
+                    border-color: rgba(255, 255, 255, 0.12);
                 }
-                .find-inc-progress-bar {
-                    height: 100%;
-                    background: linear-gradient(90deg, #3182ce, #63b3ed);
+                .api-ctrl-btn:hover {
+                    background: rgba(99, 179, 237, 0.2);
+                    border-color: rgba(99, 179, 237, 0.4);
+                    color: #63b3ed;
+                }
+                .api-ctrl-btn:disabled, .api-ctrl-btn[disabled] {
+                    opacity: 0.32 !important;
+                    cursor: not-allowed !important;
+                    pointer-events: none !important;
+                    transform: none !important;
+                }
+                .api-btn-start {
+                    background: rgba(34, 197, 94, 0.2) !important;
+                    border-color: rgba(34, 197, 94, 0.4) !important;
+                    color: #4ade80 !important;
+                }
+                .api-btn-start:hover:not(:disabled) {
+                    background: rgba(34, 197, 94, 0.35) !important;
+                    color: #86efac !important;
+                }
+                .api-btn-pause {
+                    background: rgba(234, 179, 8, 0.18) !important;
+                    border-color: rgba(234, 179, 8, 0.35) !important;
+                    color: #facc15 !important;
+                }
+                .api-btn-pause:hover:not(:disabled) {
+                    background: rgba(234, 179, 8, 0.3) !important;
+                }
+                .api-btn-stop {
+                    background: rgba(239, 68, 68, 0.18) !important;
+                    border-color: rgba(239, 68, 68, 0.35) !important;
+                    color: #f87171 !important;
+                }
+                .api-btn-stop:hover:not(:disabled) {
+                    background: rgba(239, 68, 68, 0.3) !important;
+                }
+                .api-btn-icon {
+                    width: 28px;
+                    height: 28px;
+                    padding: 0;
+                    font-size: 13px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    border-radius: 6px;
+                }
+                .api-btn-close {
+                    width: 24px;
+                    height: 24px;
+                    padding: 0;
+                    font-size: 13px;
+                    border-radius: 5px;
+                }
+                .api-btn-close:hover:not(:disabled) {
+                    background: rgba(239, 68, 68, 0.25) !important;
+                    border-color: rgba(239, 68, 68, 0.4) !important;
+                    color: #f87171 !important;
+                }
+                #api-dropdown-body::-webkit-scrollbar {
+                    width: 6px;
+                }
+                #api-dropdown-body::-webkit-scrollbar-track {
+                    background: rgba(0, 0, 0, 0.2);
                     border-radius: 3px;
-                    transition: width 0.3s ease;
+                }
+                #api-dropdown-body::-webkit-scrollbar-thumb {
+                    background: rgba(255, 255, 255, 0.15);
+                    border-radius: 3px;
+                }
+                #api-dropdown-body::-webkit-scrollbar-thumb:hover {
+                    background: rgba(99, 179, 237, 0.4);
                 }
             `;
             document.head.appendChild(style);
@@ -10349,25 +11865,34 @@ SOLVING APPROACH:
             dropdown = document.createElement('div');
             dropdown.id = 'find-incomplete-dropdown';
             dropdown.style.cssText =
-                'position:absolute;z-index:100000;display:none;' +
-                'background:rgba(15,15,15,0.96);backdrop-filter:blur(20px);' +
-                '-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);' +
-                'border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,0.65);' +
-                'padding:14px;min-width:320px;max-width:380px;' +
+                'position:fixed;top:62px;right:24px;z-index:100002;display:none;' +
+                'width:430px;max-width:calc(100vw - 32px);max-height:82vh;' +
+                'flex-direction:column;overflow:hidden;' +
+                'background:rgba(13,16,23,0.97);backdrop-filter:blur(24px);' +
+                '-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,0.12);' +
+                'border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,0.85);' +
                 "color:#f4f4f5;font-family:'VT323',monospace;font-size:15px;" +
-                'transition:opacity 0.25s, transform 0.25s;opacity:0;transform:translateY(-8px);';
+                'transition:opacity 0.2s ease, transform 0.2s ease;opacity:0;transform:translateY(-6px);';
+
+            // Prevent any clicks or mousedowns inside dropdown from bubbling up and closing it
+            dropdown.addEventListener('click', (e) => e.stopPropagation());
+            dropdown.addEventListener('mousedown', (e) => e.stopPropagation());
+
             document.body.appendChild(dropdown);
         }
 
         function showDropdown(btnEl) {
             ensureDropdown(btnEl);
             injectStyles();
-            
-            const rect = btnEl.getBoundingClientRect();
-            dropdown.style.top = `${rect.bottom + window.scrollY + 8}px`;
-            dropdown.style.left = `${Math.max(10, rect.left + window.scrollX - 180)}px`;
-            
-            dropdown.style.display = 'block';
+
+            if (btnEl) {
+                const rect = btnEl.getBoundingClientRect();
+                dropdown.style.top = `${rect.bottom + 8}px`;
+                dropdown.style.right = `${Math.max(16, window.innerWidth - rect.right)}px`;
+                dropdown.style.left = 'auto';
+            }
+
+            dropdown.style.display = 'flex';
             dropdown.offsetHeight; // trigger reflow
             dropdown.style.opacity = '1';
             dropdown.style.transform = 'translateY(0)';
@@ -10376,155 +11901,10 @@ SOLVING APPROACH:
         function hideDropdown() {
             if (!dropdown) return;
             dropdown.style.opacity = '0';
-            dropdown.style.transform = 'translateY(-8px)';
-            
-            if (currentState === STATE.SCANNING) {
-                if (activeController) activeController.abort();
-                setState(STATE.IDLE);
-                hideStatus();
-            }
-            
+            dropdown.style.transform = 'translateY(-6px)';
             setTimeout(() => {
-                if (dropdown && dropdown.style.opacity === '0') {
-                    dropdown.style.display = 'none';
-                }
-            }, 250);
-        }
-
-        function renderList(parts) {
-            if (!dropdown) return;
-            dropdown.innerHTML = '';
-
-            // Filter parts
-            const incompleteList = parts.filter(item => item.status === 'ok' && item.ratio < 1.0);
-            const failedList = parts.filter(item => item.status === 'unknown');
-
-            // Sort incomplete list by ratio ascending
-            incompleteList.sort((a, b) => a.ratio - b.ratio);
-
-            // Compute total solved and total questions across all successfully scanned parts
-            let totalSolved = 0;
-            let totalQuestions = 0;
-            parts.forEach(p => {
-                if (p.status === 'ok') {
-                    totalSolved += p.solvedCount || 0;
-                    totalQuestions += p.totalCount || 0;
-                }
-            });
-            const remainingQuestions = totalQuestions - totalSolved;
-
-            const header = document.createElement('div');
-            header.style.cssText = 'font-weight: 700; font-size: 15px; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center;';
-            header.innerHTML = '<span>Incomplete Tracks</span>' + 
-                               `<span style="font-size: 10px; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 2px 6px; border-radius: 4px; white-space: nowrap;">` +
-                               `${incompleteList.length} Tracks | ${remainingQuestions} Qs Left</span>`;
-            dropdown.appendChild(header);
-
-            const listContainer = document.createElement('div');
-            listContainer.style.cssText = 'max-height: 280px; overflow-y: auto;';
-
-            if (incompleteList.length === 0 && failedList.length === 0) {
-                const msg = document.createElement('div');
-                msg.style.cssText = 'text-align: center; padding: 20px; color: #a1a1aa; font-style: italic;';
-                msg.innerHTML = 'All tracks completed! 🏆';
-                dropdown.appendChild(msg);
-            } else {
-                if (incompleteList.length > 0) {
-                    incompleteList.forEach(item => {
-                        const pct = Math.round(item.ratio * 100);
-                        const itemEl = document.createElement('div');
-                        itemEl.className = 'find-inc-item';
-                        itemEl.innerHTML = `
-                            <div class="find-inc-title">${item.partName}</div>
-                            <div class="find-inc-meta">
-                                <span>${item.levelName}</span>
-                                <span>${item.solvedCount} / ${item.totalCount} solved (${pct}%)</span>
-                            </div>
-                            <div class="find-inc-progress-bg">
-                                <div class="find-inc-progress-bar" style="width: ${pct}%"></div>
-                            </div>
-                        `;
-                        itemEl.addEventListener('click', () => {
-                            startNavigation(item);
-                        });
-                        listContainer.appendChild(itemEl);
-                    });
-                }
-
-                // VISIBLY SEPARATE "COULDN'T VERIFY" SECTION
-                if (failedList.length > 0) {
-                    const failHeader = document.createElement('div');
-                    failHeader.style.cssText = 'font-weight: 700; font-size: 13px; color: #f87171; margin: 14px 0 8px 0; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; display: flex; justify-content: space-between; align-items: center;';
-                    failHeader.innerHTML = '<span>⚠️ Couldn\'t Verify (Crawl Failed)</span>';
-                    listContainer.appendChild(failHeader);
-
-                    failedList.forEach(item => {
-                        const itemEl = document.createElement('div');
-                        itemEl.className = 'find-inc-item find-inc-failed';
-                        itemEl.style.cssText = 'border-color: rgba(239, 68, 68, 0.15) !important; background: rgba(239, 68, 68, 0.02);';
-                        itemEl.innerHTML = `
-                            <div class="find-inc-title" style="color: #d1d5db;">${item.partName}</div>
-                            <div class="find-inc-meta" style="color: #ef4444; font-size: 10px;">
-                                <span>${item.levelName}</span>
-                                <span>Crawl failed: ${item.error || 'Unknown Error'}</span>
-                            </div>
-                        `;
-                        itemEl.addEventListener('click', () => {
-                            startNavigation(item);
-                        });
-                        listContainer.appendChild(itemEl);
-                    });
-                }
-                
-                dropdown.appendChild(listContainer);
-            }
-
-            const refreshBtn = document.createElement('div');
-            refreshBtn.id = 'find-inc-refresh-btn';
-            refreshBtn.style.cssText = 'text-align: center; padding: 10px 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); color: #63b3ed; cursor: pointer; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;';
-            refreshBtn.innerHTML = '🔄 Force Re-Crawl & Refresh';
-            refreshBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                loadAndRenderTracks(true);
-            });
-            dropdown.appendChild(refreshBtn);
-        }
-
-        function renderScanningState() {
-            if (!dropdown) return;
-            dropdown.innerHTML = `
-                <div style="text-align: center; padding: 30px 15px;">
-                    <div style="font-size: 24px; margin-bottom: 12px; animation: spin 2s linear infinite; display: inline-block;">🔄</div>
-                    <div id="find-inc-loading-msg" style="font-size: 13px; color: #a1a1aa;">Starting scan...</div>
-                    <div style="margin-top: 12px; font-size: 10px; color: #71717a;">Please wait, rate-limiting is active to ensure safety.</div>
-                </div>
-            `;
-        }
-
-        function updateLoadingMessage(msg) {
-            const el = document.getElementById('find-inc-loading-msg');
-            if (el) el.textContent = msg;
-        }
-
-        function renderErrorState(errStr) {
-            if (!dropdown) return;
-            dropdown.innerHTML = `
-                <div style="text-align: center; padding: 20px 15px;">
-                    <div style="font-size: 24px; margin-bottom: 12px;">❌</div>
-                    <div style="font-size: 13px; color: #f87171; font-weight: 600;">Scan Failed</div>
-                    <div style="font-size: 12px; color: #a1a1aa; margin-top: 4px; overflow-wrap: break-word;">${errStr}</div>
-                    <div id="find-inc-retry-btn" style="margin-top: 15px; display: inline-block; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600;">
-                        Try Again
-                    </div>
-                </div>
-            `;
-            const btn = document.getElementById('find-inc-retry-btn');
-            if (btn) {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    loadAndRenderTracks(true);
-                });
-            }
+                if (dropdown) dropdown.style.display = 'none';
+            }, 200);
         }
 
         // ── Status pill ──────────────────────────────────────────────────────
@@ -10533,22 +11913,21 @@ SOLVING APPROACH:
             statusPanel = document.createElement('div');
             statusPanel.id = 'find-incomplete-status';
             statusPanel.style.cssText =
-                'position:fixed;bottom:92px;left:24px;z-index:99997;' +
-                'min-width:260px;max-width:380px;padding:12px 16px;' +
-                'background:rgba(15,15,15,0.95);backdrop-filter:blur(18px);' +
-                '-webkit-backdrop-filter:blur(18px);border-radius:14px;' +
-                'border:1px solid rgba(99,179,237,0.3);' +
-                'box-shadow:0 16px 48px rgba(0,0,0,0.65);' +
-                "font-family:'VT323',monospace;font-size:16px;color:#e4e4e7;" +
-                'display:none;transition:opacity 0.2s;';
+                'position:fixed;bottom:20px;right:20px;z-index:100003;display:none;' +
+                'background:rgba(13,16,23,0.95);border:1px solid rgba(255,255,255,0.12);' +
+                'border-radius:8px;padding:8px 14px;box-shadow:0 8px 30px rgba(0,0,0,0.6);' +
+                "color:#f4f4f5;font-family:'VT323',monospace;font-size:14px;transition:opacity 0.2s ease;";
+
             statusText = document.createElement('span');
+            statusText.id = 'find-incomplete-status-text';
             statusPanel.appendChild(statusText);
             document.body.appendChild(statusPanel);
         }
 
-        function showStatus(msg, icon) {
+        function showStatus(msg, icon = 'ℹ️') {
             ensureStatusPanel();
-            statusText.textContent = (icon ? icon + '  ' : '') + msg;
+            if (!statusPanel || !statusText) return;
+            statusText.innerHTML = `<span style="margin-right:6px;">${apiEscape(icon)}</span>${apiEscape(msg)}`;
             statusPanel.style.display = 'block';
             statusPanel.style.opacity = '1';
         }
@@ -10579,18 +11958,18 @@ SOLVING APPROACH:
                 'style="cursor:pointer;white-space:nowrap;">' +
                 '<span class="ui-menuitem-icon ui-icon pi pi-fw pi-search ui-menuitem-icon-left" ' +
                 'aria-hidden="true"></span>' +
-                '<span class="ui-menuitem-text">Find Incomplete</span>' +
+                '<span class="ui-menuitem-text">Incomplete Questions</span>' +
                 '</a>';
 
             const anchor = li.querySelector('a');
             anchor.addEventListener('click', e => {
                 e.preventDefault();
                 e.stopPropagation();
-                if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
+                if (dropdown && dropdown.style.display === 'flex' && dropdown.style.opacity !== '0') {
                     hideDropdown();
                 } else {
                     showDropdown(anchor);
-                    loadAndRenderTracks();
+                    apiFetchAndRender();
                 }
             });
 
@@ -10598,22 +11977,839 @@ SOLVING APPROACH:
             menuList.insertBefore(li, lastItem);
         }
 
+        // ── FastAPI Questions (rendered inside #find-incomplete-dropdown) ────
+        let apiQuestions = [];
+        let apiLastFetch = null; // null | 'ok' | 'loading' | 'error'
+        let apiRenderedList = []; // rows currently visible
+        let autoSolverPaused = false;
+
+        function apiBaseUrl() {
+            return (SETTINGS.fastAPIBaseUrl || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+        }
+
+        function apiExtractId(q) {
+            if (q && q.question_id) return String(q.question_id);
+            const link = (q && q.link) || '';
+            const idMatch = link.match(/[?&]id=(\d+)/);
+            if (idMatch) return idMatch[1];
+            const qm = (q && q.question || '').match(/[Ii]d-?(\d+)/);
+            return qm ? qm[1] : '';
+        }
+
+        function apiEscape(str) {
+            return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[c]);
+        }
+
+        function apiLevelRank(lv) {
+            const u = (lv || '').toUpperCase();
+            if (u.includes('STARTER')) return 0;
+            if (u.includes('VERY')) return 1;
+            if (u.includes('EASY')) return 2;
+            if (u.includes('AVERAGE')) return 3;
+            if (u.includes('COURSE')) return 4;
+            if (u.includes('PRIME') || u.includes('HARD')) return 5;
+            return 6;
+        }
+
+        function apiLevelBadgeColor(lv) {
+            const u = (lv || '').toUpperCase();
+            if (u.includes('PRIME') || u.includes('HARD')) return { bg: 'rgba(239,68,68,0.2)', color: '#f87171', border: 'rgba(239,68,68,0.35)' };
+            if (u.includes('AVERAGE')) return { bg: 'rgba(234,179,8,0.2)', color: '#facc15', border: 'rgba(234,179,8,0.35)' };
+            if (u.includes('EASY') || u.includes('STARTER') || u.includes('VERY')) return { bg: 'rgba(34,197,94,0.2)', color: '#4ade80', border: 'rgba(34,197,94,0.35)' };
+            return { bg: 'rgba(99,179,237,0.18)', color: '#63b3ed', border: 'rgba(99,179,237,0.35)' };
+        }
+
+        // ── Render complete UI into the dropdown ─────────────────────────────
+        function apiRenderIntoDropdown() {
+            // Preserve user's filters across rebuilds (e.g. after re-scrape)
+            const prevSearch = (document.getElementById('api-search-input') || {}).value || '';
+            const prevLang = (document.getElementById('api-filter-lang') || {}).value || '';
+            const prevLevel = (document.getElementById('api-filter-level') || {}).value || '';
+            if (!dropdown) return;
+            dropdown.innerHTML = '';
+
+            // ── 1. Header Bar ───────────────────────────────────────────────
+            const header = document.createElement('div');
+            header.style.cssText =
+                'font-weight:700;font-size:15px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.08);' +
+                'display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:rgba(255,255,255,0.02);';
+
+            const title = document.createElement('span');
+            title.innerHTML = '⚡ Incomplete Questions';
+            title.style.cssText = 'font-size:15px;color:#f4f4f5;font-weight:700;letter-spacing:0.4px;';
+
+            const countBadge = document.createElement('span');
+            countBadge.id = 'api-count-badge';
+            countBadge.style.cssText =
+                'font-size:11px;color:#63b3ed;background:rgba(99,179,237,0.15);' +
+                'padding:1px 8px;border-radius:8px;white-space:nowrap;margin-left:4px;';
+            countBadge.textContent = '—';
+
+            const btnGroup = document.createElement('div');
+            btnGroup.style.cssText = 'margin-left:auto;display:flex;align-items:center;gap:6px;';
+
+            const cookieBtn = document.createElement('button');
+            cookieBtn.className = 'api-ctrl-btn api-btn-icon';
+            cookieBtn.title = 'Set / Paste Cookie override';
+            cookieBtn.innerHTML = '🔑';
+            cookieBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const existing = storage.getValue('skillrack_custom_cookie', '') || await gmGetCookies();
+                const input = prompt('Paste full SkillRack Cookie (containing JSESSIONID=...):', existing);
+                if (input && input.trim()) {
+                    const clean = input.trim();
+                    storage.setValue('skillrack_custom_cookie', clean);
+                    showStatus('Saving cookie & re-scraping…', '🔑');
+                    try {
+                        await gmFetch(apiBaseUrl() + '/cookie', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ cookie: clean })
+                        });
+                    } catch (err) {}
+                    apiReScrapeAndRender();
+                }
+            });
+
+            const reScrapeBtn = document.createElement('button');
+            reScrapeBtn.className = 'api-ctrl-btn api-btn-icon';
+            reScrapeBtn.title = 'Re-scrape latest questions from SkillRack';
+            reScrapeBtn.innerHTML = '↻';
+            reScrapeBtn.addEventListener('click', (e) => { e.stopPropagation(); apiReScrapeAndRender(); });
+
+            const minBtn = document.createElement('button');
+            minBtn.className = 'api-ctrl-btn api-btn-close';
+            minBtn.title = 'Minimize to compact pill';
+            minBtn.innerHTML = '−';
+            minBtn.addEventListener('click', (e) => { e.stopPropagation(); minimizeFindIncomplete(); });
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'api-ctrl-btn api-btn-close';
+            closeBtn.title = 'Close Panel';
+            closeBtn.innerHTML = '✕';
+            closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeFindIncomplete(); });
+
+            btnGroup.appendChild(cookieBtn);
+            btnGroup.appendChild(reScrapeBtn);
+            btnGroup.appendChild(minBtn);
+            btnGroup.appendChild(closeBtn);
+
+            header.appendChild(title);
+            header.appendChild(countBadge);
+            header.appendChild(btnGroup);
+            dropdown.appendChild(header);
+
+            // ── 2. Active Queue Banner (if queue is in progress) ────────────
+            const queueBanner = document.createElement('div');
+            queueBanner.id = 'api-queue-banner';
+            queueBanner.style.cssText =
+                'padding:8px 12px;background:rgba(237,137,54,0.08);border-bottom:1px solid rgba(237,137,54,0.25);' +
+                'display:none;flex-direction:column;gap:6px;';
+            dropdown.appendChild(queueBanner);
+
+            // ── 3. Queue Action Toolbar (Merged Toggle + Stop + Icon Clear) ──
+            const toolRow = document.createElement('div');
+            toolRow.style.cssText =
+                'display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.06);' +
+                'align-items:center;background:rgba(0,0,0,0.2);';
+
+            // Merged Start / Pause / Resume Toggle Button
+            const toggleBtn = document.createElement('button');
+            toggleBtn.id = 'api-queue-toggle-btn';
+            toggleBtn.className = 'api-ctrl-btn api-btn-start';
+            toggleBtn.style.cssText = 'flex:1;font-weight:700;';
+            toggleBtn.innerHTML = '▶ Start all';
+            toggleBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                apiHandleQueueToggle();
+            });
+
+            // Stop Button (enabled only when running / queued)
+            const stopBtn = document.createElement('button');
+            stopBtn.id = 'api-stop-btn';
+            stopBtn.className = 'api-ctrl-btn api-btn-stop';
+            stopBtn.style.cssText = 'padding:5px 12px;';
+            stopBtn.title = 'Stop Auto-Solver queue';
+            stopBtn.innerHTML = '⏹ Stop';
+            stopBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                apiStopQueue();
+            });
+
+            // Clear Button (icon-only, enabled only when paused/stopped)
+            const clearBtn = document.createElement('button');
+            clearBtn.id = 'api-clear-btn';
+            clearBtn.className = 'api-ctrl-btn api-btn-icon';
+            clearBtn.title = 'Clear queue';
+            clearBtn.innerHTML = '🗑';
+            clearBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                apiClearQueue();
+            });
+
+            toolRow.appendChild(toggleBtn);
+            toolRow.appendChild(stopBtn);
+            toolRow.appendChild(clearBtn);
+            dropdown.appendChild(toolRow);
+
+            // ── 4. Search & Filters ─────────────────────────────────────────
+            const filterRow = document.createElement('div');
+            filterRow.style.cssText =
+                'display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.06);' +
+                'align-items:center;background:rgba(255,255,255,0.01);flex-wrap:wrap;';
+
+            const searchInput = document.createElement('input');
+            searchInput.id = 'api-search-input';
+            searchInput.type = 'text';
+            searchInput.placeholder = '🔍 Search title, ID, section…';
+            searchInput.style.cssText =
+                'flex:1;min-width:130px;padding:5px 8px;background:#16181d;border:1px solid rgba(255,255,255,0.12);' +
+                "color:#e4e4e7;border-radius:7px;font-family:'VT323',monospace;font-size:13px;outline:none;";
+            searchInput.addEventListener('input', apiApplyFiltersAndRedraw);
+
+            const langSel = document.createElement('select');
+            langSel.id = 'api-filter-lang';
+            langSel.title = 'Filter by language';
+            langSel.style.cssText =
+                'flex:1;min-width:90px;padding:5px 7px;background:#16181d;border:1px solid rgba(255,255,255,0.12);' +
+                "color:#e4e4e7;border-radius:7px;font-family:'VT323',monospace;font-size:13px;cursor:pointer;outline:none;";
+
+            const levelSel = document.createElement('select');
+            levelSel.id = 'api-filter-level';
+            levelSel.title = 'Filter by level';
+            levelSel.style.cssText = langSel.style.cssText;
+
+            // Populate filter options from current data
+            const langs = [...new Set(apiQuestions.map(q => q.language).filter(Boolean))].sort();
+            langSel.innerHTML = '<option value="">All langs</option>' +
+                langs.map(l => `<option value="${apiEscape(l)}">${apiEscape(l)}</option>`).join('');
+
+            const levels = [...new Set(apiQuestions.map(q => q.level).filter(Boolean))]
+                .sort((a, b) => apiLevelRank(a) - apiLevelRank(b));
+            levelSel.innerHTML = '<option value="">All levels</option>' +
+                levels.map(l => `<option value="${apiEscape(l)}">${apiEscape(l)}</option>`).join('');
+
+            langSel.addEventListener('change', apiApplyFiltersAndRedraw);
+            levelSel.addEventListener('change', apiApplyFiltersAndRedraw);
+
+            // Restore previously selected filters (survives re-scrape rebuilds)
+            if (prevSearch) searchInput.value = prevSearch;
+            if (prevLang && [...langSel.options].some(o => o.value === prevLang)) langSel.value = prevLang;
+            if (prevLevel && [...levelSel.options].some(o => o.value === prevLevel)) levelSel.value = prevLevel;
+
+            filterRow.appendChild(searchInput);
+            filterRow.appendChild(langSel);
+            filterRow.appendChild(levelSel);
+            dropdown.appendChild(filterRow);
+
+            // ── 5. Question List Body ───────────────────────────────────────
+            const body = document.createElement('div');
+            body.id = 'api-dropdown-body';
+            body.style.cssText = 'max-height:360px;overflow-y:auto;padding:10px 12px;';
+            dropdown.appendChild(body);
+
+            apiApplyFiltersAndRedraw();
+            apiUpdateToolbarState();
+        }
+
+        // ── State Machine Synchronization ──────────────────────────────────
+        function apiUpdateToolbarState() {
+            loadAutoSolverQueue();
+            const isQueueActive = Boolean(autoSolverEnabled && autoSolverQueue.length > 0);
+            const isRunning = isQueueActive && !autoSolverPaused;
+            const isPaused = isQueueActive && autoSolverPaused;
+            const hasQuestions = Boolean(apiRenderedList && apiRenderedList.length > 0 && apiLastFetch === 'ok');
+
+            // 1. Dropdown toggle button
+            const toggleBtn = document.getElementById('api-queue-toggle-btn');
+            if (toggleBtn) {
+                if (isRunning) {
+                    toggleBtn.innerHTML = '⏸ Pause';
+                    toggleBtn.className = 'api-ctrl-btn api-btn-pause';
+                    toggleBtn.disabled = false;
+                    toggleBtn.style.flex = '1';
+                } else if (isPaused) {
+                    toggleBtn.innerHTML = '▶ Resume';
+                    toggleBtn.className = 'api-ctrl-btn api-btn-start';
+                    toggleBtn.disabled = false;
+                    toggleBtn.style.flex = '1';
+                } else {
+                    const count = (apiRenderedList && apiRenderedList.length) || 0;
+                    toggleBtn.innerHTML = `▶ Start all${count > 0 ? ' (' + count + ')' : ''}`;
+                    toggleBtn.className = 'api-ctrl-btn api-btn-start';
+                    toggleBtn.disabled = !hasQuestions || apiLastFetch !== 'ok';
+                    toggleBtn.style.flex = '1';
+                }
+            }
+
+            // 2. Dropdown stop button (enabled only when queue is running or paused)
+            const stopBtn = document.getElementById('api-stop-btn');
+            if (stopBtn) {
+                stopBtn.disabled = !isQueueActive;
+            }
+
+            // 3. Dropdown clear button (icon-only, enabled only when paused or finished)
+            const clearBtn = document.getElementById('api-clear-btn');
+            if (clearBtn) {
+                const canClear = isPaused || (autoSolverQueue.length > 0 && !autoSolverEnabled);
+                clearBtn.disabled = !canClear;
+            }
+
+            apiUpdateQueueBanner();
+            updateFloatingHUD();
+        }
+
+        function apiHandleQueueToggle() {
+            loadAutoSolverQueue();
+            const isQueueActive = Boolean(autoSolverEnabled && autoSolverQueue.length > 0);
+            if (isQueueActive) {
+                apiTogglePauseQueue();
+            } else {
+                apiStartQueueFromVisible();
+            }
+        }
+
+        function apiUpdateQueueBanner() {
+            const banner = document.getElementById('api-queue-banner');
+            if (!banner) return;
+
+            loadAutoSolverQueue();
+            if (autoSolverEnabled && autoSolverQueue.length > 0) {
+                banner.style.display = 'flex';
+                const total = autoSolverQueue.length;
+                const current = Math.min(autoSolverCurrentIndex + 1, total);
+                const pct = Math.round((autoSolverCurrentIndex / total) * 100);
+                const currentItem = autoSolverQueue[autoSolverCurrentIndex] || {};
+
+                banner.innerHTML = `
+                    <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;color:${autoSolverPaused ? '#facc15' : '#4ade80'};">
+                        <span>${autoSolverPaused ? '⏸ QUEUE PAUSED' : '🚀 AUTO-SOLVING QUEUE'}: ${current} / ${total} (${pct}%)</span>
+                        <span>${autoSolverPaused ? 'Paused' : 'Active'}</span>
+                    </div>
+                    <div style="width:100%;height:5px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden;">
+                        <div style="height:100%;width:${pct}%;background:${autoSolverPaused ? 'linear-gradient(90deg,#eab308,#fde047)' : 'linear-gradient(90deg,#22c55e,#4ade80)'};transition:width 0.3s ease;"></div>
+                    </div>
+                    <div style="font-size:11px;color:#d4d4d8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                        Target: ${apiEscape(currentItem.problemName || ('Problem ' + currentItem.problemId))}
+                    </div>
+                `;
+            } else {
+                banner.style.display = 'none';
+            }
+        }
+
+        function apiApplyFiltersAndRedraw() {
+            const body = document.getElementById('api-dropdown-body');
+            if (!body) return;
+
+            // ── Loading / error / null states ───────────────────────────────
+            if (apiLastFetch === 'loading') {
+                body.innerHTML = `
+                    <div style="text-align:center;padding:32px 14px;">
+                        <div style="font-size:24px;margin-bottom:10px;animation:spin 2s linear infinite;display:inline-block;">🔄</div>
+                        <div style="font-size:13px;color:#a1a1aa;font-weight:600;">Loading questions from local API…</div>
+                        <div style="font-size:11px;color:#71717a;margin-top:4px;">Syncing browser session cookies…</div>
+                    </div>`;
+                return;
+            }
+            if (apiLastFetch === 'error') {
+                body.innerHTML = `
+                    <div style="text-align:center;padding:26px 14px;">
+                        <div style="font-size:24px;margin-bottom:8px;">⚠️</div>
+                        <div style="font-size:13px;color:#f87171;font-weight:600;">Cannot reach FastAPI server</div>
+                        <div style="font-size:11px;color:#a1a1aa;margin-top:4px;">${apiEscape(apiBaseUrl())}</div>
+                        <div style="font-size:11px;color:#71717a;margin-top:6px;">Start it: <code>python -m skillrack_scraper.api</code></div>
+                        <div style="font-size:11px;color:#71717a;margin-top:3px;">Then click <b>↻</b> in the header above.</div>
+                    </div>`;
+                return;
+            }
+
+            // ── Filter and sort ─────────────────────────────────────────────
+            const searchVal = (document.getElementById('api-search-input') || {}).value || '';
+            const langFilter = (document.getElementById('api-filter-lang') || {}).value || '';
+            const levelFilter = (document.getElementById('api-filter-level') || {}).value || '';
+
+            let list = apiQuestions;
+            if (searchVal.trim()) {
+                const s = searchVal.trim().toLowerCase();
+                list = list.filter(q =>
+                    (q.question && q.question.toLowerCase().includes(s)) ||
+                    (q.section && q.section.toLowerCase().includes(s)) ||
+                    (q.problem_set && q.problem_set.toLowerCase().includes(s)) ||
+                    (apiExtractId(q) && apiExtractId(q).includes(s))
+                );
+            }
+            if (langFilter) list = list.filter(q => String(q.language || '').toUpperCase().includes(langFilter.toUpperCase()));
+            if (levelFilter) list = list.filter(q => String(q.level || '').toUpperCase().includes(levelFilter.toUpperCase()));
+
+            const sorted = [...list].sort((a, b) =>
+                (apiLevelRank(a.level) - apiLevelRank(b.level)) ||
+                String(a.language || '').localeCompare(String(b.language || '')) ||
+                String(a.section || '').localeCompare(String(b.section || '')) ||
+                String(a.question || '').localeCompare(String(b.question || ''))
+            );
+            apiRenderedList = sorted;
+
+            const badge = document.getElementById('api-count-badge');
+            if (badge) badge.textContent = sorted.length + ' Incomplete';
+
+            // ── Empty state ─────────────────────────────────────────────────
+            if (sorted.length === 0) {
+                body.innerHTML = `
+                    <div style="text-align:center;padding:28px 14px;">
+                        <div style="font-size:24px;margin-bottom:8px;">✅</div>
+                        <div style="font-size:13px;color:#e4e4e7;font-weight:600;">No incomplete questions found</div>
+                        <div style="font-size:11px;color:#71717a;margin-top:5px;">Try <b>↻</b> in header or clear your search filters.</div>
+                    </div>`;
+                return;
+            }
+
+            // ── Question rows ───────────────────────────────────────────────
+            body.innerHTML = sorted.map((q, idx) => {
+                const qId = apiExtractId(q);
+                const lvlStyle = apiLevelBadgeColor(q.level);
+                return `
+                <div class="find-inc-item api-q-row" data-idx="${idx}" data-id="${apiEscape(qId)}">
+                    <div style="display:flex;gap:5px;align-items:center;margin-bottom:4px;">
+                        <span style="font-size:10px;padding:1px 6px;border-radius:6px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;background:${lvlStyle.bg};color:${lvlStyle.color};border:1px solid ${lvlStyle.border};">${apiEscape(q.level)}</span>
+                        <span style="font-size:10px;padding:1px 6px;border-radius:6px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;background:rgba(99,179,237,0.14);color:#63b3ed;border:1px solid rgba(99,179,237,0.25);">${apiEscape(q.language)}</span>
+                        ${qId ? `<span style="font-size:10px;color:#71717a;margin-left:auto;font-family:monospace;">#${apiEscape(qId)}</span>` : ''}
+                    </div>
+                    <div class="find-inc-title">${apiEscape(q.question)}</div>
+                    <div class="find-inc-meta">
+                        <span>${apiEscape(q.section)}${q.problem_set ? ' · ' + apiEscape(q.problem_set) : ''}</span>
+                        <span style="color:#4ade80;font-weight:600;font-size:11px;">Solve →</span>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function apiSyncCookieToBackend() {
+            // Build a full request-header style cookie string (JSESSIONID=...; oam...; AWSALB=...)
+            // GM_cookie.list reads HttpOnly cookies (JSESSIONID) that document.cookie cannot see.
+            const mergeCookies = (a, b) => {
+                const map = new Map();
+                String(a || '').split(';').concat(String(b || '').split(';')).forEach(part => {
+                    const eq = part.indexOf('=');
+                    if (eq > 0) map.set(part.slice(0, eq).trim(), part.slice(eq + 1).trim());
+                });
+                return [...map.entries()].filter(([k, v]) => k && v).map(([k, v]) => `${k}=${v}`).join('; ');
+            };
+
+            let cookie = '';
+            try {
+                cookie = await gmGetCookies();
+            } catch (e) {
+                console.warn('[FastAPI] gmGetCookies failed:', e);
+            }
+            // Safety net: union with document.cookie (non-HttpOnly cookies)
+            cookie = mergeCookies(cookie, document.cookie);
+
+            let hasSid = /JSESSIONID=/i.test(cookie);
+
+            // Recovery: GM_cookie may be unavailable (grant not applied / manager
+            // restriction). Ask SkillRack for a fresh session id via Set-Cookie.
+            if (!hasSid) {
+                try {
+                    const r = await gmFetch('https://www.skillrack.com/faces/candidate/codeprogram.xhtml');
+                    const raw = r.responseHeadersRaw || '';
+                    const matches = raw.match(/^set-cookie:\s*(JSESSIONID=[^;\r\n]+)/gim) || [];
+                    if (matches.length) {
+                        const sid = matches[matches.length - 1].replace(/^set-cookie:\s*/i, '').trim();
+                        cookie = mergeCookies(cookie, sid);
+                        hasSid = true;
+                        console.info('[FastAPI] Recovered JSESSIONID from Set-Cookie header');
+                    }
+                } catch (e) {
+                    console.warn('[FastAPI] Set-Cookie recovery fetch failed:', e);
+                }
+            }
+
+            if (!hasSid) {
+                // Do NOT clobber a possibly-good cookie.txt with AWSALB-only junk.
+                console.warn('[FastAPI] No JSESSIONID in collected cookies — skipping cookie sync');
+                showStatus('No JSESSIONID found — log into SkillRack first', '⚠️');
+                setTimeout(hideStatus, 5000);
+                return '';
+            }
+
+            try {
+                const res = await gmFetch(apiBaseUrl() + '/cookie', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookie: cookie.trim() })
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return cookie.trim();
+            } catch (e) {
+                console.warn('[FastAPI] Cookie sync note:', e);
+                return '';
+            }
+        }
+
+        async function apiFetchQuestions() {
+            apiLastFetch = 'loading';
+            apiApplyFiltersAndRedraw();
+            apiUpdateToolbarState();
+            try {
+                // Proactively sync current browser cookie to the Python server first
+                await apiSyncCookieToBackend();
+
+                const res = await gmFetch(apiBaseUrl() + '/questions');
+                if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + (res.statusText || 'request failed'));
+                const data = await res.json();
+                const list = Array.isArray(data) ? data : (data && Array.isArray(data.questions) ? data.questions : []);
+                apiQuestions = list;
+                apiLastFetch = 'ok';
+            } catch (err) {
+                console.warn('[FastAPI] Failed to fetch questions:', err);
+                apiQuestions = [];
+                apiLastFetch = 'error';
+            }
+            apiRenderIntoDropdown();
+        }
+
+        function apiFetchAndRender() {
+            ensureDropdown();
+            injectStyles();
+            if (apiLastFetch === null || apiLastFetch === 'error') {
+                apiRenderIntoDropdown();
+                apiFetchQuestions();
+            } else {
+                apiRenderIntoDropdown();
+            }
+        }
+
+        async function apiReScrapeAndRender() {
+            apiLastFetch = 'loading';
+            apiApplyFiltersAndRedraw();
+            apiUpdateToolbarState();
+            try {
+                const currentCookie = await gmGetCookies();
+                const res = await gmFetch(apiBaseUrl() + '/scrape/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookie: currentCookie || undefined })
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                await apiFetchQuestions();
+                showStatus('Re-scrape complete', '✅');
+                setTimeout(hideStatus, 4000);
+            } catch (err) {
+                console.warn('[FastAPI] Re-scrape failed:', err);
+                apiQuestions = [];
+                apiLastFetch = 'error';
+                apiRenderIntoDropdown();
+                showStatus('Re-scrape failed — server unreachable', '❌');
+                setTimeout(hideStatus, 5000);
+            }
+        }
+
+        // ── Floating Queue HUD & Minimized Pill (persistent overlay) ────────
+        let floatingHud = null;
+        let hudMinimized = (storage.getValue('killcode_hud_minimized') === 'true');
+        let dropdownMinimized = false;
+
+        function minimizeFindIncomplete() {
+            dropdownMinimized = true;
+            hideDropdown();
+            updateFloatingHUD();
+        }
+
+        function closeFindIncomplete() {
+            dropdownMinimized = false;
+            hideDropdown();
+            if (floatingHud && (!autoSolverEnabled || autoSolverQueue.length === 0)) {
+                floatingHud.style.display = 'none';
+            }
+        }
+
+        function ensureFloatingHUD() {
+            if (floatingHud) return floatingHud;
+            floatingHud = document.createElement('div');
+            floatingHud.id = 'killcode-autosolver-hud';
+            floatingHud.style.cssText =
+                'position:fixed;bottom:24px;left:24px;z-index:99999;display:none;' +
+                'max-width:calc(100vw - 32px);' +
+                'background:rgba(13,16,23,0.96);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);' +
+                'border:1px solid rgba(99,179,237,0.35);border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,0.8);' +
+                "color:#f4f4f5;font-family:'VT323',monospace;font-size:14px;overflow:hidden;user-select:none;" +
+                'transition:opacity 0.2s ease, transform 0.2s ease;';
+
+            floatingHud.addEventListener('click', (e) => e.stopPropagation());
+            floatingHud.addEventListener('mousedown', (e) => e.stopPropagation());
+
+            // Dragging logic
+            let isDragging = false;
+            let startX, startY, initLeft, initTop;
+
+            floatingHud.addEventListener('mousedown', (e) => {
+                const handle = e.target.closest('#hud-drag-handle') || (hudMinimized || dropdownMinimized ? floatingHud : null);
+                if (!handle || e.target.closest('button')) return;
+                isDragging = true;
+                const rect = floatingHud.getBoundingClientRect();
+                startX = e.clientX;
+                startY = e.clientY;
+                initLeft = rect.left;
+                initTop = rect.top;
+
+                floatingHud.style.right = 'auto';
+                floatingHud.style.bottom = 'auto';
+                floatingHud.style.left = `${initLeft}px`;
+                floatingHud.style.top = `${initTop}px`;
+
+                const onMouseMove = (ev) => {
+                    if (!isDragging) return;
+                    const deltaX = ev.clientX - startX;
+                    const deltaY = ev.clientY - startY;
+                    const maxLeft = Math.max(10, window.innerWidth - floatingHud.offsetWidth - 10);
+                    const maxTop = Math.max(10, window.innerHeight - floatingHud.offsetHeight - 10);
+                    const newLeft = Math.min(Math.max(10, initLeft + deltaX), maxLeft);
+                    const newTop = Math.min(Math.max(10, initTop + deltaY), maxTop);
+                    floatingHud.style.left = `${newLeft}px`;
+                    floatingHud.style.top = `${newTop}px`;
+                };
+
+                const onMouseUp = () => {
+                    isDragging = false;
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                };
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+
+            document.body.appendChild(floatingHud);
+            return floatingHud;
+        }
+
+        function updateFloatingHUD() {
+            loadAutoSolverQueue();
+            const isQueueActive = Boolean(autoSolverEnabled && autoSolverQueue.length > 0);
+
+            // If dropdown is open, hide redundant floating pill
+            if (dropdown && dropdown.style.display === 'flex' && dropdown.style.opacity !== '0') {
+                if (floatingHud) floatingHud.style.display = 'none';
+                return;
+            }
+
+            // If no queue and not minimized, hide
+            if (!isQueueActive && !dropdownMinimized) {
+                if (floatingHud) floatingHud.style.display = 'none';
+                return;
+            }
+
+            const hud = ensureFloatingHUD();
+            hud.style.display = 'block';
+            hud.style.opacity = '1';
+
+            if (isQueueActive) {
+                const total = autoSolverQueue.length;
+                const current = Math.min(autoSolverCurrentIndex + 1, total);
+                const pct = Math.round((autoSolverCurrentIndex / total) * 100);
+                const currentItem = autoSolverQueue[autoSolverCurrentIndex] || {};
+                const cleanTitle = apiEscape(currentItem.problemName || ('Problem #' + (currentItem.problemId || '')));
+
+                // Minimized pill state
+                hud.style.width = 'auto';
+                hud.style.borderRadius = '24px';
+                hud.innerHTML = `
+                    <div id="hud-drag-handle" style="display:flex;align-items:center;gap:7px;padding:6px 12px;cursor:pointer;background:rgba(255,255,255,0.03);">
+                        <span style="font-size:13px;font-weight:700;color:${autoSolverPaused ? '#facc15' : '#4ade80'};display:flex;align-items:center;gap:4px;">
+                            ${autoSolverPaused ? '⏸ PAUSED' : '● 🤖'} ${current}/${total} (${pct}%)
+                        </span>
+                        <span style="font-size:11px;color:#a1a1aa;margin-left:2px;">↗</span>
+                        <button id="hud-pill-close-btn" class="api-ctrl-btn api-btn-close" style="width:18px;height:18px;font-size:9px;margin-left:4px;" title="Close">✕</button>
+                    </div>`;
+
+                hud.onclick = (e) => {
+                    if (e.target.closest('#hud-pill-close-btn')) {
+                        e.stopPropagation();
+                        closeFindIncomplete();
+                        return;
+                    }
+                    dropdownMinimized = false;
+                    const btn = document.getElementById('find-incomplete-btn');
+                    showDropdown(btn);
+                    apiFetchAndRender();
+                };
+            } else {
+                // Idle state minimized pill (e.g. "⚡ 14 Incomplete ↗ ✕")
+                const count = (apiRenderedList && apiRenderedList.length) || apiQuestions.length || 0;
+                hud.style.width = 'auto';
+                hud.style.borderRadius = '24px';
+                hud.innerHTML = `
+                    <div id="hud-drag-handle" style="display:flex;align-items:center;gap:7px;padding:6px 12px;cursor:pointer;background:rgba(255,255,255,0.03);">
+                        <span style="font-size:13px;font-weight:700;color:#63b3ed;display:flex;align-items:center;gap:4px;">
+                            ⚡ ${count} Incomplete
+                        </span>
+                        <span style="font-size:11px;color:#a1a1aa;margin-left:2px;">↗</span>
+                        <button id="hud-pill-close-btn" class="api-ctrl-btn api-btn-close" style="width:18px;height:18px;font-size:9px;margin-left:4px;" title="Close">✕</button>
+                    </div>`;
+
+                hud.onclick = (e) => {
+                    if (e.target.closest('#hud-pill-close-btn')) {
+                        e.stopPropagation();
+                        closeFindIncomplete();
+                        return;
+                    }
+                    dropdownMinimized = false;
+                    const btn = document.getElementById('find-incomplete-btn');
+                    showDropdown(btn);
+                    apiFetchAndRender();
+                };
+            }
+        }
+
+        // ── Queue Controls: Start / Pause / Stop / Clear ─────────────────────
+        function apiStartQueueFromVisible() {
+            if (!apiRenderedList || apiRenderedList.length === 0) {
+                showStatus('No questions in current filter', '⚠️');
+                setTimeout(hideStatus, 3000);
+                return;
+            }
+
+            enableAutoSolverSettings();
+            autoSolverQueue = apiRenderedList.map(q => {
+                const problemId = apiExtractId(q);
+                return {
+                    problemId,
+                    problemName: q.question || q.link || ('Problem ' + problemId),
+                    packName: q.language || '',
+                    subName: q.section || '',
+                    partName: q.problem_set || ''
+                };
+            }).filter(item => Boolean(item.problemId && /^\d+$/.test(String(item.problemId))));
+
+            autoSolverCurrentIndex = 0;
+            autoSolverEnabled = true;
+            autoSolverPaused = false;
+            dropdownMinimized = true;
+            saveAutoSolverQueue();
+            apiUpdateToolbarState();
+
+            showStatus(`Auto-Solver: Starting queue (${autoSolverQueue.length} questions)…`, '🚀');
+            hideDropdown();
+            navigateToNextProblem();
+        }
+
+        function apiTogglePauseQueue() {
+            autoSolverPaused = !autoSolverPaused;
+            saveAutoSolverQueue();
+            apiUpdateToolbarState();
+            showStatus(autoSolverPaused ? 'Auto-Solver paused' : 'Auto-Solver resumed', autoSolverPaused ? '⏸' : '▶');
+            setTimeout(hideStatus, 3000);
+        }
+
+        function apiStopQueue() {
+            autoSolverEnabled = false;
+            autoSolverPaused = false;
+            saveAutoSolverQueue();
+            apiUpdateToolbarState();
+            showStatus('Auto-Solver stopped', '⏹');
+            setTimeout(hideStatus, 3000);
+        }
+
+        function apiClearQueue() {
+            clearAutoSolverQueue();
+            autoSolverPaused = false;
+            apiUpdateToolbarState();
+            showStatus('Queue cleared', '🗑');
+            setTimeout(hideStatus, 3000);
+        }
+
+        async function apiSolveQuestion(q) {
+            if (!q) return;
+            let problemId = apiExtractId(q);
+            if (!problemId || !/^\d+$/.test(String(problemId))) {
+                showStatus('Invalid problem ID for this question', '⚠️');
+                setTimeout(hideStatus, 4000);
+                return;
+            }
+
+            autoSolverQueue = [{
+                problemId,
+                problemName: q.question || q.link || ('Problem ' + problemId),
+                packName: q.language || '',
+                subName: (q.section || ''),
+                partName: (q.problem_set || '')
+            }];
+            autoSolverCurrentIndex = 0;
+            autoSolverEnabled = true;
+            autoSolverPaused = false;
+            dropdownMinimized = true;
+            enableAutoSolverSettings();
+            saveAutoSolverQueue();
+            apiUpdateToolbarState();
+
+            hideDropdown();
+            showStatus(`Navigating to ${autoSolverQueue[0].problemName}…`, '🚀');
+            try {
+                await navigateToNextProblem();
+            } catch (err) {
+                console.warn('[FastAPI] Navigation failed:', err);
+                showStatus('Navigation failed: ' + err.message, '❌');
+                setTimeout(hideStatus, 5000);
+            }
+            setTimeout(hideStatus, 1500);
+        }
+
+        function initFastAPIQuestionsPanel() {
+            if (!SETTINGS.enableFastAPIQuestions) return;
+            if (!window.location.hostname.includes('skillrack.com')) return;
+
+            // Delegate clicks on question rows inside the dropdown to the auto-solve flow.
+            document.addEventListener('click', (e) => {
+                const row = e.target.closest('.api-q-row');
+                if (!row) return;
+                if (!dropdown || !dropdown.contains(row)) return;
+                const rows = [...dropdown.querySelectorAll('.api-q-row')];
+                const idx = rows.indexOf(row);
+                const q = apiRenderedList[idx];
+                if (q) apiSolveQuestion(q);
+            });
+
+            // Edge case: Escape closes/minimizes the panel instead of leaving it stuck open.
+            // If a solve queue is running, minimize to HUD rather than fully hiding it.
+            document.addEventListener('keydown', (e) => {
+                if (e.key !== 'Escape') return;
+                if (!dropdown || dropdown.style.display === 'none' || dropdown.style.opacity === '0') return;
+                if (autoSolverEnabled && autoSolverQueue.length > 0) {
+                    dropdownMinimized = true;
+                }
+                hideDropdown();
+                updateFloatingHUD();
+            });
+        }
+
         function init() {
+            initFastAPIQuestionsPanel();
             if (!SETTINGS.enableFindIncomplete) return;
             injectMenuButton();
+
+            // Check for pending auto-solver queue on page load & show persistent HUD if active
+            checkPendingAutoSolverQueue();
+            updateFloatingHUD();
 
             const obs = new MutationObserver(() => {
                 if (!document.getElementById('find-incomplete-btn')) injectMenuButton();
             });
             if (document.body) obs.observe(document.body, { childList: true, subtree: true });
 
-            document.addEventListener('click', e => {
-                if (dropdown && dropdown.style.display === 'block' && 
-                    !dropdown.contains(e.target) && 
-                    e.target.id !== 'find-incomplete-btn' && 
-                    !e.target.closest('#find-incomplete-btn')) {
-                    hideDropdown();
-                }
+            // Auto-minimize Find Incomplete dropdown on outside click/touch (collapses into compact pill badge)
+            document.addEventListener('click', (e) => {
+                if (!dropdown || dropdown.style.display === 'none' || dropdown.style.opacity === '0') return;
+                
+                // If click is inside dropdown or on trigger button or on HUD pill, do not minimize
+                if (dropdown.contains(e.target) || (e.composedPath && e.composedPath().includes(dropdown))) return;
+                if (e.target.id === 'find-incomplete-btn' || e.target.closest('#find-incomplete-btn')) return;
+                if (floatingHud && (floatingHud.contains(e.target) || (e.composedPath && e.composedPath().includes(floatingHud)))) return;
+
+                // Minimize to compact pill badge on outside click!
+                minimizeFindIncomplete();
             });
         }
 
@@ -10621,6 +12817,7 @@ SOLVING APPROACH:
             init,
             loadAndRenderTracks,
             getState: () => currentState,
+            updateHUD: updateFloatingHUD,
             cancel: () => {
                 if (activeController) activeController.abort();
                 setState(STATE.IDLE);
@@ -10646,4 +12843,441 @@ SOLVING APPROACH:
         window.FindIncompleteModule = FindIncompleteModule;
     });
 
-}                 
+    // ============================================
+    // 13. WASD HOTKEY CONTROL LAYER
+    // W = Invisible Toggle (opacity 0 <-> 1, clicks/functionality intact, persistent)
+    // A = Find Incomplete / Unsolved Questions (FindIncompleteModule)
+    // S = Kill Switch Toggle (Stop <-> Re-arm, persistent)
+    // D = Trigger AI Solution (generateAISolution)
+    // ============================================
+    const WASDBridge = (function () {
+        'use strict';
+
+        const STORAGE_KEY_GHOST = 'killcode_wasd_ghosted';
+        const STORAGE_KEY_STOPPED = 'killcode_wasd_stopped';
+        const TRANSITION_MS = 260;
+
+        // ── State (single source of truth with persistence) ───────────────────
+        const state = {
+            running: true,       // loaded from localStorage
+            ghosted: false,      // loaded from localStorage
+            transitioning: false // debounce flag — prevents mid-transition re-entry
+        };
+
+        function loadSavedState() {
+            try {
+                const savedGhost = localStorage.getItem(STORAGE_KEY_GHOST) === 'true';
+                const savedStopped = localStorage.getItem(STORAGE_KEY_STOPPED) === 'true' || localStorage.getItem('autosolver_stopped') === 'true';
+                state.ghosted = savedGhost;
+                state.running = !savedStopped;
+                if (savedStopped) {
+                    window.__kcStopped = true;
+                }
+            } catch (e) {
+                console.debug('[WASD] Error loading saved state:', e);
+            }
+        }
+
+        function saveGhostState(ghosted) {
+            try {
+                if (ghosted) localStorage.setItem(STORAGE_KEY_GHOST, 'true');
+                else localStorage.removeItem(STORAGE_KEY_GHOST);
+            } catch (_) {}
+        }
+
+        function saveRunningState(running) {
+            try {
+                if (!running) {
+                    localStorage.setItem(STORAGE_KEY_STOPPED, 'true');
+                    localStorage.setItem('autosolver_stopped', 'true');
+                } else {
+                    localStorage.removeItem(STORAGE_KEY_STOPPED);
+                    localStorage.removeItem('autosolver_stopped');
+                }
+            } catch (_) {}
+        }
+
+        // ── Zero-Flicker Global Ghost Stylesheet ───────────────────────────────
+        function applyGhostStylesheet(enable) {
+            let tag = document.getElementById('kc-ghost-active-style');
+            if (enable) {
+                if (!tag) {
+                    tag = document.createElement('style');
+                    tag.id = 'kc-ghost-active-style';
+                    document.head.appendChild(tag);
+                }
+                tag.textContent = `
+                    #bypass-settings-panel,
+                    #find-incomplete-status,
+                    #find-incomplete-dropdown,
+                    #ai-solution-btn,
+                    #find-incomplete-btn,
+                    #auto-solver-stop,
+                    div[id^="auto-solver"],
+                    button[title="Bypass Settings"] {
+                        opacity: 0 !important;
+                        pointer-events: auto !important;
+                        transition: opacity ${TRANSITION_MS}ms ease !important;
+                    }
+                `;
+            } else {
+                if (tag) tag.remove();
+            }
+        }
+
+        // ── CSS injection ─────────────────────────────────────────────────────
+        function injectStyles() {
+            if (document.getElementById('kc-wasd-styles')) return;
+            const style = document.createElement('style');
+            style.id = 'kc-wasd-styles';
+            style.textContent = `
+                .kc-ghost-target {
+                    opacity: 0 !important;
+                    pointer-events: auto !important;
+                    transition: opacity ${TRANSITION_MS}ms ease !important;
+                }
+                .kc-ghost-reveal {
+                    opacity: 1 !important;
+                    pointer-events: auto !important;
+                    transition: opacity ${TRANSITION_MS}ms ease !important;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        // ── Ghost target selectors ────────────────────────────────────────────
+        const STATIC_GHOST_SELECTORS = [
+            '#bypass-settings-panel',
+            '#find-incomplete-status',
+            '#find-incomplete-dropdown',
+            '#ai-solution-btn',
+            '#find-incomplete-btn'
+        ];
+
+        // Dynamic element refs
+        let _settingsBtnRef = null;
+        let _statusBarRef = null;
+
+        function getGhostTargets() {
+            const seen = new Set();
+            const targets = [];
+
+            const add = (el) => {
+                // Guard: reject null and detached DOM nodes
+                if (el && !seen.has(el) && document.contains(el)) {
+                    seen.add(el);
+                    targets.push(el);
+                }
+            };
+
+            for (const sel of STATIC_GHOST_SELECTORS) {
+                add(document.querySelector(sel));
+            }
+            add(_settingsBtnRef);
+            add(_statusBarRef);
+
+            // AutoSolver status bar container
+            const stopBtn = document.getElementById('auto-solver-stop');
+            if (stopBtn) add(stopBtn.parentElement);
+
+            return targets;
+        }
+
+        // ── W — Invisible Mode Toggle (Persistent) ────────────────────────────
+        // 1st press: opacity 0 (clicks remain active, saved to storage)
+        // 2nd press: opacity 1
+        function doGhostToggle() {
+            if (state.transitioning) return;
+            state.transitioning = true;
+
+            const targets = getGhostTargets();
+
+            if (!state.ghosted) {
+                // Turn invisible
+                state.ghosted = true;
+                saveGhostState(true);
+                applyGhostStylesheet(true);
+
+                targets.forEach(el => {
+                    el.classList.remove('kc-ghost-reveal');
+                    el.classList.add('kc-ghost-target');
+                });
+                console.debug('[WASD] W → Invisible Mode ON (saved to storage, clicks preserved)');
+            } else {
+                // Turn visible
+                state.ghosted = false;
+                saveGhostState(false);
+                applyGhostStylesheet(false);
+
+                targets.forEach(el => {
+                    el.classList.remove('kc-ghost-target');
+                    el.classList.add('kc-ghost-reveal');
+                });
+                console.debug('[WASD] W → Visible Mode ON (saved to storage, opacity: 1 restored)');
+                setTimeout(() => {
+                    targets.forEach(el => el.classList.remove('kc-ghost-reveal'));
+                }, TRANSITION_MS + 20);
+            }
+
+            setTimeout(() => { state.transitioning = false; }, TRANSITION_MS + 20);
+        }
+
+        // ── A — Find Incomplete / Unsolved Questions ──────────────────────────
+        function doFindIncomplete() {
+            try {
+                // 1. If FindIncompleteModule has loadAndRenderTracks, trigger scan
+                if (typeof FindIncompleteModule !== 'undefined') {
+                    const incBtn = document.getElementById('find-incomplete-btn');
+                    if (incBtn) {
+                        incBtn.click();
+                    } else if (typeof FindIncompleteModule.loadAndRenderTracks === 'function') {
+                        FindIncompleteModule.loadAndRenderTracks(true);
+                    }
+                    console.debug('[WASD] A → Triggered Find Incomplete Questions Scan');
+                    return;
+                }
+            } catch (e) {
+                console.debug('[WASD] A → FindIncompleteModule trigger error:', e);
+            }
+
+            // Fallback: click find-incomplete-btn if present
+            const fallbackBtn = document.getElementById('find-incomplete-btn');
+            if (fallbackBtn) {
+                fallbackBtn.click();
+                console.debug('[WASD] A → Clicked #find-incomplete-btn');
+            }
+        }
+
+        // ── S — Toggle Kill Switch (Persistent) ───────────────────────────────
+        // 1st press: stops all automation and cleans up UI states
+        // 2nd press: re-arms everything cleanly
+        function doStop() {
+            if (state.running) {
+                // ── STOP path ──────────────────────────────────────────────
+                state.running = false;
+                window.__kcStopped = true;
+                saveRunningState(false);
+
+                // 1. Stop AutoSolver
+                try {
+                    if (typeof AutoSolver !== 'undefined' && typeof AutoSolver.stop === 'function') {
+                        AutoSolver.stop();
+                        console.debug('[WASD] S → AutoSolver.stop() — shouldStop set, AbortController aborted');
+                    }
+                } catch (e) {
+                    console.debug('[WASD] S → AutoSolver.stop() threw (non-fatal):', e);
+                }
+
+                // 2. Cancel FindIncompleteModule
+                try {
+                    if (typeof FindIncompleteModule !== 'undefined' && typeof FindIncompleteModule.cancel === 'function') {
+                        FindIncompleteModule.cancel();
+                        console.debug('[WASD] S → FindIncompleteModule.cancel() called');
+                    }
+                } catch (e) {
+                    console.debug('[WASD] S → FindIncompleteModule.cancel() threw (non-fatal):', e);
+                }
+
+                // 3. UI Cleanup: Reset AI Solution button if stuck in loading/generating state
+                const aiBtn = document.getElementById('ai-solution-btn');
+                if (aiBtn) {
+                    aiBtn.disabled = false;
+                    try {
+                        if (typeof getAiButtonMarkup === 'function') {
+                            aiBtn.innerHTML = getAiButtonMarkup('AI Solution');
+                        }
+                    } catch (_) {}
+                    aiBtn.style.opacity = '1';
+                }
+
+                // 4. UI Cleanup: Close any open dropdowns/panels
+                const settingsPanel = document.getElementById('bypass-settings-panel');
+                if (settingsPanel && settingsPanel.style.display !== 'none') {
+                    settingsPanel.style.display = 'none';
+                }
+                const incDropdown = document.getElementById('find-incomplete-dropdown');
+                if (incDropdown && incDropdown.style.display !== 'none') {
+                    incDropdown.style.display = 'none';
+                }
+
+                // 5. Ghost State Preservation
+                if (state.ghosted) {
+                    applyGhostStylesheet(true);
+                    getGhostTargets().forEach(el => {
+                        el.classList.remove('kc-ghost-reveal');
+                        el.classList.add('kc-ghost-target');
+                    });
+                }
+
+                console.debug('[WASD] S → ■ STOPPED — saved to storage, all automation cancelled');
+
+            } else {
+                // ── RE-ARM path ────────────────────────────────────────────
+                state.running = true;
+                window.__kcStopped = false;
+                saveRunningState(true);
+
+                // Resume AutoSolver
+                try {
+                    if (typeof AutoSolver !== 'undefined' && typeof AutoSolver.resume === 'function') {
+                        AutoSolver.resume();
+                        console.debug('[WASD] S → AutoSolver.resume() — re-armed');
+                    }
+                } catch (e) {
+                    console.debug('[WASD] S → AutoSolver.resume() threw (non-fatal):', e);
+                }
+
+                // If ghost mode is active, maintain invisibility on re-arm
+                if (state.ghosted) {
+                    applyGhostStylesheet(true);
+                    getGhostTargets().forEach(el => {
+                        el.classList.remove('kc-ghost-reveal');
+                        el.classList.add('kc-ghost-target');
+                    });
+                }
+
+                console.debug('[WASD] S → ● RUNNING — saved to storage, automation re-armed');
+            }
+        }
+
+        // ── D — Trigger AI Solution ───────────────────────────────────────────
+        function doAISolve() {
+            try {
+                if (typeof generateAISolution === 'function') {
+                    generateAISolution();
+                    console.debug('[WASD] D → generateAISolution() triggered directly');
+                    return;
+                }
+            } catch (e) {
+                console.debug('[WASD] D → generateAISolution threw (non-fatal):', e);
+            }
+
+            // Fallback: click AI Solution button
+            const aiBtn = document.getElementById('ai-solution-btn');
+            if (aiBtn) {
+                aiBtn.click();
+                console.debug('[WASD] D → Clicked #ai-solution-btn');
+            } else {
+                console.warn('[WASD] D → No AI Solution button found on page');
+            }
+        }
+
+
+        // ── Input guard ───────────────────────────────────────────────────────
+        function isTypingTarget(el) {
+            if (!el) return false;
+            const tag = (el.tagName || '').toUpperCase();
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+            if (el.isContentEditable) return true;
+            if (el.getAttribute && el.getAttribute('contenteditable') === 'true') return true;
+            if (el.classList) {
+                if (el.classList.contains('ace_text-input') ||
+                    el.classList.contains('ace_editor') ||
+                    el.classList.contains('CodeMirror-code')) return true;
+            }
+            let p = el.parentElement;
+            for (let i = 0; i < 4 && p; i++) {
+                if (p.classList && (p.classList.contains('ace_editor') ||
+                                    p.classList.contains('CodeMirror'))) return true;
+                p = p.parentElement;
+            }
+            return false;
+        }
+
+        // ── Global keydown listener ───────────────────────────────────────────
+        function onKeyDown(e) {
+            if (isTypingTarget(document.activeElement)) return;
+            if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+            switch (e.key.toLowerCase()) {
+                case 'w': e.preventDefault(); doGhostToggle();  break;
+                case 'a': e.preventDefault(); doFindIncomplete(); break;
+                case 's': e.preventDefault(); doStop();          break;
+                case 'd': e.preventDefault(); doAISolve();       break;
+            }
+        }
+
+        // ── Resolve dynamic UI refs ───────────────────────────────────────────
+        function captureUIRefs() {
+            let polls = 0;
+            const MAX_POLLS = 40;
+            const poll = setInterval(() => {
+                polls++;
+                if (!_settingsBtnRef) {
+                    document.querySelectorAll('button').forEach(btn => {
+                        const s = btn.style;
+                        if (s.position === 'fixed' && s.bottom === '24px' && s.right === '24px') {
+                            _settingsBtnRef = btn;
+                        }
+                    });
+                }
+                if (!_statusBarRef) {
+                    const stopBtn = document.getElementById('auto-solver-stop');
+                    if (stopBtn) _statusBarRef = stopBtn.parentElement || stopBtn;
+                }
+                if ((_settingsBtnRef && _statusBarRef) || polls >= MAX_POLLS) {
+                    clearInterval(poll);
+                }
+            }, 800);
+        }
+
+        // ── SPA navigation guard: re-apply ghost after SkillRack AJAX DOM rebuilds
+        function setupSPAGuard() {
+            const observer = new MutationObserver(() => {
+                if (!state.ghosted) return;
+                for (const sel of STATIC_GHOST_SELECTORS) {
+                    const el = document.querySelector(sel);
+                    if (el && document.contains(el) &&
+                        !el.classList.contains('kc-ghost-target')) {
+                        el.classList.remove('kc-ghost-reveal');
+                        el.classList.add('kc-ghost-target');
+                    }
+                }
+                if (_settingsBtnRef && !document.contains(_settingsBtnRef)) _settingsBtnRef = null;
+                if (_statusBarRef && !document.contains(_statusBarRef)) _statusBarRef = null;
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+        }
+
+        // ── Init ──────────────────────────────────────────────────────────────
+        function init() {
+            loadSavedState();
+            injectStyles();
+            if (state.ghosted) {
+                applyGhostStylesheet(true);
+            }
+            document.addEventListener('keydown', onKeyDown, { capture: true });
+
+            const attach = () => {
+                captureUIRefs();
+                setupSPAGuard();
+                if (state.ghosted) {
+                    getGhostTargets().forEach(el => el.classList.add('kc-ghost-target'));
+                }
+            };
+
+            if (document.body) {
+                attach();
+            } else {
+                document.addEventListener('DOMContentLoaded', attach);
+            }
+
+            console.log(`[WASD] Hotkey layer ready — Mode: ${state.ghosted ? 'INVISIBLE' : 'VISIBLE'} | State: ${state.running ? 'RUNNING' : 'STOPPED'}`);
+        }
+
+        return { init, state, doGhostToggle, doFindIncomplete, doStop, doAISolve };
+    })();
+
+    // Initialize WASDBridge when script is enabled and DOM is ready
+    onScriptEnabled(() => {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => setTimeout(WASDBridge.init, 450));
+        } else {
+            setTimeout(WASDBridge.init, 450);
+        }
+        // Expose on window for console-level manual control
+        window.WASDBridge = WASDBridge;
+    });
+
+}
+
