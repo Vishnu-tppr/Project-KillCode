@@ -263,7 +263,7 @@ function mainCode() {
     // ============================================
     // SCRIPT VERSION & REMOTE URLS
     // ============================================
-    const SCRIPT_VERSION = '5.0';
+    const SCRIPT_VERSION = '5.1';
     const REMOTE_SCRIPT_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js';
     const KILL_SWITCH_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/kill.txt';
     const DISCLAIMER_ACCEPTED_KEY = 'skillrack_bypass_disclaimer_accepted';
@@ -295,19 +295,23 @@ function mainCode() {
             });
             if (!response.ok) {
                 console.log('[SkillRack Bypass] Kill switch check failed, allowing script to run');
-                return true; // Allow if can't fetch
+                localStorage.removeItem(SCRIPT_DISABLED_KEY);
+                return true;
             }
             const text = (await response.text()).trim().toLowerCase();
-            if (text === 'false') {
+            // If explicitly set to false/disabled/kill -> disable script
+            if (text === 'false' || text === 'disabled' || text === 'kill' || text === '0') {
                 console.log('[SkillRack Bypass] Kill switch activated - script disabled');
                 localStorage.setItem(SCRIPT_DISABLED_KEY, 'true');
                 return false;
             }
+            // Otherwise (true/enabled/1) -> script is active and allowed
             localStorage.removeItem(SCRIPT_DISABLED_KEY);
             return true;
         } catch (e) {
             console.log('[SkillRack Bypass] Kill switch check error:', e);
-            return true; // Allow if error
+            localStorage.removeItem(SCRIPT_DISABLED_KEY);
+            return true;
         }
     };
 
