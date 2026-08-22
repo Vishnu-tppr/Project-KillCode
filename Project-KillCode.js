@@ -94,7 +94,7 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
             } catch (e) {}
         }
 
-        // 3. Fallback: Parse document.cookie
+        // 3. Fallback: Parse document.cookie (non-HttpOnly cookies only)
         if (typeof document !== 'undefined' && document.cookie) {
             for (const part of document.cookie.split(';')) {
                 const eqIdx = part.indexOf('=');
@@ -106,6 +106,58 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
                     }
                 }
             }
+        }
+
+        // 4. CRITICAL: Extract HttpOnly JSESSIONID via live request
+        // GM_cookie.list often doesn't return HttpOnly cookies. Make a real request
+        // via GM_xmlhttpRequest and capture the Cookie request header that the browser sends.
+        if (!cookieMap.has('JSESSIONID') && typeof GM_xmlhttpRequest !== 'undefined') {
+            try {
+                const req = await new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: 'https://www.skillrack.com/faces/candidate/codetutor.xhtml',
+                        // Don't set Cookie header - let browser attach it automatically
+                        anonymous: false, // Use browser's cookie jar
+                        onload: function(response) {
+                            // The browser's actual cookie header was sent with the request
+                            // Check if response has Set-Cookie for session refresh
+                            resolve(response);
+                        },
+                        onerror: function(err) {
+                            reject(err);
+                        }
+                    });
+                });
+                // If request succeeded, the browser sent its cookies automatically
+                // Check response for Set-Cookie (session refresh)
+                if (req && req.responseHeadersRaw) {
+                    const setCookieMatches = req.responseHeadersRaw.match(/^set-cookie:\s*(JSESSIONID=[^;\r\n]+)/gim) || [];
+                    if (setCookieMatches.length) {
+                        const sid = setCookieMatches[setCookieMatches.length - 1].replace(/^set-cookie:\s*/i, '').trim();
+                        cookieMap.set('JSESSIONID', sid.split(';')[0].split('=')[1]);
+                        console.debug('[KillCode:GM_cookie] Extracted JSESSIONID from Set-Cookie:', sid.substring(0, 30) + '...');
+                    }
+                }
+            } catch (e) {
+                console.debug('[KillCode:GM_cookie] Live request fallback failed:', e);
+            }
+        }
+
+        // 5. DOM fallback: JSESSIONID sometimes appears in form action URLs
+        if (!cookieMap.has('JSESSIONID')) {
+            try {
+                const els = document.querySelectorAll('form[action*="jsessionid="], a[href*="jsessionid="], link[href*="jsessionid="]');
+                for (const el of els) {
+                    const attr = el.getAttribute('action') || el.getAttribute('href') || '';
+                    const match = attr.match(/jsessionid=([A-Za-z0-9.\-_]{16,})/i);
+                    if (match && match[1]) {
+                        cookieMap.set('JSESSIONID', match[1]);
+                        console.debug('[KillCode:GM_cookie] Extracted JSESSIONID from DOM:', match[1].substring(0, 30) + '...');
+                        break;
+                    }
+                }
+            } catch (e) {}
         }
 
         if (cookieMap.size === 0) return '';
@@ -11750,6 +11802,14 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                     0%, 100% { box-shadow: 0 0 10px rgba(99, 179, 237, 0.2); }
                     50% { box-shadow: 0 0 18px rgba(99, 179, 237, 0.45); }
                 }
+                @keyframes pulse {
+                    0%, 100% { opacity: 1; transform: scale(1); }
+                    50% { opacity: 0.7; transform: scale(1.02); }
+                }
+                @keyframes shimmer {
+                    0% { transform: translateX(-100%); }
+                    100% { transform: translateX(200%); }
+                }
                 .find-inc-item {
                     display: flex;
                     flex-direction: column;
@@ -11999,6 +12059,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
         let apiQuestions = [];
         let apiLastFetch = null; // null | 'ok' | 'loading' | 'error'
         let apiRenderedList = []; // rows currently visible
+        let apiScrapeProgress = { percent: 0, task: '', count: 0 };
         let autoSolverPaused = false;
 
         function apiBaseUrl() {
@@ -12070,25 +12131,68 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
 
             const cookieBtn = document.createElement('button');
             cookieBtn.className = 'api-ctrl-btn api-btn-icon';
-            cookieBtn.title = 'Set / Paste Cookie override';
+            cookieBtn.title = 'Set / Paste Cookie override (shows current cookie status)';
             cookieBtn.innerHTML = '🔑';
             cookieBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                const existing = storage.getValue('skillrack_custom_cookie', '') || await gmGetCookies();
-                const input = prompt('Paste full SkillRack Cookie (containing JSESSIONID=...):', existing);
-                if (input && input.trim()) {
-                    const clean = input.trim();
-                    storage.setValue('skillrack_custom_cookie', clean);
+
+                // Fetch current cookie status from Python server
+                let cookieStatus = { has_cookie: false, cookie_preview: '' };
+                try {
+                    const res = await gmFetch(apiBaseUrl() + '/cookie/status');
+                    if (res.ok) cookieStatus = await res.json();
+                } catch (err) {}
+
+                // Get auto-collected cookie
+                const autoCookie = await gmGetCookies();
+                const savedCookie = storage.getValue('skillrack_custom_cookie', '');
+                const activeCookie = savedCookie || autoCookie;
+
+                const hasJsessionid = /JSESSIONID=/i.test(activeCookie);
+                const preview = activeCookie ? activeCookie.substring(0, 80) + (activeCookie.length > 80 ? '…' : '') : '(none)';
+
+                const html = `
+                    <div style="font-family:monospace;font-size:12px;line-height:1.5;max-width:500px;">
+                        <div style="margin-bottom:12px;padding:8px;background:rgba(255,255,255,0.05);border-radius:6px;">
+                            <b>Current Cookie Status:</b><br>
+                            <span style="color:${hasJsessionid ? '#4ade80' : '#f87171'}">${hasJsessionid ? '✅ JSESSIONID present' : '❌ JSESSIONID MISSING'}</span> | ${cookieStatus.has_cookie ? 'Server has cookie' : 'Server: no cookie'}
+                        </div>
+                        <div style="margin-bottom:8px;"><b>Preview (auto-collected):</b><br>
+                            <code style="color:#93c5fd;word-break:break-all;">${preview}</code>
+                        </div>
+                        <label style="display:block;margin-bottom:4px;"><b>Paste full Cookie header from DevTools (Request Headers → Cookie):</b></label>
+                        <textarea id="cookie-input" style="width:100%;min-height:80px;padding:8px;background:#0d1117;border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:#e4e4e7;font-family:monospace;font-size:11px;resize:vertical;outline:none;">${activeCookie}</textarea>
+                        <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;">
+                            <button id="cookie-cancel" style="padding:6px 14px;background:transparent;border:1px solid rgba(255,255,255,0.2);color:#9ca3af;border-radius:6px;cursor:pointer;">Cancel</button>
+                            <button id="cookie-save" style="padding:6px 14px;background:#22c55e;border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">Save & Re-scrape</button>
+                        </div>
+                    </div>
+                `;
+
+                const modal = document.createElement('div');
+                modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:100000;display:flex;align-items:center;justify-content:center;';
+                modal.innerHTML = `<div style="background:#18181b;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:20px;max-width:560px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">${html}</div>`;
+                document.body.appendChild(modal);
+
+                modal.querySelector('#cookie-cancel').onclick = () => modal.remove();
+                modal.querySelector('#cookie-save').onclick = async () => {
+                    const input = modal.querySelector('#cookie-input').value.trim();
+                    if (!input) { alert('Cookie cannot be empty'); return; }
+                    if (!/JSESSIONID=/i.test(input)) { if (!confirm('⚠️ No JSESSIONID detected. Cookie may not work. Save anyway?')) return; }
+
+                    storage.setValue('skillrack_custom_cookie', input);
+                    modal.remove();
                     showStatus('Saving cookie & re-scraping…', '🔑');
                     try {
                         await gmFetch(apiBaseUrl() + '/cookie', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ cookie: clean })
+                            body: JSON.stringify({ cookie: input })
                         });
                     } catch (err) {}
                     apiReScrapeAndRender();
-                }
+                };
+                modal.querySelector('#cookie-input').focus();
             });
 
             const reScrapeBtn = document.createElement('button');
@@ -12324,12 +12428,102 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
 
             // ── Loading / error / null states ───────────────────────────────
             if (apiLastFetch === 'loading') {
+                const pct = Math.max(0, Math.min(100, apiScrapeProgress.percent || 0));
+                const task = apiScrapeProgress.task || 'Syncing session & crawling packs…';
+                const found = apiScrapeProgress.count || 0;
+
+                // Define crawl stages for step indicator
+                const stages = [
+                    { key: 'init', label: 'Init', range: [0, 5], color: '#63b3ed' },
+                    { key: 'packs', label: 'Packs', range: [5, 25], color: '#3b82f6' },
+                    { key: 'levels', label: 'Levels', range: [25, 50], color: '#8b5cf6' },
+                    { key: 'subs', label: 'Subs', range: [50, 75], color: '#d946ef' },
+                    { key: 'parts', label: 'Parts', range: [75, 90], color: '#f59e0b' },
+                    { key: 'problems', label: 'Problems', range: [90, 100], color: '#4ade80' },
+                ];
+
+                // Determine current stage
+                let currentStageIdx = stages.findIndex(s => pct >= s.range[0] && pct <= s.range[1]);
+                if (currentStageIdx === -1) currentStageIdx = stages.length - 1;
+
+                // Estimate time remaining (rough heuristic: ~3-5 min for full crawl)
+                const elapsedMs = Date.now() - (window.__scrapeStartTime || Date.now());
+                const estimatedTotalMs = 4 * 60 * 1000; // ~4 minutes
+                const remainingMs = Math.max(0, estimatedTotalMs - elapsedMs);
+                const remainingMin = Math.ceil(remainingMs / 60000);
+                const remainingSec = Math.ceil((remainingMs % 60000) / 1000);
+                const eta = pct >= 100 ? 'Complete' : (remainingMin > 0 ? `${remainingMin}m ${remainingSec}s` : `${remainingSec}s`);
+
                 body.innerHTML = `
-                    <div style="text-align:center;padding:32px 14px;">
-                        <div style="font-size:24px;margin-bottom:10px;animation:spin 2s linear infinite;display:inline-block;">🔄</div>
-                        <div style="font-size:13px;color:#a1a1aa;font-weight:600;">Loading questions from local API…</div>
-                        <div style="font-size:11px;color:#71717a;margin-top:4px;">Syncing browser session cookies…</div>
-                    </div>`;
+                    <div style="text-align:center;padding:20px 16px;">
+                        <!-- Header with animated icon -->
+                        <div style="margin-bottom:16px;">
+                            <div style="font-size:32px;margin-bottom:8px;display:inline-block;animation:pulse 1.5s ease-in-out infinite;">
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#63b3ed;">
+                                    <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+                                    <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" style="animation:spin 1.5s linear infinite;transform-origin:12px 12px;">
+                                        <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1.5s" repeatCount="indefinite"/>
+                                    </path>
+                                </svg>
+                            </div>
+                            <div style="font-size:15px;color:#f4f4f5;font-weight:700;margin-bottom:2px;">Scanning SkillRack for Incomplete Questions</div>
+                            <div style="font-size:12px;color:#a1a1aa;margin-top:2px;">${apiEscape(task)}</div>
+                        </div>
+
+                        <!-- Stage indicator -->
+                        <div style="display:flex;gap:4px;justify-content:center;margin-bottom:14px;flex-wrap:wrap;">
+                            ${stages.map((s, i) => {
+                                const isActive = i === currentStageIdx;
+                                const isDone = i < currentStageIdx || (i === currentStageIdx && pct >= s.range[1]);
+                                const dotColor = isDone ? s.color : (isActive ? s.color : 'rgba(255,255,255,0.15)');
+                                const dotBorder = isActive ? `0 0 0 2px ${s.color}40` : 'none';
+                                const labelColor = isDone || isActive ? '#e4e4e7' : '#71717a';
+                                return `
+                                    <div style="display:flex;flex-direction:column;align-items:center;gap:3px;opacity:${isDone || isActive ? '1' : '0.5'};">
+                                        <div style="width:14px;height:14px;border-radius:50%;background:${dotColor};border:2px solid ${dotColor};box-shadow:${dotBorder};transition:all 0.3s ease;${isActive ? 'animation:pulse 1s ease-in-out infinite;' : ''}"></div>
+                                        <span style="font-size:9px;color:${labelColor};font-weight:${isActive ? '700' : '500'};white-space:nowrap;">${apiEscape(s.label)}</span>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+
+                        <!-- Main progress bar with glow effect -->
+                        <div style="width:100%;margin-bottom:10px;">
+                            <div style="width:100%;height:10px;background:rgba(255,255,255,0.06);border-radius:8px;overflow:hidden;position:relative;border:1px solid rgba(99,179,237,0.25);">
+                                <div style="height:100%;width:${Math.max(3, pct)}%;background:linear-gradient(90deg,#3b82f6,#60a5fa,#8b5cf6,#d946ef,#f59e0b,#4ade80);background-size:200% 100%;border-radius:8px;transition:width 0.4s cubic-bezier(0.4,0,0.2,1);position:relative;"
+                                     id="progress-bar-fill">
+                                    <div style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.3),transparent);animation:shimmer 1.5s infinite;"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Stats row -->
+                        <div style="display:flex;justify-content:space-between;font-size:11px;color:#a1a1aa;padding:0 4px;margin-bottom:8px;">
+                            <span>Progress: <b style="color:#e4e4e7;">${pct}%</b></span>
+                            <span>Found: <b style="color:#4ade80;">${found}</b> questions</span>
+                            <span>ETA: <b style="color:#f59e0b;">${eta}</b></span>
+                        </div>
+
+                        <!-- Live log / detail -->
+                        <div style="font-size:10px;color:#71717a;background:rgba(255,255,255,0.03);padding:8px 12px;border-radius:6px;border:1px solid rgba(255,255,255,0.05);text-align:left;">
+                            ${apiEscape(task)}
+                        </div>
+                    </div>
+
+                    <style>
+                        @keyframes spin {
+                            from { transform: rotate(0deg); }
+                            to { transform: rotate(360deg); }
+                        }
+                        @keyframes pulse {
+                            0%, 100% { opacity: 1; transform: scale(1); }
+                            50% { opacity: 0.6; transform: scale(1.05); }
+                        }
+                        @keyframes shimmer {
+                            0% { transform: translateX(-100%); }
+                            100% { transform: translateX(200%); }
+                        }
+                    </style>`;
                 return;
             }
             if (apiLastFetch === 'error') {
@@ -12502,25 +12696,93 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
 
         async function apiReScrapeAndRender() {
             apiLastFetch = 'loading';
+            // Set start time for ETA calculation
+            window.__scrapeStartTime = Date.now();
+            apiScrapeProgress = { percent: 5, task: 'Starting background scraper…', count: 0 };
             apiApplyFiltersAndRedraw();
             apiUpdateToolbarState();
+
+            const countBadge = document.getElementById('api-count-badge');
+            if (countBadge) {
+                countBadge.textContent = '⏳ Scraping…';
+                countBadge.style.color = '#ed8936';
+                countBadge.style.background = 'rgba(237,137,54,0.15)';
+                // Animate the badge
+                countBadge.style.animation = 'pulse 1s ease-in-out infinite';
+            }
+            showStatus('Scraping SkillRack for incomplete questions…', '⏳');
+
             try {
                 const currentCookie = await gmGetCookies();
-                const res = await gmFetch(apiBaseUrl() + '/scrape/sync', {
+                // 1. Launch async scrape job
+                const startRes = await gmFetch(apiBaseUrl() + '/scrape', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ cookie: currentCookie || undefined })
+                    body: JSON.stringify({ cookie: currentCookie || undefined, force_refresh: true })
                 });
-                if (!res.ok) throw new Error('HTTP ' + res.status);
+                if (!startRes.ok) throw new Error('HTTP ' + startRes.status);
+                const startData = await startRes.json();
+                const jobId = startData?.job_id;
+
+                if (jobId) {
+                    // 2. Poll job status until complete
+                    let attempts = 0;
+                    while (attempts < 180) {
+                        await new Promise(r => setTimeout(r, 600));
+                        attempts++;
+                        try {
+                            const statusRes = await gmFetch(apiBaseUrl() + '/scrape/' + encodeURIComponent(jobId));
+                            if (statusRes.ok) {
+                                const job = await statusRes.json();
+                                apiScrapeProgress = {
+                                    percent: job.progress_percent || 0,
+                                    task: job.current_task || 'Scanning tracks…',
+                                    count: job.questions_found || 0
+                                };
+                                apiApplyFiltersAndRedraw();
+
+                                // Update count badge with live progress
+                                if (countBadge) {
+                                    countBadge.textContent = `${job.questions_found || 0} found · ${job.progress_percent || 0}%`;
+                                    countBadge.style.color = '#63b3ed';
+                                    countBadge.style.background = 'rgba(99,179,237,0.15)';
+                                }
+
+                                if (job.status === 'completed') {
+                                    break;
+                                } else if (job.status === 'failed') {
+                                    throw new Error(job.error || 'Scrape job failed');
+                                }
+                            }
+                        } catch (pollErr) {
+                            console.warn('[FastAPI] Poll error:', pollErr);
+                        }
+                    }
+                }
+
+                // 3. Fetch completed results
                 await apiFetchQuestions();
-                showStatus('Re-scrape complete', '✅');
+
+                if (countBadge) {
+                    countBadge.textContent = `${apiQuestions.length} questions`;
+                    countBadge.style.color = '#4ade80';
+                    countBadge.style.background = 'rgba(34,197,94,0.15)';
+                    countBadge.style.animation = 'none';
+                }
+                showStatus(`Re-scrape complete — ${apiQuestions.length} questions found`, '✅');
                 setTimeout(hideStatus, 4000);
             } catch (err) {
                 console.warn('[FastAPI] Re-scrape failed:', err);
                 apiQuestions = [];
                 apiLastFetch = 'error';
                 apiRenderIntoDropdown();
-                showStatus('Re-scrape failed — server unreachable', '❌');
+
+                if (countBadge) {
+                    countBadge.textContent = 'Error';
+                    countBadge.style.color = '#f87171';
+                    countBadge.style.background = 'rgba(239,68,68,0.15)';
+                }
+                showStatus('Re-scrape failed: ' + (err.message || 'Server error'), '❌');
                 setTimeout(hideStatus, 5000);
             }
         }
