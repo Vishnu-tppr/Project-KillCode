@@ -59,27 +59,38 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
                 }
             });
 
-            const [r1, r2, r3, r4] = await Promise.all([
-                queryGmCookie({ url: window.location.href }),
-                queryGmCookie({ url: window.location.origin }),
-                queryGmCookie({ domain: 'skillrack.com' }),
-                queryGmCookie({})
-            ]);
-            addCookies(r1);
-            addCookies(r2);
-            addCookies(r3);
-            addCookies(r4);
+            // Query with multiple domain/path combos to catch HttpOnly JSESSIONID
+            // SkillRack cookies are on www.skillrack.com with path=/
+            const queries = [
+                { url: window.location.href },
+                { url: window.location.origin },
+                { domain: 'skillrack.com' },
+                { domain: '.skillrack.com' },
+                { domain: 'www.skillrack.com' },
+                { url: 'https://www.skillrack.com' },
+                { url: 'https://skillrack.com' },
+                {}, // Empty catches all
+            ];
+
+            const results = await Promise.all(queries.map(q => queryGmCookie(q)));
+            for (const r of results) addCookies(r);
         }
 
         // 2. GM.cookie.list Promise API (GM4 / Violentmonkey / Tampermonkey v5)
         if (typeof GM !== 'undefined' && GM && GM.cookie && typeof GM.cookie.list === 'function') {
             try {
-                const gmList1 = await GM.cookie.list({ url: window.location.href }).catch(() => []);
-                const gmList2 = await GM.cookie.list({ domain: 'skillrack.com' }).catch(() => []);
-                const gmList3 = await GM.cookie.list({}).catch(() => []);
-                addCookies(gmList1);
-                addCookies(gmList2);
-                addCookies(gmList3);
+                const gmQueries = [
+                    { url: window.location.href },
+                    { url: window.location.origin },
+                    { domain: 'skillrack.com' },
+                    { domain: '.skillrack.com' },
+                    { domain: 'www.skillrack.com' },
+                    { url: 'https://www.skillrack.com' },
+                    { url: 'https://skillrack.com' },
+                    {},
+                ];
+                const results = await Promise.all(gmQueries.map(q => GM.cookie.list(q).catch(() => [])));
+                for (const r of results) addCookies(r);
             } catch (e) {}
         }
 
@@ -11498,12 +11509,15 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             }
 
             const item = autoSolverQueue[autoSolverCurrentIndex];
-            const problemUrl = `${CODENV_URL}?id=${item.problemId}`;
+            let problemUrl = item.link || '';
+            if (!problemUrl || !problemUrl.startsWith('http')) {
+                problemUrl = `${CODENV_URL}?id=${item.problemId}`;
+            }
 
             // Save current state before navigation
             saveAutoSolverQueue();
 
-            showStatus(`Auto Solver: Navigating to ${item.problemName}...`, '🚀');
+            showStatus(`Auto Solver: Navigating to ${item.problemName || ('Problem ' + item.problemId)}...`, '🚀');
 
             // Navigate to the problem page
             window.location.href = problemUrl;
@@ -12681,12 +12695,13 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                 const problemId = apiExtractId(q);
                 return {
                     problemId,
-                    problemName: q.question || q.link || ('Problem ' + problemId),
+                    problemName: q.question || q.link || ('Problem ' + (problemId || '')),
+                    link: q.link || '',
                     packName: q.language || '',
                     subName: q.section || '',
                     partName: q.problem_set || ''
                 };
-            }).filter(item => Boolean(item.problemId && /^\d+$/.test(String(item.problemId))));
+            }).filter(item => Boolean(item.problemId || item.link));
 
             autoSolverCurrentIndex = 0;
             autoSolverEnabled = true;
