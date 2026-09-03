@@ -1,10 +1,12 @@
-# Ignore subpackages / dependencies
+# Dependencies
 openai-oauth/
 node_modules/
 .env
 
-# Scratch & temporary dev scripts
+# Scratch & temporary dev/helper scripts
 check_syntax.py
+fast_check.py
+line_check.py
 icon_b64.txt
 icon_small_b64.txt
 bump_font_size.py
@@ -15,7 +17,7 @@ implementation_plan.md
 skillrack_context.md
 level1_context.md
 
-# Logs & caches
+# Logs & python caches
 *.log
 __pycache__/
 *.pyc

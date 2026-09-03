@@ -9197,7 +9197,6 @@ Emit ONLY the final executable solution or answer index.`;
         return markdownText;
     };
 
->>>>>>> c33552c (Update .gitignore and sync core userscripts)
     // ========== generateAISolution FUNCTION ==========
     const generateAISolution = async () => {
         if (!SETTINGS.enableAISolver) return;
