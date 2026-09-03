@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Project-KillCode Master
+// @name         Project-KillCode
 // @namespace    http://tampermonkey.net/
-// @version      5.1
-// @description  Bypass tab switching, copy/paste restrictions, full-screen enforcement, auto-solve captcha, AI-powered solution generator (9 AI providers), local pre-solved database, and FastAPI scraper
-// @author       ToonTamilIndia & Vishnu-tppr (Captcha solver by adithyagenie)
+// @version      5.1a
+// @description  Bypass tab switching, copy/paste restrictions, full-screen enforcement, auto-solve captcha, and AI-powered solution generator
+// @author       ToonTamilIndia (Captcha solver by adithyagenie)
 // @match        https://*.skillrack.com/*
 // @match        https://skillrack.com/*
 // @require      https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js
@@ -19,8 +19,9 @@
 // @connect      skillrack.com
 // @connect      auth.openai.com
 // @connect      chatgpt.com
-// @connect      raw.githubusercontent.com
 // @run-at       document-start
+// @downloadURL https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js
+// @updateURL https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js
 // ==/UserScript==
 
 // 1. Sandbox bridge
@@ -345,7 +346,7 @@ function mainCode() {
     // ============================================
     // SCRIPT VERSION & REMOTE URLS
     // ============================================
-    const SCRIPT_VERSION = '7.0';
+    const SCRIPT_VERSION = '5.1';
     const REMOTE_SCRIPT_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js';
     const KILL_SWITCH_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/kill.txt';
     const DISCLAIMER_ACCEPTED_KEY = 'skillrack_bypass_disclaimer_accepted';
@@ -796,7 +797,6 @@ function mainCode() {
         enableContextMenu: true,
         enableFullScreenCopyMode: false,
         enablePopupMode: false,
-        humanTypingMode: true,    // Type AI solution char-by-char at human speed
 
         // Captcha solver (credit: adithyagenie)
         enableCaptchaSolver: true,
@@ -806,145 +806,7 @@ function mainCode() {
         enableAISolver: false,
         includePrePostCode: false,
         aiTemperature: 0,
-        aiSystemPrompt: `You are an expert competitive programmer solving a SkillRack coding challenge.  
-
-Your response will be automatically parsed and run, then reviewed by other AI systems for correctness. Follow these rules with 100% strictness. Accuracy is mandatory — never invent syntax, APIs, table names, column names, function names, or behaviors that are not grounded in the problem statement, pre-code, or sample I/O. 
-
-Supported languages: C, C++, Java, Python, SQL (and any other language explicitly stated in the problem). Apply the correct language rules below based on what the problem asks for. 
-
-[CRITICAL - OUTPUT MODE]
-
-For Fill-In-The-Blanks (MFIB) problems:  
-
-- Output ONLY the values that belong in the blank fields ([BLANK_0], [BLANK_1], etc.).  
-- Print each blank's value on a new line, in order of appearance.  
-- Do NOT include any code markdown fences, notes, explanations, or labels. 
-
-For Full-Code problems (C / C++ / Java / Python / other):  
-
-- Output ONLY the raw source code.  
-- Do NOT wrap code in markdown fences (do NOT use cpp, java, python, sql, or similar).  
-- Do NOT include any comments, introductory text, explanations, or placeholders like // your code here. 
-
-For SQL problems:  
-
-- Output ONLY the SQL query/statement(s) required.  
-- Do NOT wrap in markdown fences.  
-- Do NOT invent table names, column names, schemas, or sample data — use exactly what the problem and pre-code provide.  
-- Prefer standard SQL unless the problem specifies a dialect (MySQL, SQLite, PostgreSQL, H2, etc.); then match that dialect exactly.  
-- Do NOT add USE database, CREATE TABLE, DROP TABLE, or INSERT unless the problem explicitly requires them (e.g. “CREATE with SELECT” / “create a new table” problems). 
-
-*SQL Formatting (STRICT):*  
-
-- Emit the *entire SQL solution as a SINGLE LINE*.  
-- Do NOT insert line breaks anywhere in the SQL statement.  
-- Do NOT pretty-print or format clauses on separate lines.  
-- Use only spaces to separate SQL keywords and clauses.
-
-*Correct (Single Line) examples:*  
-
-- SELECT c.id, c.name, c.age, p.name, p.price FROM customer c INNER JOIN plan p ON c.planid = p.id ORDER BY c.id; 
-- SELECT name, age FROM customer WHERE age >= 18 ORDER BY age DESC; 
-- SELECT p.name, COUNT(*) FROM customer c INNER JOIN plan p ON c.planid = p.id GROUP BY p.name HAVING COUNT(*) > 1 ORDER BY p.name; 
-- UPDATE customer SET age = age + 1 WHERE id = 5; 
-- DELETE FROM customer WHERE age < 18; 
-- CREATE TABLE filledbus AS SELECT * FROM bus WHERE seats > 0; 
-
-*Incorrect (Multi-Line) examples:*  
-
--  
-  SELECT c.id,  
-         c.name,  
-         p.name  
-   FROM customer c  
-   INNER JOIN plan p  
-   ON c.planid = p.id  
-   ORDER BY c.id;
-
--  
-  SELECT *  
-   FROM customer  
-   WHERE age > 18;
-
-*Rule:* Every SQL answer must be one continuous line with spaces between clauses only. No newline characters are allowed anywhere in the SQL statement. 
-
-[ANTI-HALLUCINATION RULES]
-
-- Never invent problem constraints, input formats, output formats, function signatures, library functions, or SQL schema details that are not present in the problem. 
-- If something is ambiguous, choose the interpretation that matches the sample I/O exactly. Sample I/O is ground truth over the written description.
-- Do not use non-existent or language-specific APIs unless they appear in the problem or pre-code.
-- Do not add extra print statements, debug output, labels, or decorative text. 
-- Mentally verify every identifier (variables, columns, tables, functions) against the problem before emitting output. 
-
-Your final output will be reviewed by Claude Mythos Preview and Codex — it must be exact, minimal, and correct on first parse. No partial answers, no "assuming that...", no commentary. 
-
-[PRE-CODE & INTEGRATION RULES]
-
-Respect Pre-Code Conventions:  
-
-- Do NOT re-declare or include #include directives or import statements if they are already in the pre-code.  
-- If the pre-code uses using namespace std;, respect it and align with it.  
-- Do not override existing conventions. 
-
-C / C++:  
-
-- Use correct headers only if not already provided.  
-- For decimals: when N decimal places are required, include <iomanip> and use std::fixed << std::setprecision(N) (or fixed << setprecision(N) if using namespace std; is active).  
-- Prevent integer overflow: use long long for any variables that accumulate large numbers. 
-
-Java structure:  
-
-- Class name must be Hello.  
-- Do NOT include a package declaration.  
-- Prevent integer overflow: use long for accumulators that can grow large. 
-
-Python execution:  
-
-- Do NOT define functions unless explicitly asked by the problem.  
-- Write code to execute directly at the top level.
-
-SQL Execution (SkillRack / H2 and similar):  
-
-- SkillRack almost always pre-creates tables and loads sample data before your code runs. Your job is usually a SELECT (or SELECT with JOIN / ORDER BY / WHERE / GROUP BY), not DDL/DML. 
-- Default: write ONLY the query that produces the required result set. Do NOT emit CREATE TABLE, DROP, or INSERT unless the problem text explicitly says to create/insert (e.g. “CREATE TABLE … AS SELECT …”, “create a new table filledbus”, etc.).
-- If you re-create a table that already exists, the judge fails with errors such as java.sql.SQLException: Table "CUSTOMER" already exists — that means you must remove CREATE and only SELECT from the given tables.
-- Use table and column names exactly as in the problem DDL (e.g., customer, plan, courseid, etc.). Do not rename or invent columns. 
-- Match column order, aliases, sorting, NULL handling, and aggregation exactly as specified by the problem and samples. 
-- Use correct JOIN types and filters as required (e.g., INNER JOIN on foreign keys like planid = plan.id when output mixes customer + plan fields, LEFT JOIN when rows with null foreign keys must still appear). 
-- ORDER BY must match sample row order (for example, id DESC when samples list highest id first).
-- Names with spaces (e.g., "Spoken English", "Basic Plus") come from table data — do not hardcode sample rows. 
-- Always output SQL as one continuous single line (spaces between clauses only; zero newline characters in the SQL body). 
-
-[OUTPUT SPECIFICATION]
-
-- Match the EXPECTED output format exactly. NEVER add labels, prefixes, or decorative text (e.g., if the expected output is 23.52, output exactly 23.52 — do NOT output Result: 23.52). 
-- Treat ALL sample input/output as ground truth. If the problem description conflicts with the sample I/O, obey the sample I/O behavior. 
-- If the expected output ends without a newline, do NOT add one. If it ends with one, add one.
-- Time complexity: Must not exceed O(n^2) for n > 10^4. Prefer O(n) or O(n log n). 
-- SQL correctness: result columns, row order, NULL handling, and aggregate behavior must match samples character-for-character when compared as the judge does. 
-
-[SKILLRACK SQL FAILURE PATTERNS TO AVOID]
-
-- Table already exists → You submitted CREATE TABLE; tables are pre-created. Output SELECT only. 
-- Wrong column order → Reorder SELECT list to match expected output fields left-to-right. 
-- Wrong sort → Add ORDER BY exactly as samples imply (often primary key DESC or ASC). 
-- Missing JOIN → When output needs columns from two tables (e.g., customer name + plan name + amount), JOIN on the foreign key; do not invent columns on one table. 
-
-- Hardcoded sample rows → Never INSERT or SELECT literal sample values; query the live tables.
-- CREATE WITH SELECT problems only → Emit CREATE TABLE … AS SELECT … (or equivalent) only when the problem title/statement explicitly requires creating a new table from a query. 
-- Multi-line SQL → Forbidden. Collapse the full statement into one line before emitting. 
-
-[SELF-CHECK STEP]
-
-Before generating your final response, mentally trace your solution with the sample inputs (or sample tables for SQL). 
-
-For SQL:  
-
-- Confirm you did not CREATE/INSERT unless required.  
-- Confirm JOIN keys, SELECT column order, and ORDER BY reproduce the expected rows character-for-character (including trailing spaces if present).  
-- Confirm the entire SQL is a single line with no line breaks. 
-
-Compare the output character-by-character against the expected sample outputs (including trailing spaces and newlines). Verify it matches exactly. Only then emit the final answer — nothing else.`,
+        aiSystemPrompt: "",
         aiProvider: "gemini",
         geminiApiKey: "",
         geminiModel: "gemini-2.5-flash",
@@ -972,14 +834,11 @@ Compare the output character-by-character against the expected sample outputs (i
         duckduckgoReasoningEffort: "low",
         // ================================================
 
-        // ========== YUPPBRIDGE / OPENAI-COMPATIBLE SETTINGS ==========
-        openaiCompatApiUrl: "",
-        openaiCompatApiKey: "",
-        openaiCompatModel: "gpt-4o",
+        // ========== YUPPBRIDGE SETTINGS (NEW) ==========
         yuppbridgeApiUrl: "",
         yuppbridgeApiKey: "",
         yuppbridgeModel: "gpt-4o",
-        // =============================================================
+        // ================================================
 
         // ========== NVIDIA NIM SETTINGS ==========
         nvidiaApiKey: "",
@@ -994,15 +853,9 @@ Compare the output character-by-character against the expected sample outputs (i
 
         // ========== AUTO SOLVER SETTINGS ==========
         enableAutoSolver: false,
-        autoSolverMaxRetries: 5,
+        autoSolverMaxRetries: 3,
         autoSolverDelay: 500,
         // ==========================================
-
-        // ========== SOLUTIONS SOURCE SETTINGS (solutions/*.md) ==========
-        enableLocalServer: true,
-        localServerUrl: "https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/main",
-        localServerTimeout: 3000,
-        // ============================================
 
         // ========== FIND INCOMPLETE SETTINGS ==========
         enableFindIncomplete: true,
@@ -1023,20 +876,6 @@ Compare the output character-by-character against the expected sample outputs (i
                 const merged = { ...DEFAULT_SETTINGS, ...parsed };
                 // Migrate: old default was 1 which made retry loop never fire — bump to 5
                 if (merged.autoSolverMaxRetries < 2) merged.autoSolverMaxRetries = 5;
-                // Migrate: yuppbridge <-> openai-compatible
-                if (merged.aiProvider === 'yuppbridge') merged.aiProvider = 'openai-compatible';
-                if (merged.openaiCompatApiUrl === undefined && merged.yuppbridgeApiUrl !== undefined) merged.openaiCompatApiUrl = merged.yuppbridgeApiUrl;
-                if (merged.openaiCompatApiKey === undefined && merged.yuppbridgeApiKey !== undefined) merged.openaiCompatApiKey = merged.yuppbridgeApiKey;
-                if (merged.openaiCompatModel === undefined && merged.yuppbridgeModel !== undefined) merged.openaiCompatModel = merged.yuppbridgeModel;
-
-                // Migrate: local server settings
-                if (merged.enableLocalServer === undefined) merged.enableLocalServer = true;
-                if (!merged.localServerUrl || merged.localServerUrl.includes('skillrack-userscript')) {
-                    merged.localServerUrl = "https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/main";
-                }
-                if (merged.localServerTimeout === undefined) merged.localServerTimeout = 3000;
-
-
                 // Migrate: if user has no authMode, migrate based on existing settings
                 if (!parsed.openaiAuthMode) {
                     if (parsed.openaiApiKey) {
@@ -4149,7 +3988,6 @@ Compare the output character-by-character against the expected sample outputs (i
         panelContent.appendChild(createToggle('enableTextSelection', 'Text Selection', SETTINGS.enableTextSelection, 'Enable text selection'));
         panelContent.appendChild(createToggle('enableContextMenu', 'Context Menu', SETTINGS.enableContextMenu, 'Enable right-click menu'));
         panelContent.appendChild(createToggle('enableFullScreenCopyMode', 'Full Screen Copy Mode (Ctrl+A)', SETTINGS.enableFullScreenCopyMode, 'Copy full page text + structured prompt'));
-        panelContent.appendChild(createToggle('humanTypingMode', 'Human Typing Mode', SETTINGS.humanTypingMode, 'Type AI code char-by-char at natural speed'));
 
         panelContent.appendChild(createSectionHeader('Captcha Solver', 'M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z'));
         panelContent.appendChild(createToggle('enableCaptchaSolver', 'Auto-Solve Captcha', SETTINGS.enableCaptchaSolver, 'Automatically solve math captcha'));
@@ -6288,102 +6126,30 @@ Compare the output character-by-character against the expected sample outputs (i
 
     // 1. BLOCK TAB SWITCH DETECTION (Page Visibility API)
     if (SETTINGS.bypassTabDetection) {
-        // ── 1a. Always report document as VISIBLE ──────────────────────────────
         Object.defineProperty(document, 'visibilityState', {
-            get: () => 'visible',
+            get: function () {
+                return 'visible'; // Always report as visible
+            },
             configurable: true
         });
+
         Object.defineProperty(document, 'hidden', {
-            get: () => false,
+            get: function () {
+                return false; // Always report as not hidden
+            },
             configurable: true
         });
 
-        // ── 1b. Always report window as FOCUSED ────────────────────────────────
-        // SkillRack daily test / daily challenge uses document.hasFocus() and
-        // window.hasFocus() to verify the browser window is the active OS window.
-        // Spoofing these prevents the logout-on-focus-loss mechanism.
-        try {
-            Object.defineProperty(document, 'hasFocus', {
-                value: () => true,
-                writable: true,
-                configurable: true
-            });
-        } catch (e) { /* already overridden */ }
-
-        try {
-            Object.defineProperty(window, 'hasFocus', {
-                value: () => true,
-                writable: true,
-                configurable: true
-            });
-        } catch (e) { /* already overridden */ }
-
-        // ── 1c. Block window blur / focus events ──────────────────────────────
-        // SkillRack attaches window.onblur / window.addEventListener('blur', ...)
-        // handlers to fire the logout request when OS focus shifts away.
-        // We intercept these at the prototype and window level.
-        window.onblur   = null;
-        window.onfocus  = null;
-        document.onblur  = null;
-        document.onfocus = null;
-
-        // Prevent future assignments via property descriptor override
-        ['blur', 'focus'].forEach(evtName => {
-            try {
-                Object.defineProperty(window, 'on' + evtName, {
-                    get: () => null,
-                    set: (fn) => {
-                        console.log(`[KillCode] Blocked window.on${evtName} assignment`);
-                    },
-                    configurable: true
-                });
-                Object.defineProperty(document, 'on' + evtName, {
-                    get: () => null,
-                    set: (fn) => {
-                        console.log(`[KillCode] Blocked document.on${evtName} assignment`);
-                    },
-                    configurable: true
-                });
-            } catch (e) { /* skip if already locked */ }
-        });
-
-        // ── 1d. Block navigator.sendBeacon (used to send logout pings even after page unload) ──
-        if (navigator.sendBeacon) {
-            const _origBeacon = navigator.sendBeacon.bind(navigator);
-            navigator.sendBeacon = function (url, data) {
-                const u = String(url);
-                if (u.includes('logout') || u.includes('tab-switch') ||
-                    u.includes('blur') || u.includes('proctoring') ||
-                    u.includes('heartbeat') || u.includes('telemetry')) {
-                    console.log(`[KillCode] Blocked sendBeacon to: ${u}`);
-                    return true; // Pretend it was sent OK
-                }
-                return _origBeacon(url, data);
-            };
-        }
-
-        // ── 1e. Block beforeunload / unload from firing logout in daily tests ──
-        window.addEventListener('beforeunload', (e) => {
-            // Prevent page from showing "you're being logged out" dialog on tab switch
-            e.stopImmediatePropagation();
-        }, true);
-
-        // ── 1f. Override addEventListener to block visibilitychange, blur, focus events ──
+        // Override addEventListener to block visibilitychange events
+        // But allow other events to pass through normally
         EventTarget.prototype.addEventListener = function (type, listener, options) {
             if (type === 'visibilitychange' || type === 'webkitvisibilitychange') {
-                console.log('[KillCode] Blocked visibilitychange event listener');
-                return;
-            }
-            // Block window/document level blur & focus listeners (SkillRack logout triggers)
-            if ((this === window || this === document) &&
-                (type === 'blur' || type === 'focus')) {
-                console.log(`[KillCode] Blocked window/document ${type} event listener`);
-                return;
+                console.log('Blocked visibilitychange event listener');
+                return; // Don't add the listener
             }
             return originalAddEventListener.call(this, type, listener, options);
         };
     }
-
 
     // 2. ENABLE COPY/PASTE FUNCTIONALITY
     if (SETTINGS.bypassCopyPaste) {
@@ -6903,30 +6669,18 @@ Compare the output character-by-character against the expected sample outputs (i
 
         // But keep blocking specific anti-cheat events only if enabled
         if (SETTINGS.bypassTabDetection) {
-            const blockVisibility = ['visibilitychange', 'webkitvisibilitychange'];
+            const blockEvents = ['visibilitychange', 'webkitvisibilitychange'];
 
+            const newAddEventListener = EventTarget.prototype.addEventListener;
             EventTarget.prototype.addEventListener = function (type, listener, options) {
-                if (blockVisibility.includes(type)) {
-                    console.log(`[KillCode] Blocked ${type} event listener (post-restore)`);
+                if (blockEvents.includes(type)) {
+                    console.log(`Blocked ${type} event listener`);
                     return;
                 }
-                // Keep blocking window/document blur & focus (SkillRack late-binding logout trigger)
-                if ((this === window || this === document) &&
-                    (type === 'blur' || type === 'focus')) {
-                    console.log(`[KillCode] Blocked window/document ${type} event listener (post-restore)`);
-                    return;
-                }
-                return originalAddEventListener.call(this, type, listener, options);
+                return newAddEventListener.call(this, type, listener, options);
             };
-
-            // Re-null out any blur handlers that SkillRack may have registered before script loaded
-            window.onblur   = null;
-            window.onfocus  = null;
-            document.onblur  = null;
-            document.onfocus = null;
         }
     }, 1000);
-
 
     // 7. PRESERVE PRIMEFACES AJAX FUNCTIONALITY
     // Ensure PrimeFaces AJAX works correctly after DOM updates
@@ -7013,9 +6767,7 @@ Compare the output character-by-character against the expected sample outputs (i
     // ============================================
 
 
-    const TUTOR_REGEX         = /https:\/\/(www.)?skillrack\.com\/faces\/candidate\/tutorprogram\.xhtml/gi;
-    const DAILY_CHALLENGE_REGEX = /https:\/\/(www.)?skillrack\.com\/faces\/candidate\/dailychallenge\.xhtml/gi;
-    const DAILY_TEST_REGEX      = /https:\/\/(www.)?skillrack\.com\/faces\/candidate\/(dailytest|dailychallenge|mcqassessment|assessment)\.xhtml/gi;
+    const TUTOR_REGEX = /https:\/\/(www.)?skillrack\.com\/faces\/candidate\/tutorprogram\.xhtml/gi;
     const ERROR_CLASS = "ui-growl-item";
     const CAPTCHA_INPUT_ID = "capval";
     const PROCEED_BTN_ID = "proceedbtn";
@@ -7998,11 +7750,8 @@ Compare the output character-by-character against the expected sample outputs (i
     };
 
     const getProblemDescription = () => {
-        const href = window.location.href;
-        const isTutorPage         = href.includes('tutorprogram');
-        const isCodeTrackPage     = href.includes('codeprogram');
-        const isDailyChallengePage = href.includes('dailychallenge') || href.includes('dailytest');
-        const isMCQPage           = href.includes('mcqassessment') || href.includes('assessment');
+        const isTutorPage = window.location.href.includes('tutorprogram');
+        const isCodeTrackPage = window.location.href.includes('codeprogram');
 
         // Find the problem description card
         const cards = document.querySelectorAll('.ui-card-content');
@@ -8109,42 +7858,11 @@ Compare the output character-by-character against the expected sample outputs (i
 
             const mfib = extractMFIBTemplate();
 
-            // ── Daily Challenge / Daily Test: extract MCQ choices ─────────────────
-            // Daily tests present radio-button MCQ questions instead of code editors.
-            // We extract question text + all choices and pass them to the AI as context.
-            let mcqChoices = [];
-            if (isDailyChallengePage || isMCQPage) {
-                // Try radio-button option containers (common SkillRack MCQ layout)
-                const optionForms = document.querySelectorAll(
-                    '.ui-selectoneradio tr, .ui-selectonemenu-items li, [id*="options"] .ui-radiobutton-label, .mcq-option'
-                );
-                optionForms.forEach((row, idx) => {
-                    const label = row.querySelector('label') || row;
-                    const text = label.textContent.trim();
-                    if (text) mcqChoices.push(`${idx + 1}. ${text}`);
-                });
-
-                // Fallback: any visible radio input labels on the page
-                if (mcqChoices.length === 0) {
-                    document.querySelectorAll('input[type="radio"]').forEach((radio, idx) => {
-                        const label = document.querySelector(`label[for="${radio.id}"]`);
-                        const text = label ? label.textContent.trim() : (radio.nextElementSibling?.textContent?.trim() || '');
-                        if (text) mcqChoices.push(`${idx + 1}. ${text}`);
-                    });
-                }
-
-                if (mcqChoices.length > 0) {
-                    fullDescription += `\n\n### MCQ Answer Options:\n${mcqChoices.join('\n')}\n\n**TASK: Output ONLY the number (1, 2, 3, …) of the correct option. Do NOT include any explanation.**`;
-                }
-            }
-
             return {
                 title: problemTitle,
                 description: fullDescription.trim(),
                 isTutor: isTutorPage,
                 isCodeTrack: isCodeTrackPage,
-                isDailyChallenge: isDailyChallengePage,
-                isMCQ: isMCQPage || mcqChoices.length > 0,
                 preCode: preCode,
                 postCode: postCode,
                 isMFIB: mfib.inputs.length > 0,
@@ -9074,177 +8792,7 @@ Emit ONLY the final executable solution.
         return matches / Math.max(norm1.length, norm2.length);
     };
 
-    // ========== HUMAN-LIKE TYPING SIMULATOR ==========
-    // Inserts code into ACE editor character-by-character with natural timing
-    // so the keystroke cadence is indistinguishable from manual typing.
-    const typeCodeNaturally = async (code) => {
-        const editor = window.txtCode;
-        if (!editor || typeof editor.getSession !== 'function') return false;
-
-        const session = editor.getSession();
-
-        // Clear editor first (instant — human would select-all and delete)
-        session.setValue('');
-        editor.moveCursorTo(0, 0);
-
-        const $ = window.jQuery || window.$;
-
-        // Typing speed parameters (milliseconds per character)
-        const BASE_MIN  = 18;   // fastest burst character (fast typist ~90 WPM)  
-        const BASE_MAX  = 55;   // normal character delay
-        const NEWLINE_PAUSE_MIN = 60;   // pause after newline (thinking)
-        const NEWLINE_PAUSE_MAX = 180;
-        const BRACE_PAUSE_MIN  = 40;   // pause after { } [ ] ( )
-        const BRACE_PAUSE_MAX  = 120;
-        const BURST_THRESHOLD  = 6;    // characters in a row without pause = burst
-        const BURST_ACCELERATE = 0.6;  // burst multiplier (speed up)
-        const TYPO_CHANCE      = 0;    // 0 = no typos (keep 0 for correctness)
-
-        let burstCount = 0;
-
-        const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-        for (let i = 0; i < code.length; i++) {
-            const ch = code[i];
-
-            // Insert character into ACE session
-            session.insert(editor.getCursorPosition(), ch);
-
-            // Fire real keyboard + input events on the ACE textarea
-            // (some monitoring tools track event counts, not just final value)
-            const aceTextarea = editor.container?.querySelector('textarea.ace_text-input');
-            if (aceTextarea) {
-                aceTextarea.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true, cancelable: true }));
-                aceTextarea.dispatchEvent(new InputEvent('input',     { data: ch, inputType: 'insertText', bubbles: true }));
-                aceTextarea.dispatchEvent(new KeyboardEvent('keyup',   { key: ch, bubbles: true, cancelable: true }));
-            }
-
-            // Sync hidden textarea every 80 chars to keep PrimeFaces state current
-            if (i % 80 === 0 && $ && $('#txtCode').length) {
-                $('#txtCode').val(session.getValue());
-            }
-
-            // Compute per-character delay
-            let delay;
-            if (ch === '\n') {
-                burstCount = 0;
-                delay = rand(NEWLINE_PAUSE_MIN, NEWLINE_PAUSE_MAX);
-            } else if ('{}[]()'.includes(ch)) {
-                burstCount = 0;
-                delay = rand(BRACE_PAUSE_MIN, BRACE_PAUSE_MAX);
-            } else {
-                burstCount++;
-                const accel = burstCount > BURST_THRESHOLD ? BURST_ACCELERATE : 1;
-                delay = Math.floor(rand(BASE_MIN, BASE_MAX) * accel);
-            }
-
-            await sleep(delay);
-        }
-
-        // Final sync of hidden textarea
-        if ($ && $('#txtCode').length) {
-            $('#txtCode').val(session.getValue());
-        }
-
-        return true;
-    };
-
-    // ========== PRE-SOLVED SOLUTION DATABASE FETCHER ==========
-    // Extracts ProgramID from page context and attempts fetching pre-solved solution
-    // first from local node server (localhost:3000), falling back to raw GitHub repo.
-    const extractProgramId = () => {
-        // Method 1: Check .ui.label elements for "ProgramID : 1234"
-        const labels = document.querySelectorAll('.ui.label');
-        for (const label of labels) {
-            const m = label.textContent.match(/ProgramID\s*:\s*(\d+)/i);
-            if (m) return m[1];
-        }
-        // Method 2: Check full body text
-        const bodyText = document.body?.innerText || '';
-        const m = bodyText.match(/ProgramID\s*:\s*(\d+)/i);
-        if (m) return m[1];
-
-        // Method 3: Check URL query parameter (e.g. ?id=1234 or ?p=1234)
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.has('id')) return urlParams.get('id');
-        if (urlParams.has('p')) return urlParams.get('p');
-
-        return null;
-    };
-
-    const generateWithLocalServer = async () => {
-        const programId = extractProgramId();
-        if (!programId) {
-            throw new Error('ProgramID not found on page');
-        }
-
-        const localUrl  = `http://localhost:3000/solutions/${programId}.md`;
-        const githubUrl = `${SETTINGS.localServerUrl || 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/main'}/solutions/${programId}.md`;
-
-        let markdownText = null;
-
-        // 1. Try local node solutions-server (localhost:3000)
-        try {
-            markdownText = await new Promise((resolve, reject) => {
-                if (typeof GM_xmlhttpRequest !== 'undefined') {
-                    GM_xmlhttpRequest({
-                        method: 'GET',
-                        url: localUrl,
-                        timeout: SETTINGS.localServerTimeout || 2500,
-                        onload: (res) => {
-                            if (res.status === 200 && res.responseText.trim()) resolve(res.responseText);
-                            else reject(new Error(`Local server HTTP ${res.status}`));
-                        },
-                        onerror: reject,
-                        ontimeout: reject
-                    });
-                } else {
-                    fetch(localUrl)
-                        .then(res => res.ok ? res.text() : Promise.reject(`HTTP ${res.status}`))
-                        .then(resolve)
-                        .catch(reject);
-                }
-            });
-            console.log(`[Solutions] Fetched solution for ProgramID ${programId} from local server.`);
-        } catch (e) {
-            console.log(`[Solutions] Local server unavailable (${e.message || e}), trying GitHub repository...`);
-        }
-
-        // 2. Fallback to GitHub raw repo
-        if (!markdownText) {
-            markdownText = await new Promise((resolve, reject) => {
-                if (typeof GM_xmlhttpRequest !== 'undefined') {
-                    GM_xmlhttpRequest({
-                        method: 'GET',
-                        url: githubUrl,
-                        timeout: 8000,
-                        onload: (res) => {
-                            if (res.status === 200 && res.responseText.trim()) resolve(res.responseText);
-                            else reject(new Error(`GitHub HTTP ${res.status}`));
-                        },
-                        onerror: reject,
-                        ontimeout: reject
-                    });
-                } else {
-                    fetch(githubUrl)
-                        .then(res => res.ok ? res.text() : Promise.reject(`GitHub HTTP ${res.status}`))
-                        .then(resolve)
-                        .catch(reject);
-                }
-            });
-            console.log(`[Solutions] Fetched solution for ProgramID ${programId} from GitHub repo.`);
-        }
-
-        if (!markdownText) {
-            throw new Error(`No solution file found for ProgramID ${programId}`);
-        }
-
-        return markdownText;
-    };
-
     // ========== generateAISolution FUNCTION ==========
-
     const generateAISolution = async () => {
         if (!SETTINGS.enableAISolver) return;
         if (isAiGenerationInProgress) {
@@ -9374,7 +8922,7 @@ Output ONLY the fixed ${language} code with NO comments:
 
 \`\`\`${language.toLowerCase()}`;
         }
-        // ========== Error fix mode: Runtime Error / Crash / TLE ==========
+        // ========== Error fix mode: Runtime Error ==========
         else if (!prompt && errorInfo.hasError && errorInfo.errorType === 'runtime_error' && errorInfo.currentCode) {
             const effectiveCode = wrapWithPrePost(errorInfo.currentCode);
 
@@ -9396,11 +8944,9 @@ Got:      ${errorInfo.yourOutput || '(CRASH / Segmentation Fault / TLE / Memory 
 
 FIXING STEPS:
 1. Trace potential causes: array out-of-bounds, division by zero, null pointer, recursion depth overflow, or stack overflow.
-2. Ensure array sizes handle maximum boundary constraints (e.g., N = 10^5) — declare large arrays GLOBALLY in C/C++.
-3. Use 64-bit data types (${language === 'Java' ? 'long' : 'long long'}) for all counters and accumulators.
-4. In C: use scanf(" %c", &c) for char reads after numeric scanf — never bare gets().
-5. In C++: add ios_base::sync_with_stdio(false); cin.tie(NULL); to prevent I/O TLE.
-6. Return the complete, robust program with NO comments.
+2. Ensure array sizes handle maximum boundary constraints (e.g., N = 10^5).
+3. Use 64-bit data types (${language === 'Java' ? 'long' : 'long long'}).
+4. Return the complete, robust program with NO comments.
 
 \`\`\`${language.toLowerCase()}`;
         }
@@ -9427,19 +8973,17 @@ Got:      ${errorInfo.yourOutput || '(EMPTY / WRONG)'}
 ${isEmptyOutput && language.toLowerCase() === 'python' ? '\nNOTE: Output is empty. Ensure your top-level script executes or calls main().' : ''}
 
 DEBUGGING STRATEGY:
-1. TRUST THE EXPECTED OUTPUT — it is absolute ground truth. Match it character-for-character.
+1. TRUST THE EXPECTED OUTPUT — it is absolute ground truth.
 2. Check for 64-bit integer overflow (${language === 'Java' ? 'use long' : 'use long long'}).
 3. Check for off-by-one errors (0-based vs 1-based indexing, <= vs <).
 4. Check input token ordering and string newline consumption.
 5. Check decimal place rounding and spacing formatting.
-6. Check edge cases: empty input, N=0, N=1, all elements identical, negative numbers.
-7. Provide a clean, robust solution with NO comments.
+6. Provide a clean, robust solution with NO comments.
 
 \`\`\`${language.toLowerCase()}`;
         }
         // ========== Normal mode: SQL Problem ==========
         else if (!prompt && language === 'SQL') {
-
             prompt = customSystemPrompt + `You are a Database and SQL Expert solving a SkillRack SQL challenge.
 Write the exact SQL query required. Output ONLY the single-line SQL query.
 
@@ -9564,7 +9108,6 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                     case 'duckduckgo':
                         return await generateWithDuckDuckGo(promptText);
                     case 'yuppbridge':
-                    case 'openai-compatible':
                         return await generateWithYuppBridge(promptText);
                     case 'nvidia':
                         return await generateWithNvidia(promptText);
@@ -9575,19 +9118,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                 }
             };
 
-            let response;
-            if (SETTINGS.enableLocalServer && !problem.isMFIB && !errorInfo.hasError) {
-                try {
-                    console.log('[Solutions] Searching for pre-solved solution for ProgramID...');
-                    response = await generateWithLocalServer();
-                    console.log('[Solutions] Pre-solved solution loaded successfully');
-                } catch (e) {
-                    console.warn('[Solutions] Local solution fetch failed — falling back to AI provider:', e.message);
-                    response = await requestFromProvider(prompt);
-                }
-            } else {
-                response = await requestFromProvider(prompt);
-            }
+            let response = await requestFromProvider(prompt);
 
             if (problem.isMFIB) {
                 let answers = [];
@@ -9686,31 +9217,17 @@ Output ONLY the valid ${language} code with NO comments:`;
                 }
 
                 if (code && window.txtCode) {
-                    let inserted = false;
-
-                    if (SETTINGS.humanTypingMode) {
-                        // Natural human-like typing: insert char-by-char with real DOM events
-                        try {
-                            inserted = await typeCodeNaturally(code);
-                        } catch (e) {
-                            console.warn('[AI] typeCodeNaturally failed, falling back to instant insert:', e);
-                        }
+                    if (typeof window.txtCode.getSession === 'function') {
+                        window.txtCode.getSession().setValue(code);
+                    } else if ('value' in window.txtCode) {
+                        window.txtCode.value = code;
+                        window.txtCode.dispatchEvent(new Event('input', { bubbles: true }));
+                        window.txtCode.dispatchEvent(new Event('change', { bubbles: true }));
                     }
 
-                    if (!inserted) {
-                        // Instant insert fallback
-                        if (typeof window.txtCode.getSession === 'function') {
-                            window.txtCode.getSession().setValue(code);
-                        } else if ('value' in window.txtCode) {
-                            window.txtCode.value = code;
-                            window.txtCode.dispatchEvent(new Event('input',  { bubbles: true }));
-                            window.txtCode.dispatchEvent(new Event('change', { bubbles: true }));
-                        }
-
-                        const $ = window.jQuery || window.$;
-                        if ($ && $('#txtCode').length) {
-                            $('#txtCode').val(code);
-                        }
+                    const $ = window.jQuery || window.$;
+                    if ($ && $("#txtCode").length) {
+                        $("#txtCode").val(code);
                     }
 
                     console.log(errorInfo.hasError ? 'AI fix applied successfully' : 'AI solution inserted successfully');
@@ -10404,12 +9921,7 @@ Output ONLY the valid ${language} code with NO comments:`;
         // ── Page detection helpers ────────────────────────────────────────────────
         function isOnProblemPageURL() {
             const href = window.location.href;
-            // Standard coding pages
             if (href.includes('codeprogram') || href.includes('tutorprogram')) return true;
-            // Daily challenge & daily test pages
-            if (href.includes('dailychallenge') || href.includes('dailytest')) return true;
-            // MCQ / Assessment pages
-            if (href.includes('mcqassessment') || href.includes('assessment')) return true;
             return hasCodeEditor() || hasCaptcha() || isOnProblemListPage();
         }
 
@@ -14148,7 +13660,7 @@ Output ONLY the valid ${language} code with NO comments:`;
             // Auto-minimize Find Incomplete dropdown on outside click/touch (collapses into compact pill badge)
             document.addEventListener('click', (e) => {
                 if (!dropdown || dropdown.style.display === 'none' || dropdown.style.opacity === '0') return;
-
+                
                 // If click is inside dropdown or on trigger button or on HUD pill, do not minimize
                 if (dropdown.contains(e.target) || (e.composedPath && e.composedPath().includes(dropdown))) return;
                 if (e.target.id === 'find-incomplete-btn' || e.target.closest('#find-incomplete-btn')) return;
@@ -14626,3 +14138,4 @@ Output ONLY the valid ${language} code with NO comments:`;
     });
 
 }
+
