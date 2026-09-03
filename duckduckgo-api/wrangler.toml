@@ -1,0 +1,6 @@
+name = "duckduckgo-api"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+API_KEY = "your-secret-api-key-here"

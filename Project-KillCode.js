@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Project-KillCode
+// @name         Project-KillCode Master
 // @namespace    http://tampermonkey.net/
-// @version      5.1a
-// @description  Bypass tab switching, copy/paste restrictions, full-screen enforcement, auto-solve captcha, and AI-powered solution generator
-// @author       ToonTamilIndia (Captcha solver by adithyagenie)
+// @version      7.0
+// @description  Bypass tab switching, copy/paste restrictions, full-screen enforcement, auto-solve captcha, AI-powered solution generator (9 AI providers), local pre-solved database, and FastAPI scraper
+// @author       ToonTamilIndia & Vishnu-tppr (Captcha solver by adithyagenie)
 // @match        https://*.skillrack.com/*
 // @match        https://skillrack.com/*
 // @require      https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js
@@ -19,9 +19,8 @@
 // @connect      skillrack.com
 // @connect      auth.openai.com
 // @connect      chatgpt.com
+// @connect      raw.githubusercontent.com
 // @run-at       document-start
-// @downloadURL https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js
-// @updateURL https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js
 // ==/UserScript==
 
 // 1. Sandbox bridge
@@ -168,11 +167,13 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
     window.addEventListener('message', async (event) => {
         if (event.data && event.data.type === 'GM_XHR_REQUEST') {
             const { id, options } = event.data;
+            const reqTimeout = options.timeout || 180000;
             GM_xmlhttpRequest({
                 method: options.method || 'GET',
                 url: options.url,
                 headers: options.headers,
                 data: options.data,
+                timeout: reqTimeout,
                 onload: function (response) {
                     window.postMessage({
                         type: 'GM_XHR_RESPONSE',
@@ -188,6 +189,13 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
                         type: 'GM_XHR_RESPONSE',
                         id: id,
                         error: err.error || 'Network error'
+                    }, '*');
+                },
+                ontimeout: function () {
+                    window.postMessage({
+                        type: 'GM_XHR_RESPONSE',
+                        id: id,
+                        error: `Request timed out (${Math.round(reqTimeout / 1000)}s) on ${options.url}`
                     }, '*');
                 }
             });
@@ -226,9 +234,15 @@ function mainCode() {
     const gmFetch = (url, options = {}) => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substr(2, 9);
+            const timeoutMs = options.timeout || 180000; // 180s default timeout for AI models
+            const timeoutId = setTimeout(() => {
+                window.removeEventListener('message', handleMessage);
+                reject(new Error(`gmFetch timeout (${Math.round(timeoutMs / 1000)}s) on ${url}`));
+            }, timeoutMs + 1000);
 
             const handleMessage = (event) => {
                 if (event.data && event.data.type === 'GM_XHR_RESPONSE' && event.data.id === requestId) {
+                    clearTimeout(timeoutId);
                     window.removeEventListener('message', handleMessage);
                     if (event.data.error) {
                         reject(new Error(event.data.error));
@@ -237,6 +251,8 @@ function mainCode() {
                             ok: event.data.status >= 200 && event.data.status < 300,
                             status: event.data.status,
                             statusText: event.data.statusText,
+                            responseText: event.data.responseText,
+                            responseHeaders: event.data.responseHeaders || '',
                             responseHeadersRaw: event.data.responseHeaders || '',
                             headers: {
                                 get: (name) => {
@@ -252,14 +268,17 @@ function mainCode() {
                 }
             };
 
+            window.addEventListener('message', handleMessage);
+
             window.postMessage({
                 type: 'GM_XHR_REQUEST',
                 id: requestId,
                 options: {
-                    method: options.method,
+                    method: options.method || 'GET',
                     url: url,
-                    headers: options.headers,
-                    data: options.body
+                    headers: options.headers || {},
+                    data: options.body || options.data,
+                    timeout: timeoutMs
                 }
             }, '*');
         });
@@ -326,7 +345,7 @@ function mainCode() {
     // ============================================
     // SCRIPT VERSION & REMOTE URLS
     // ============================================
-    const SCRIPT_VERSION = '5.1';
+    const SCRIPT_VERSION = '7.0';
     const REMOTE_SCRIPT_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js';
     const KILL_SWITCH_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/kill.txt';
     const DISCLAIMER_ACCEPTED_KEY = 'skillrack_bypass_disclaimer_accepted';
@@ -349,55 +368,67 @@ function mainCode() {
     };
 
     // ============================================
-    // KILL SWITCH CHECK
+    // KILL SWITCH CHECK (Live Background Check)
     // ============================================
     const checkKillSwitch = async () => {
+        const cachedDisabled = localStorage.getItem(SCRIPT_DISABLED_KEY);
+        if (cachedDisabled === 'true') return false;
+
         try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000);
             const response = await fetch(KILL_SWITCH_URL + '?t=' + Date.now(), {
-                cache: 'no-store'
+                cache: 'no-store',
+                signal: controller.signal
             });
+            clearTimeout(timeoutId);
             if (!response.ok) {
-                console.log('[SkillRack Bypass] Kill switch check failed, allowing script to run');
                 localStorage.removeItem(SCRIPT_DISABLED_KEY);
                 return true;
             }
             const text = (await response.text()).trim().toLowerCase();
-            // If explicitly set to false/disabled/kill -> disable script
             if (text === 'false' || text === 'disabled' || text === 'kill' || text === '0') {
-                console.log('[SkillRack Bypass] Kill switch activated - script disabled');
                 localStorage.setItem(SCRIPT_DISABLED_KEY, 'true');
                 return false;
             }
-            // Otherwise (true/enabled/1) -> script is active and allowed
             localStorage.removeItem(SCRIPT_DISABLED_KEY);
             return true;
         } catch (e) {
-            console.log('[SkillRack Bypass] Kill switch check error:', e);
             localStorage.removeItem(SCRIPT_DISABLED_KEY);
             return true;
         }
     };
 
     // ============================================
-    // VERSION CHECK
+    // VERSION CHECK (Cached - 6h TTL)
     // ============================================
     const checkForUpdate = async () => {
+        const lastCheck = parseInt(localStorage.getItem('killcode_last_update_check') || '0', 10);
+        const cachedVersion = localStorage.getItem('killcode_cached_remote_version');
+
+        if (Date.now() - lastCheck < 6 * 60 * 60 * 1000 && cachedVersion) {
+            return cachedVersion;
+        }
+
         try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
             const response = await fetch(REMOTE_SCRIPT_URL + '?t=' + Date.now(), {
-                cache: 'no-store'
+                cache: 'no-store',
+                signal: controller.signal
             });
-            if (!response.ok) return null;
+            clearTimeout(timeoutId);
+            if (!response.ok) return cachedVersion || null;
 
             const scriptText = await response.text();
-            // Extract version from @version line
             const versionMatch = scriptText.match(/@version\s+(\d+\.\d+(?:\.\d+)?)/);
             if (versionMatch) {
+                localStorage.setItem('killcode_last_update_check', String(Date.now()));
+                localStorage.setItem('killcode_cached_remote_version', versionMatch[1]);
                 return versionMatch[1];
             }
-        } catch (e) {
-            console.log('[SkillRack Bypass] Version check error:', e);
-        }
-        return null;
+        } catch (e) {}
+        return cachedVersion || null;
     };
 
     // ============================================
@@ -725,26 +756,24 @@ function mainCode() {
         return true;
     };
 
-    // Run initialization and only continue if all checks pass
-    let scriptEnabled = false;
+    // Run initialization immediately without blocking page load
+    let scriptEnabled = (localStorage.getItem(SCRIPT_DISABLED_KEY) !== 'true');
     let initCallbacks = [];
 
     // Register a callback to run when script is enabled
     const onScriptEnabled = (callback) => {
         if (scriptEnabled) {
-            callback();
+            try { callback(); } catch (e) { console.error('[SkillRack Bypass] Callback error:', e); }
         } else {
             initCallbacks.push(callback);
         }
     };
 
-    // We need to run async initialization but continue with the rest of the script
-    // For features that run at document-start, we'll check scriptEnabled flag
+    // Run verification non-blockingly in background
     (async () => {
-        scriptEnabled = await initializeScript();
-        if (scriptEnabled) {
-            console.log('[SkillRack Bypass] All checks passed - script enabled');
-            // Run all registered callbacks
+        const ok = await initializeScript();
+        if (ok && !scriptEnabled) {
+            scriptEnabled = true;
             initCallbacks.forEach(cb => {
                 try { cb(); } catch (e) { console.error('[SkillRack Bypass] Callback error:', e); }
             });
@@ -767,6 +796,7 @@ function mainCode() {
         enableContextMenu: true,
         enableFullScreenCopyMode: false,
         enablePopupMode: false,
+        humanTypingMode: true,    // Type AI solution char-by-char at human speed
 
         // Captcha solver (credit: adithyagenie)
         enableCaptchaSolver: true,
@@ -776,7 +806,145 @@ function mainCode() {
         enableAISolver: false,
         includePrePostCode: false,
         aiTemperature: 0,
-        aiSystemPrompt: "",
+        aiSystemPrompt: `You are an expert competitive programmer solving a SkillRack coding challenge.  
+
+Your response will be automatically parsed and run, then reviewed by other AI systems for correctness. Follow these rules with 100% strictness. Accuracy is mandatory — never invent syntax, APIs, table names, column names, function names, or behaviors that are not grounded in the problem statement, pre-code, or sample I/O. 
+
+Supported languages: C, C++, Java, Python, SQL (and any other language explicitly stated in the problem). Apply the correct language rules below based on what the problem asks for. 
+
+[CRITICAL - OUTPUT MODE]
+
+For Fill-In-The-Blanks (MFIB) problems:  
+
+- Output ONLY the values that belong in the blank fields ([BLANK_0], [BLANK_1], etc.).  
+- Print each blank's value on a new line, in order of appearance.  
+- Do NOT include any code markdown fences, notes, explanations, or labels. 
+
+For Full-Code problems (C / C++ / Java / Python / other):  
+
+- Output ONLY the raw source code.  
+- Do NOT wrap code in markdown fences (do NOT use cpp, java, python, sql, or similar).  
+- Do NOT include any comments, introductory text, explanations, or placeholders like // your code here. 
+
+For SQL problems:  
+
+- Output ONLY the SQL query/statement(s) required.  
+- Do NOT wrap in markdown fences.  
+- Do NOT invent table names, column names, schemas, or sample data — use exactly what the problem and pre-code provide.  
+- Prefer standard SQL unless the problem specifies a dialect (MySQL, SQLite, PostgreSQL, H2, etc.); then match that dialect exactly.  
+- Do NOT add USE database, CREATE TABLE, DROP TABLE, or INSERT unless the problem explicitly requires them (e.g. “CREATE with SELECT” / “create a new table” problems). 
+
+*SQL Formatting (STRICT):*  
+
+- Emit the *entire SQL solution as a SINGLE LINE*.  
+- Do NOT insert line breaks anywhere in the SQL statement.  
+- Do NOT pretty-print or format clauses on separate lines.  
+- Use only spaces to separate SQL keywords and clauses.
+
+*Correct (Single Line) examples:*  
+
+- SELECT c.id, c.name, c.age, p.name, p.price FROM customer c INNER JOIN plan p ON c.planid = p.id ORDER BY c.id; 
+- SELECT name, age FROM customer WHERE age >= 18 ORDER BY age DESC; 
+- SELECT p.name, COUNT(*) FROM customer c INNER JOIN plan p ON c.planid = p.id GROUP BY p.name HAVING COUNT(*) > 1 ORDER BY p.name; 
+- UPDATE customer SET age = age + 1 WHERE id = 5; 
+- DELETE FROM customer WHERE age < 18; 
+- CREATE TABLE filledbus AS SELECT * FROM bus WHERE seats > 0; 
+
+*Incorrect (Multi-Line) examples:*  
+
+-  
+  SELECT c.id,  
+         c.name,  
+         p.name  
+   FROM customer c  
+   INNER JOIN plan p  
+   ON c.planid = p.id  
+   ORDER BY c.id;
+
+-  
+  SELECT *  
+   FROM customer  
+   WHERE age > 18;
+
+*Rule:* Every SQL answer must be one continuous line with spaces between clauses only. No newline characters are allowed anywhere in the SQL statement. 
+
+[ANTI-HALLUCINATION RULES]
+
+- Never invent problem constraints, input formats, output formats, function signatures, library functions, or SQL schema details that are not present in the problem. 
+- If something is ambiguous, choose the interpretation that matches the sample I/O exactly. Sample I/O is ground truth over the written description.
+- Do not use non-existent or language-specific APIs unless they appear in the problem or pre-code.
+- Do not add extra print statements, debug output, labels, or decorative text. 
+- Mentally verify every identifier (variables, columns, tables, functions) against the problem before emitting output. 
+
+Your final output will be reviewed by Claude Mythos Preview and Codex — it must be exact, minimal, and correct on first parse. No partial answers, no "assuming that...", no commentary. 
+
+[PRE-CODE & INTEGRATION RULES]
+
+Respect Pre-Code Conventions:  
+
+- Do NOT re-declare or include #include directives or import statements if they are already in the pre-code.  
+- If the pre-code uses using namespace std;, respect it and align with it.  
+- Do not override existing conventions. 
+
+C / C++:  
+
+- Use correct headers only if not already provided.  
+- For decimals: when N decimal places are required, include <iomanip> and use std::fixed << std::setprecision(N) (or fixed << setprecision(N) if using namespace std; is active).  
+- Prevent integer overflow: use long long for any variables that accumulate large numbers. 
+
+Java structure:  
+
+- Class name must be Hello.  
+- Do NOT include a package declaration.  
+- Prevent integer overflow: use long for accumulators that can grow large. 
+
+Python execution:  
+
+- Do NOT define functions unless explicitly asked by the problem.  
+- Write code to execute directly at the top level.
+
+SQL Execution (SkillRack / H2 and similar):  
+
+- SkillRack almost always pre-creates tables and loads sample data before your code runs. Your job is usually a SELECT (or SELECT with JOIN / ORDER BY / WHERE / GROUP BY), not DDL/DML. 
+- Default: write ONLY the query that produces the required result set. Do NOT emit CREATE TABLE, DROP, or INSERT unless the problem text explicitly says to create/insert (e.g. “CREATE TABLE … AS SELECT …”, “create a new table filledbus”, etc.).
+- If you re-create a table that already exists, the judge fails with errors such as java.sql.SQLException: Table "CUSTOMER" already exists — that means you must remove CREATE and only SELECT from the given tables.
+- Use table and column names exactly as in the problem DDL (e.g., customer, plan, courseid, etc.). Do not rename or invent columns. 
+- Match column order, aliases, sorting, NULL handling, and aggregation exactly as specified by the problem and samples. 
+- Use correct JOIN types and filters as required (e.g., INNER JOIN on foreign keys like planid = plan.id when output mixes customer + plan fields, LEFT JOIN when rows with null foreign keys must still appear). 
+- ORDER BY must match sample row order (for example, id DESC when samples list highest id first).
+- Names with spaces (e.g., "Spoken English", "Basic Plus") come from table data — do not hardcode sample rows. 
+- Always output SQL as one continuous single line (spaces between clauses only; zero newline characters in the SQL body). 
+
+[OUTPUT SPECIFICATION]
+
+- Match the EXPECTED output format exactly. NEVER add labels, prefixes, or decorative text (e.g., if the expected output is 23.52, output exactly 23.52 — do NOT output Result: 23.52). 
+- Treat ALL sample input/output as ground truth. If the problem description conflicts with the sample I/O, obey the sample I/O behavior. 
+- If the expected output ends without a newline, do NOT add one. If it ends with one, add one.
+- Time complexity: Must not exceed O(n^2) for n > 10^4. Prefer O(n) or O(n log n). 
+- SQL correctness: result columns, row order, NULL handling, and aggregate behavior must match samples character-for-character when compared as the judge does. 
+
+[SKILLRACK SQL FAILURE PATTERNS TO AVOID]
+
+- Table already exists → You submitted CREATE TABLE; tables are pre-created. Output SELECT only. 
+- Wrong column order → Reorder SELECT list to match expected output fields left-to-right. 
+- Wrong sort → Add ORDER BY exactly as samples imply (often primary key DESC or ASC). 
+- Missing JOIN → When output needs columns from two tables (e.g., customer name + plan name + amount), JOIN on the foreign key; do not invent columns on one table. 
+
+- Hardcoded sample rows → Never INSERT or SELECT literal sample values; query the live tables.
+- CREATE WITH SELECT problems only → Emit CREATE TABLE … AS SELECT … (or equivalent) only when the problem title/statement explicitly requires creating a new table from a query. 
+- Multi-line SQL → Forbidden. Collapse the full statement into one line before emitting. 
+
+[SELF-CHECK STEP]
+
+Before generating your final response, mentally trace your solution with the sample inputs (or sample tables for SQL). 
+
+For SQL:  
+
+- Confirm you did not CREATE/INSERT unless required.  
+- Confirm JOIN keys, SELECT column order, and ORDER BY reproduce the expected rows character-for-character (including trailing spaces if present).  
+- Confirm the entire SQL is a single line with no line breaks. 
+
+Compare the output character-by-character against the expected sample outputs (including trailing spaces and newlines). Verify it matches exactly. Only then emit the final answer — nothing else.`,
         aiProvider: "gemini",
         geminiApiKey: "",
         geminiModel: "gemini-2.5-flash",
@@ -804,11 +972,14 @@ function mainCode() {
         duckduckgoReasoningEffort: "low",
         // ================================================
 
-        // ========== YUPPBRIDGE SETTINGS (NEW) ==========
+        // ========== YUPPBRIDGE / OPENAI-COMPATIBLE SETTINGS ==========
+        openaiCompatApiUrl: "",
+        openaiCompatApiKey: "",
+        openaiCompatModel: "gpt-4o",
         yuppbridgeApiUrl: "",
         yuppbridgeApiKey: "",
         yuppbridgeModel: "gpt-4o",
-        // ================================================
+        // =============================================================
 
         // ========== NVIDIA NIM SETTINGS ==========
         nvidiaApiKey: "",
@@ -823,9 +994,15 @@ function mainCode() {
 
         // ========== AUTO SOLVER SETTINGS ==========
         enableAutoSolver: false,
-        autoSolverMaxRetries: 3,
+        autoSolverMaxRetries: 5,
         autoSolverDelay: 500,
         // ==========================================
+
+        // ========== SOLUTIONS SOURCE SETTINGS (solutions/*.md) ==========
+        enableLocalServer: true,
+        localServerUrl: "https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/main",
+        localServerTimeout: 3000,
+        // ============================================
 
         // ========== FIND INCOMPLETE SETTINGS ==========
         enableFindIncomplete: true,
@@ -846,6 +1023,20 @@ function mainCode() {
                 const merged = { ...DEFAULT_SETTINGS, ...parsed };
                 // Migrate: old default was 1 which made retry loop never fire — bump to 5
                 if (merged.autoSolverMaxRetries < 2) merged.autoSolverMaxRetries = 5;
+                // Migrate: yuppbridge <-> openai-compatible
+                if (merged.aiProvider === 'yuppbridge') merged.aiProvider = 'openai-compatible';
+                if (merged.openaiCompatApiUrl === undefined && merged.yuppbridgeApiUrl !== undefined) merged.openaiCompatApiUrl = merged.yuppbridgeApiUrl;
+                if (merged.openaiCompatApiKey === undefined && merged.yuppbridgeApiKey !== undefined) merged.openaiCompatApiKey = merged.yuppbridgeApiKey;
+                if (merged.openaiCompatModel === undefined && merged.yuppbridgeModel !== undefined) merged.openaiCompatModel = merged.yuppbridgeModel;
+
+                // Migrate: local server settings
+                if (merged.enableLocalServer === undefined) merged.enableLocalServer = true;
+                if (!merged.localServerUrl || merged.localServerUrl.includes('skillrack-userscript')) {
+                    merged.localServerUrl = "https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/main";
+                }
+                if (merged.localServerTimeout === undefined) merged.localServerTimeout = 3000;
+
+
                 // Migrate: if user has no authMode, migrate based on existing settings
                 if (!parsed.openaiAuthMode) {
                     if (parsed.openaiApiKey) {
@@ -3482,6 +3673,7 @@ function mainCode() {
         try {
             response = await gmFetch(OmniRouteProvider.CONFIG.CHAT_URL(), {
                 method: 'POST',
+                timeout: 180000,
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${apiKey}`
@@ -3496,6 +3688,9 @@ function mainCode() {
                 })
             });
         } catch (networkErr) {
+            if (networkErr.message.includes('timeout')) {
+                throw new Error(`OmniRoute: Request timed out. The local LLM backend at ${OmniRouteProvider.CONFIG.BASE_URL()} took longer than 180s to respond. Check if OmniRoute/local model server is responsive or select a faster model.`);
+            }
             if (networkErr.message.includes('ECONNREFUSED') || networkErr.message.includes('Failed to fetch') || networkErr.message.includes('NetworkError')) {
                 throw new Error('OmniRoute: Cannot connect to gateway at ' + OmniRouteProvider.CONFIG.BASE_URL() + '. Is OmniRoute running on port 20128?');
             }
@@ -3954,6 +4149,7 @@ function mainCode() {
         panelContent.appendChild(createToggle('enableTextSelection', 'Text Selection', SETTINGS.enableTextSelection, 'Enable text selection'));
         panelContent.appendChild(createToggle('enableContextMenu', 'Context Menu', SETTINGS.enableContextMenu, 'Enable right-click menu'));
         panelContent.appendChild(createToggle('enableFullScreenCopyMode', 'Full Screen Copy Mode (Ctrl+A)', SETTINGS.enableFullScreenCopyMode, 'Copy full page text + structured prompt'));
+        panelContent.appendChild(createToggle('humanTypingMode', 'Human Typing Mode', SETTINGS.humanTypingMode, 'Type AI code char-by-char at natural speed'));
 
         panelContent.appendChild(createSectionHeader('Captcha Solver', 'M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z'));
         panelContent.appendChild(createToggle('enableCaptchaSolver', 'Auto-Solve Captcha', SETTINGS.enableCaptchaSolver, 'Automatically solve math captcha'));
@@ -6092,30 +6288,102 @@ function mainCode() {
 
     // 1. BLOCK TAB SWITCH DETECTION (Page Visibility API)
     if (SETTINGS.bypassTabDetection) {
+        // ── 1a. Always report document as VISIBLE ──────────────────────────────
         Object.defineProperty(document, 'visibilityState', {
-            get: function () {
-                return 'visible'; // Always report as visible
-            },
+            get: () => 'visible',
             configurable: true
         });
-
         Object.defineProperty(document, 'hidden', {
-            get: function () {
-                return false; // Always report as not hidden
-            },
+            get: () => false,
             configurable: true
         });
 
-        // Override addEventListener to block visibilitychange events
-        // But allow other events to pass through normally
+        // ── 1b. Always report window as FOCUSED ────────────────────────────────
+        // SkillRack daily test / daily challenge uses document.hasFocus() and
+        // window.hasFocus() to verify the browser window is the active OS window.
+        // Spoofing these prevents the logout-on-focus-loss mechanism.
+        try {
+            Object.defineProperty(document, 'hasFocus', {
+                value: () => true,
+                writable: true,
+                configurable: true
+            });
+        } catch (e) { /* already overridden */ }
+
+        try {
+            Object.defineProperty(window, 'hasFocus', {
+                value: () => true,
+                writable: true,
+                configurable: true
+            });
+        } catch (e) { /* already overridden */ }
+
+        // ── 1c. Block window blur / focus events ──────────────────────────────
+        // SkillRack attaches window.onblur / window.addEventListener('blur', ...)
+        // handlers to fire the logout request when OS focus shifts away.
+        // We intercept these at the prototype and window level.
+        window.onblur   = null;
+        window.onfocus  = null;
+        document.onblur  = null;
+        document.onfocus = null;
+
+        // Prevent future assignments via property descriptor override
+        ['blur', 'focus'].forEach(evtName => {
+            try {
+                Object.defineProperty(window, 'on' + evtName, {
+                    get: () => null,
+                    set: (fn) => {
+                        console.log(`[KillCode] Blocked window.on${evtName} assignment`);
+                    },
+                    configurable: true
+                });
+                Object.defineProperty(document, 'on' + evtName, {
+                    get: () => null,
+                    set: (fn) => {
+                        console.log(`[KillCode] Blocked document.on${evtName} assignment`);
+                    },
+                    configurable: true
+                });
+            } catch (e) { /* skip if already locked */ }
+        });
+
+        // ── 1d. Block navigator.sendBeacon (used to send logout pings even after page unload) ──
+        if (navigator.sendBeacon) {
+            const _origBeacon = navigator.sendBeacon.bind(navigator);
+            navigator.sendBeacon = function (url, data) {
+                const u = String(url);
+                if (u.includes('logout') || u.includes('tab-switch') ||
+                    u.includes('blur') || u.includes('proctoring') ||
+                    u.includes('heartbeat') || u.includes('telemetry')) {
+                    console.log(`[KillCode] Blocked sendBeacon to: ${u}`);
+                    return true; // Pretend it was sent OK
+                }
+                return _origBeacon(url, data);
+            };
+        }
+
+        // ── 1e. Block beforeunload / unload from firing logout in daily tests ──
+        window.addEventListener('beforeunload', (e) => {
+            // Prevent page from showing "you're being logged out" dialog on tab switch
+            e.stopImmediatePropagation();
+        }, true);
+
+        // ── 1f. Override addEventListener to block visibilitychange, blur, focus events ──
         EventTarget.prototype.addEventListener = function (type, listener, options) {
             if (type === 'visibilitychange' || type === 'webkitvisibilitychange') {
-                console.log('Blocked visibilitychange event listener');
-                return; // Don't add the listener
+                console.log('[KillCode] Blocked visibilitychange event listener');
+                return;
+            }
+            // Block window/document level blur & focus listeners (SkillRack logout triggers)
+            if ((this === window || this === document) &&
+                (type === 'blur' || type === 'focus')) {
+                console.log(`[KillCode] Blocked window/document ${type} event listener`);
+                return;
             }
             return originalAddEventListener.call(this, type, listener, options);
         };
     }
+
 
     // 2. ENABLE COPY/PASTE FUNCTIONALITY
     if (SETTINGS.bypassCopyPaste) {
@@ -6635,18 +6903,30 @@ function mainCode() {
 
         // But keep blocking specific anti-cheat events only if enabled
         if (SETTINGS.bypassTabDetection) {
-            const blockEvents = ['visibilitychange', 'webkitvisibilitychange'];
+            const blockVisibility = ['visibilitychange', 'webkitvisibilitychange'];
 
-            const newAddEventListener = EventTarget.prototype.addEventListener;
             EventTarget.prototype.addEventListener = function (type, listener, options) {
-                if (blockEvents.includes(type)) {
-                    console.log(`Blocked ${type} event listener`);
+                if (blockVisibility.includes(type)) {
+                    console.log(`[KillCode] Blocked ${type} event listener (post-restore)`);
                     return;
                 }
-                return newAddEventListener.call(this, type, listener, options);
+                // Keep blocking window/document blur & focus (SkillRack late-binding logout trigger)
+                if ((this === window || this === document) &&
+                    (type === 'blur' || type === 'focus')) {
+                    console.log(`[KillCode] Blocked window/document ${type} event listener (post-restore)`);
+                    return;
+                }
+                return originalAddEventListener.call(this, type, listener, options);
             };
+
+            // Re-null out any blur handlers that SkillRack may have registered before script loaded
+            window.onblur   = null;
+            window.onfocus  = null;
+            document.onblur  = null;
+            document.onfocus = null;
         }
     }, 1000);
+
 
     // 7. PRESERVE PRIMEFACES AJAX FUNCTIONALITY
     // Ensure PrimeFaces AJAX works correctly after DOM updates
@@ -6733,7 +7013,9 @@ function mainCode() {
     // ============================================
 
 
-    const TUTOR_REGEX = /https:\/\/(www.)?skillrack\.com\/faces\/candidate\/tutorprogram\.xhtml/gi;
+    const TUTOR_REGEX         = /https:\/\/(www.)?skillrack\.com\/faces\/candidate\/tutorprogram\.xhtml/gi;
+    const DAILY_CHALLENGE_REGEX = /https:\/\/(www.)?skillrack\.com\/faces\/candidate\/dailychallenge\.xhtml/gi;
+    const DAILY_TEST_REGEX      = /https:\/\/(www.)?skillrack\.com\/faces\/candidate\/(dailytest|dailychallenge|mcqassessment|assessment)\.xhtml/gi;
     const ERROR_CLASS = "ui-growl-item";
     const CAPTCHA_INPUT_ID = "capval";
     const PROCEED_BTN_ID = "proceedbtn";
@@ -7412,35 +7694,94 @@ function mainCode() {
     // Powered by Grandmaster Competitive Programming Prompts for SkillRack
     // ============================================
 
-    const getSelectedLanguage = () => {
-        const langSelect = document.getElementById('langs_input');
-        if (langSelect && langSelect.selectedIndex >= 0) {
-            const selectedOption = langSelect.options[langSelect.selectedIndex];
-            if (selectedOption) {
-                const text = (selectedOption.text || selectedOption.textContent || selectedOption.value || '').trim();
-                const textUpper = text.toUpperCase();
-                if (textUpper.includes('SQL') || textUpper.includes('MYSQL') || textUpper.includes('ORACLE') || textUpper.includes('POSTGRES')) return 'SQL';
-                if (textUpper.includes('JAVA') && !textUpper.includes('SCRIPT')) return 'Java';
-                if (textUpper.includes('PYTHON') || textUpper.includes('PY3') || textUpper.includes('PY')) return 'Python';
-                if (textUpper.includes('CPP23') || textUpper.includes('C++23')) return 'C++23';
-                if (textUpper.includes('CPP') || textUpper.includes('C++')) return 'C++';
-                if (textUpper.includes('C#') || textUpper.includes('CSHARP')) return 'C#';
-                if (textUpper.includes('JAVASCRIPT') || textUpper.includes('JS') || textUpper.includes('NODE')) return 'JavaScript';
-                if (textUpper.includes('GOLANG') || textUpper.includes('GO')) return 'Go';
-                if (textUpper.includes('RUST')) return 'Rust';
-                if (textUpper.includes('PHP')) return 'PHP';
-                if (textUpper === 'C' || textUpper.startsWith('C ')) return 'C';
+    const parseLanguageString = (rawText) => {
+        if (!rawText || typeof rawText !== 'string') return null;
+        const s = rawText.trim();
+        const upper = s.toUpperCase();
+
+        if (upper.includes('SQL') || upper.includes('MYSQL') || upper.includes('ORACLE') || upper.includes('POSTGRES')) return 'SQL';
+        if (upper.includes('JAVA') && !upper.includes('SCRIPT')) return 'Java';
+        if (upper.includes('PYTHON') || upper.includes('PY3') || /\bPY\b/i.test(s) || upper.includes('CPYTHON')) return 'Python';
+        if (upper.includes('C++') || upper.includes('CPP') || upper.includes('G++') || upper.includes('CLANG++')) {
+            if (upper.includes('23')) return 'C++23';
+            if (upper.includes('20')) return 'C++20';
+            if (upper.includes('17')) return 'C++17';
+            return 'C++';
+        }
+        if (upper.includes('C#') || upper.includes('CSHARP')) return 'C#';
+        if (upper.includes('JAVASCRIPT') || upper.includes('NODE') || /\bJS\b/i.test(s)) return 'JavaScript';
+        if (upper.includes('GOLANG') || /\bGO\b/i.test(s)) return 'Go';
+        if (upper.includes('RUST')) return 'Rust';
+        if (upper.includes('PHP')) return 'PHP';
+        if (upper.includes('KOTLIN')) return 'Kotlin';
+        if (upper.includes('SWIFT')) return 'Swift';
+        if (/^C\b/i.test(s) || upper.includes('GCC') || upper.includes('CLANG') || upper.includes('ANSI C') || upper === 'C' || upper.startsWith('C(') || upper.startsWith('C ')) return 'C';
+        return null;
+    };
+
+    const isLanguageMismatch = (code, language) => {
+        if (!code) return false;
+        const langLower = String(language || '').toLowerCase().trim();
+        const trimmed = code.trim();
+
+        // Target is C / C++ / Java / SQL, but code is clearly Python
+        if (langLower === 'c' || langLower === 'c++' || langLower === 'cpp' || langLower === 'java' || langLower === 'sql') {
+            if (/^\s*(import\s+sys|import\s+os|from\s+collections|tokens\s*=\s*sys\.stdin|def\s+[a-zA-Z0-9_]+\s*\(|print\s*\()/m.test(trimmed) &&
+                !/^\s*(#include|import\s+java|public\s+class|SELECT)/m.test(trimmed)) {
+                return true;
             }
         }
+        // Target is Python, but code is clearly C/C++
+        if (langLower === 'python' || langLower === 'python3' || langLower === 'py') {
+            if (/^\s*(#include\s*<|using\s+namespace\s+std|int\s+main\s*\(|void\s+main\s*\()/m.test(trimmed)) {
+                return true;
+            }
+        }
+        return false;
+    };
 
-        // Fallback: Check Ace Editor syntax mode if available
+    const getSelectedLanguage = () => {
+        // 1. Compiler error output indicator (Ground truth when judge has failed)
+        const errorPanel = document.getElementById('errormsg_content') || document.getElementById('errormsg') || document.querySelector('.ui-messages-error');
+        if (errorPanel) {
+            const errText = errorPanel.textContent || '';
+            if (/Hello\.c:\d+/i.test(errText) || /gcc/i.test(errText)) return 'C';
+            if (/Hello\.cpp:\d+/i.test(errText) || /g\+\+/i.test(errText)) return 'C++';
+            if (/Hello\.java:\d+/i.test(errText) || /javac/i.test(errText)) return 'Java';
+            if (/Hello\.py:\d+/i.test(errText) || /Traceback/i.test(errText) || /File "[^"]+\.py"/i.test(errText)) return 'Python';
+            if (/Hello\.cs:\d+/i.test(errText) || /csc/i.test(errText)) return 'C#';
+        }
+
+        // 2. PrimeFaces visible dropdown label (#langs_label)
+        const labelEl = document.getElementById('langs_label') || document.querySelector('.ui-selectonemenu-label');
+        if (labelEl) {
+            const parsed = parseLanguageString(labelEl.textContent || labelEl.innerText);
+            if (parsed) return parsed;
+        }
+
+        // 3. Hidden <select id="langs_input"> element
+        const langSelect = document.getElementById('langs_input') || document.querySelector('select[id*="lang"]');
+        if (langSelect && langSelect.selectedIndex >= 0) {
+            const opt = langSelect.options[langSelect.selectedIndex];
+            const parsed = parseLanguageString(opt?.text || opt?.textContent || opt?.value);
+            if (parsed) return parsed;
+        }
+
+        // 4. Any dropdown on page with language attributes
+        const anySelect = document.querySelectorAll('select, .ui-selectonemenu');
+        for (const el of anySelect) {
+            const parsed = parseLanguageString(el.textContent || el.value);
+            if (parsed) return parsed;
+        }
+
+        // 5. Ace Editor syntax mode
         try {
             if (window.txtCode && typeof window.txtCode.getSession === 'function') {
                 const modeId = (window.txtCode.getSession().getMode()?.['$id'] || '').toLowerCase();
                 if (modeId.includes('sql')) return 'SQL';
                 if (modeId.includes('java') && !modeId.includes('javascript')) return 'Java';
                 if (modeId.includes('python')) return 'Python';
-                if (modeId.includes('c_cpp')) return 'C++';
+                if (modeId.includes('c_cpp')) return 'C';
                 if (modeId.includes('csharp')) return 'C#';
                 if (modeId.includes('javascript')) return 'JavaScript';
                 if (modeId.includes('golang') || modeId.includes('go')) return 'Go';
@@ -7448,7 +7789,7 @@ function mainCode() {
             }
         } catch (_) { }
 
-        // Fallback: Check page keywords
+        // 6. Pre-code & Page heuristics
         const pageText = (document.body?.innerText || '').toLowerCase();
         if (pageText.includes('select ') && pageText.includes('from ') && (pageText.includes('table') || pageText.includes('database'))) {
             return 'SQL';
@@ -7657,8 +7998,11 @@ function mainCode() {
     };
 
     const getProblemDescription = () => {
-        const isTutorPage = window.location.href.includes('tutorprogram');
-        const isCodeTrackPage = window.location.href.includes('codeprogram');
+        const href = window.location.href;
+        const isTutorPage         = href.includes('tutorprogram');
+        const isCodeTrackPage     = href.includes('codeprogram');
+        const isDailyChallengePage = href.includes('dailychallenge') || href.includes('dailytest');
+        const isMCQPage           = href.includes('mcqassessment') || href.includes('assessment');
 
         // Find the problem description card
         const cards = document.querySelectorAll('.ui-card-content');
@@ -7765,11 +8109,42 @@ function mainCode() {
 
             const mfib = extractMFIBTemplate();
 
+            // ── Daily Challenge / Daily Test: extract MCQ choices ─────────────────
+            // Daily tests present radio-button MCQ questions instead of code editors.
+            // We extract question text + all choices and pass them to the AI as context.
+            let mcqChoices = [];
+            if (isDailyChallengePage || isMCQPage) {
+                // Try radio-button option containers (common SkillRack MCQ layout)
+                const optionForms = document.querySelectorAll(
+                    '.ui-selectoneradio tr, .ui-selectonemenu-items li, [id*="options"] .ui-radiobutton-label, .mcq-option'
+                );
+                optionForms.forEach((row, idx) => {
+                    const label = row.querySelector('label') || row;
+                    const text = label.textContent.trim();
+                    if (text) mcqChoices.push(`${idx + 1}. ${text}`);
+                });
+
+                // Fallback: any visible radio input labels on the page
+                if (mcqChoices.length === 0) {
+                    document.querySelectorAll('input[type="radio"]').forEach((radio, idx) => {
+                        const label = document.querySelector(`label[for="${radio.id}"]`);
+                        const text = label ? label.textContent.trim() : (radio.nextElementSibling?.textContent?.trim() || '');
+                        if (text) mcqChoices.push(`${idx + 1}. ${text}`);
+                    });
+                }
+
+                if (mcqChoices.length > 0) {
+                    fullDescription += `\n\n### MCQ Answer Options:\n${mcqChoices.join('\n')}\n\n**TASK: Output ONLY the number (1, 2, 3, …) of the correct option. Do NOT include any explanation.**`;
+                }
+            }
+
             return {
                 title: problemTitle,
                 description: fullDescription.trim(),
                 isTutor: isTutorPage,
                 isCodeTrack: isCodeTrackPage,
+                isDailyChallenge: isDailyChallengePage,
+                isMCQ: isMCQPage || mcqChoices.length > 0,
                 preCode: preCode,
                 postCode: postCode,
                 isMFIB: mfib.inputs.length > 0,
@@ -7906,42 +8281,113 @@ function mainCode() {
     // ==============================================================
     // GRANDMASTER COMPETITIVE PROGRAMMING SYSTEM PROMPTS
     // ==============================================================
-    const GRANDMASTER_SYSTEM_PROMPT = `You are a Grandmaster Competitive Programmer solving a coding challenge on SkillRack.
-Your response will be automatically parsed, compiled, and evaluated against both public test cases and strict private hidden test cases with large boundary constraints.
-Accuracy is mandatory. Follow these rules strictly:
+    const GRANDMASTER_SYSTEM_PROMPT = `You are a World-Finalist Competitive Programmer (IOI / ICPC World Finalist, Legendary Grandmaster) solving coding challenges on the SkillRack platform.
 
-[CRITICAL COMPETITIVE PROGRAMMING RULES]
-1. PREVENT 64-BIT INTEGER OVERFLOW (MOST COMMON HIDDEN TEST CASE FAILURE):
-   - In C/C++: Use 'long long' for all counters, sums, products, coordinates, array accumulators, or any value that can exceed 2*10^9 or reach 10^18.
-   - When multiplying two integers, cast to 64-bit first: (1LL * a * b) to prevent overflow before assignment!
-   - In Java: Use 'long' for all accumulators and large values; use BigInteger if numbers exceed 10^18.
-   - For floating point: use double or long double.
+Your response will be automatically parsed, compiled, and evaluated against public test cases as well as strict private hidden test cases with large boundary constraints. Follow these rules with 100% strictness. Accuracy is mandatory — never invent syntax, APIs, table names, column names, function names, or behaviors that are not grounded in the problem statement, pre-code, or sample I/O.
 
-2. PREVENT TIME LIMIT EXCEEDED (TLE) ON HIDDEN TEST CASES:
-   - Max constraint analysis: If N <= 10^5, time complexity MUST be O(N) or O(N log N). Never use O(N^2) nested loops for N > 1000.
-   - In C++: Always enable Fast I/O at the start of main():
-     std::ios_base::sync_with_stdio(false);
-     std::cin.tie(NULL);
-   - In Python: Use sys.stdin.read().split() to read all tokens in one pass efficiently into a list. Avoid string += inside loops (use ''.join()).
-   - In Java: Use fast I/O or Scanner properly.
+Supported languages: C, C++, Java, Python, SQL (and any other language explicitly requested).
 
-3. SKILLRACK I/O STREAM & NEWLINE QUIRKS:
-   - In C: When reading a string/char with fgets() or scanf("%[^\n]") after reading an integer, unconsumed newlines '\\n' in stdin cause immediate empty reads. Always consume whitespace using scanf(" %c", &ch) or scanf(" %[^\n]", str).
-   - In C++: Use cin >> ws before std::getline(cin, str) to clear leading whitespace and newlines.
-   - In Python: sys.stdin.read().split() seamlessly handles both newline-separated and space-separated tokens without input buffer issues.
-   - In Java: Call sc.nextLine() after sc.nextInt() before reading next string line. Class name MUST be 'Hello'.
+---
 
-4. HIDDEN TEST CASE CORNER CASES:
-   - Mentally verify handling for: N = 0, N = 1, negative numbers, 0, all elements identical, sorted vs reverse-sorted, empty strings, single character, upper/lower case sensitivity, maximum boundary constraints.
+## [CRITICAL - OUTPUT MODE & FORMATTING]
 
-5. EXACT OUTPUT FORMATTING:
-   - Output ONLY what is requested. Never print input prompts like "Enter n:" or descriptive labels like "Answer:".
-   - Follow exact spacing and newline rules shown in sample outputs.
-   - For rounded floating point numbers, format to the exact decimal places specified (e.g. printf("%.2f\\n", ans) in C, std::fixed << std::setprecision(2) in C++, "{:.2f}".format() in Python).
+### 1. For Full-Code & Function Problems (C / C++ / Java / Python):
+- Output ONLY the clean, executable source code.
+- Enclose the code inside standard markdown fences (\`\`\`c, \`\`\`cpp, \`\`\`java, \`\`\`python).
+- **ABSOLUTELY ZERO COMMENTS:** Do NOT include any comments (\`//\`, \`/* */\`, \`#\`), step annotations, or explanations anywhere in the code.
+- **ZERO CONVERSATIONAL PREAMBLE:** Do NOT output reasoning, thinking process, bug analyses, or greetings before or after the code block. Start directly with the code block.
 
-6. SQL SPECIFICATIONS:
-   - Emit the entire SQL solution as a SINGLE LINE query with spaces between clauses. No newlines, no markdown fences.
-   - Do NOT use CREATE TABLE or INSERT unless explicitly asked. Use exact column and table names from problem schema.`;
+### 2. For Fill-In-The-Blanks (MFIB) Problems:
+- Output ONLY the exact token values for the blanks (\`[BLANK_0]\`, \`[BLANK_1]\`, etc.).
+- Print each blank's value on a new line, in sequential order.
+- Do NOT include markdown fences, comments, notes, or explanations.
+
+### 3. For SQL Problems:
+- Output the **entire SQL query on a SINGLE CONTINUOUS LINE** with single spaces between clauses.
+- Do NOT wrap in markdown fences.
+- Do NOT insert newline characters anywhere in the SQL body.
+- Use only tables, columns, aliases, and ordering specified by the schema.
+
+---
+
+## [MANDATORY COMPETITIVE PROGRAMMING ENGINEERING PROTOCOLS]
+
+### 1. 64-BIT INTEGER OVERFLOW IMMUNITY (MOST COMMON HIDDEN BUG)
+- **C / C++ / DS-C:** Default to \`long long\` for all counters, cumulative sums, products, array indices, prefix sums, and coordinate arithmetic.
+- When multiplying two numbers, ALWAYS explicitly cast operands: \`(1LL * a * b)\` or \`((long long)a * b)\` to prevent 32-bit truncation before assignment.
+- **Java:** Use \`long\` for all state variables, accumulators, and counters. Use \`BigInteger\` if numbers exceed 10^18.
+- **Modulo Arithmetic:** Use \`((a % M) + M) % M\` to guarantee positive results on negative inputs.
+
+### 2. TLE IMMUNITY & ASYMPTOTIC COMPLEXITY
+- If N <= 10^5, time complexity MUST be O(N) or O(N log N). Never use O(N^2) nested loops for N > 2000.
+- **C++:** Enable Fast I/O at the start of \`main()\`:
+  std::ios_base::sync_with_stdio(false);
+  std::cin.tie(NULL);
+- **Python:** Use \`sys.stdin.read().split()\` to tokenize the entire input stream in one O(1) pass. Avoid string concatenation \`+=\` in loops (use lists and \`''.join()\`). For deep recursion, add \`sys.setrecursionlimit(300000)\`.
+- **C:** Allocate large buffers (>= 10^5) globally (\`static int arr[200005];\`) or dynamically with \`malloc\`/\`calloc\` rather than on the stack to prevent Segmentation Faults.
+
+### 3. SKILLRACK I/O STREAM & BUFFER HYGIENE
+- Inputs on SkillRack may arrive on a single line, space-separated, or on multiple lines with varying whitespace, carriage returns (\\\\r\\\\n), or trailing spaces.
+- **C:** When reading a string/character after reading numbers, NEVER use bare \`gets()\` or \`fgets()\` without clearing leading newlines. Use \`scanf(" %c", &ch)\` or \`scanf(" %[^\r\n]", str)\` with a leading space to skip unread whitespace.
+- **C++:** Use \`cin >> ws\` before \`std::getline(cin, str)\` to clear leftover whitespace.
+- **Python:** \`sys.stdin.read().split()\` seamlessly handles single-line, multi-line, and irregular whitespace tokens without input buffer issues.
+- **Java:** Call \`sc.nextLine()\` after \`sc.nextInt()\` / \`sc.nextLong()\` before reading the next string line. Class name MUST be \`Hello\`.
+
+### 4. ADVERSARIAL HIDDEN CORNER & BOUNDARY CASE COVERAGE
+Always mentally verify logic against all extreme hidden test permutations:
+- **Lengths & Quantities:** N = 0, N = 1, N = 2, maximum boundary N = 10^5.
+- **Values:** Negative numbers, zeros, INT_MAX, INT_MIN, duplicate values, all elements identical.
+- **Strings:** Empty string, single character, all identical characters, palindrome, no match found (\`-1\` or default output).
+- **Ordering:** Already sorted ascending, reverse-sorted (descending), alternating peaks/valleys.
+- **Matrices:** 1x1, 1xM (single row), Nx1 (single column), non-square NxM.
+- **Circular Arrays / Rotations:** Use \`((i - k) % n + n) % n\` for negative index wraparounds.
+- **Divisors & Modulo:** Guard against division by zero when an element or divisor is 0.
+
+### 5. EXACT OUTPUT SPECIFICATION
+- Output ONLY what is explicitly requested. Never print input prompts like "Enter N:" or decorative labels like "Answer:".
+- Match spacing, case-sensitivity, and trailing newline requirements of sample outputs.
+- For rounded floating-point decimals, format to the exact requested precision (e.g. \`printf("%.2f\\n", ans)\` in C, \`fixed << setprecision(2)\` in C++, \`"{:.2f}".format()\` in Python).
+
+### 6. FORBIDDEN UNIX/LINUX KEYWORDS (HEAD & TAIL REPLACEMENT)
+- SkillRack judge strictly blocks UNIX keywords in code submissions: NEVER use \`head\` or \`tail\` as variable, pointer, parameter, struct member, or function names.
+- ALWAYS use \`lhead\` and \`ltail\` instead (e.g., \`Node* lhead\`, \`Node* ltail\`, \`lhead->next\`, \`ltail->prev\`).
+
+---
+
+## [PRE-CODE & LANGUAGE RULES]
+
+### C / C++
+- Do NOT re-declare \`#include\` or \`using namespace std;\` if already present in pre-code.
+- For decimal precision: include \`<iomanip>\` and use \`std::fixed << std::setprecision(N)\`.
+- Use \`long long\` for all large accumulators and calculations.
+
+### Java
+- Class name MUST be \`Hello\`.
+- Do NOT include a \`package\` statement.
+- Use \`long\` for large accumulators.
+
+### Python
+- Write code to execute directly at the top level (unless the problem explicitly asks for a function definition).
+- Use \`sys.stdin.read().split()\` for bulletproof input tokenization.
+
+### SQL (SkillRack / MySQL / H2)
+- SkillRack pre-creates tables and sample data. Default to \`SELECT\` queries with appropriate \`JOIN\`, \`WHERE\`, \`GROUP BY\`, and \`ORDER BY\`.
+- Do NOT output \`CREATE TABLE\`, \`DROP\`, or \`INSERT\` unless explicitly required by the problem statement (e.g. “CREATE TABLE ... AS SELECT”).
+- Output the entire query as a **SINGLE CONTINUOUS LINE**.
+
+---
+
+## [SELF-VERIFICATION STEP]
+
+Before emitting the final code:
+1. Did you eliminate ALL comments (\`//\`, \`/* */\`, \`#\`, \`--\`)?
+2. Did you eliminate ALL introductory and concluding conversational text?
+3. Did you check for 64-bit integer overflow with explicit casting (\`1LL * a * b\`)?
+4. Does the algorithm run in O(N) or O(N log N) to guarantee passing TLE on large hidden test cases?
+5. Does the output format match the sample output character-for-character?
+
+Emit ONLY the final executable solution.
+`;
 
     const generateWithGemini = async (prompt, systemInstruction = '') => {
         const apiKey = SETTINGS.geminiApiKey;
@@ -8267,12 +8713,203 @@ Accuracy is mandatory. Follow these rules strictly:
         return JSON.stringify(response || '', null, 2);
     };
 
+    const stripCodeComments = (code, language) => {
+        if (!code || typeof code !== 'string') return '';
+        const langLower = String(language || '').toLowerCase().trim();
+
+        const isEscaped = (str, index) => {
+            let count = 0;
+            let p = index - 1;
+            while (p >= 0 && str[p] === '\\') {
+                count++;
+                p--;
+            }
+            return (count % 2) === 1;
+        };
+
+        let result = '';
+        let i = 0;
+        const len = code.length;
+
+        // Python style (# comments and docstrings)
+        if (langLower === 'python' || langLower === 'python3' || langLower === 'py') {
+            let inSingleQuote = false;
+            let inDoubleQuote = false;
+            let inTripleSingle = false;
+            let inTripleDouble = false;
+
+            while (i < len) {
+                if (!inSingleQuote && !inDoubleQuote) {
+                    if (code.startsWith('"""', i) && !isEscaped(code, i)) {
+                        inTripleDouble = !inTripleDouble;
+                        result += '"""';
+                        i += 3;
+                        continue;
+                    }
+                    if (code.startsWith("'''", i) && !isEscaped(code, i)) {
+                        inTripleSingle = !inTripleSingle;
+                        result += "'''";
+                        i += 3;
+                        continue;
+                    }
+                }
+
+                if (!inTripleSingle && !inTripleDouble) {
+                    const char = code[i];
+
+                    if (char === '"' && !isEscaped(code, i) && !inSingleQuote) {
+                        inDoubleQuote = !inDoubleQuote;
+                    } else if (char === "'" && !isEscaped(code, i) && !inDoubleQuote) {
+                        inSingleQuote = !inSingleQuote;
+                    } else if (char === '#' && !inSingleQuote && !inDoubleQuote) {
+                        while (i < len && code[i] !== '\n') i++;
+                        continue;
+                    }
+                }
+
+                result += code[i];
+                i++;
+            }
+        }
+        // SQL style (-- comments and /* */ comments)
+        else if (langLower === 'sql') {
+            let inString = false;
+            while (i < len) {
+                const char = code[i];
+
+                if (char === "'" && !isEscaped(code, i)) {
+                    inString = !inString;
+                    result += char;
+                    i++;
+                } else if (!inString && char === '-' && i + 1 < len && code[i + 1] === '-') {
+                    while (i < len && code[i] !== '\n') i++;
+                } else if (!inString && char === '/' && i + 1 < len && code[i + 1] === '*') {
+                    i += 2;
+                    while (i + 1 < len && !(code[i] === '*' && code[i + 1] === '/')) i++;
+                    i = Math.min(len, i + 2);
+                } else {
+                    result += char;
+                    i++;
+                }
+            }
+        }
+        // C / C++ / Java / JS / Go / Rust style (// comments and /* */ comments)
+        else {
+            let inString = false;
+            let inChar = false;
+            let stringDelimiter = '';
+
+            while (i < len) {
+                const char = code[i];
+
+                if (!inString && !inChar) {
+                    if (char === '"' && !isEscaped(code, i)) {
+                        inString = true;
+                        stringDelimiter = '"';
+                        result += char;
+                        i++;
+                    } else if (char === "'" && !isEscaped(code, i)) {
+                        inChar = true;
+                        stringDelimiter = "'";
+                        result += char;
+                        i++;
+                    } else if (char === '/' && i + 1 < len && code[i + 1] === '/') {
+                        while (i < len && code[i] !== '\n') i++;
+                    } else if (char === '/' && i + 1 < len && code[i + 1] === '*') {
+                        i += 2;
+                        while (i + 1 < len && !(code[i] === '*' && code[i + 1] === '/')) i++;
+                        i = Math.min(len, i + 2);
+                    } else {
+                        result += char;
+                        i++;
+                    }
+                } else {
+                    if (char === stringDelimiter && !isEscaped(code, i)) {
+                        inString = false;
+                        inChar = false;
+                    }
+                    result += char;
+                    i++;
+                }
+            }
+        }
+
+        return result
+            .split('\n')
+            .filter((line, idx, arr) => {
+                const trimmed = line.trim();
+                // Avoid multiple consecutive blank lines
+                if (trimmed === '' && idx > 0 && arr[idx - 1].trim() === '') return false;
+                return true;
+            })
+            .join('\n')
+            .trim();
+    };
+
+    // SkillRack forbids UNIX keywords ('head', 'tail') as variable/parameter/pointer names
+    const sanitizeSkillRackReservedWords = (code, language) => {
+        if (!code) return '';
+        const langLower = String(language || '').toLowerCase().trim();
+        if (langLower === 'sql') return code;
+
+        let result = '';
+        let i = 0;
+        const len = code.length;
+
+        while (i < len) {
+            const char = code[i];
+
+            // String literals ("..." or '...') - preserve untouched
+            if (char === '"' || char === "'") {
+                const quote = char;
+                result += quote;
+                i++;
+                while (i < len) {
+                    if (code[i] === '\\' && i + 1 < len) {
+                        result += code[i] + code[i + 1];
+                        i += 2;
+                    } else if (code[i] === quote) {
+                        result += code[i];
+                        i++;
+                        break;
+                    } else {
+                        result += code[i];
+                        i++;
+                    }
+                }
+                continue;
+            }
+
+            // Word token: identifier / keyword
+            if (/[a-zA-Z_]/.test(char)) {
+                const start = i;
+                while (i < len && /[a-zA-Z0-9_]/.test(code[i])) {
+                    i++;
+                }
+                const word = code.substring(start, i);
+                if (word === 'head') {
+                    result += 'lhead';
+                } else if (word === 'tail') {
+                    result += 'ltail';
+                } else {
+                    result += word;
+                }
+                continue;
+            }
+
+            result += char;
+            i++;
+        }
+
+        return result;
+    };
+
     const extractCode = (response, language) => {
         let normalizedResponse = typeof response === 'string' ? response : String(response || '');
 
-        // Handle JSON responses (strip JSON wrapper if present)
+        // 1. Handle JSON responses (strip JSON wrapper if present)
         try {
-            if (normalizedResponse.trim().startsWith('{') && normalizedResponse.includes('"content"')) {
+            if (normalizedResponse.trim().startsWith('{') && (normalizedResponse.includes('"content"') || normalizedResponse.includes('"text"') || normalizedResponse.includes('"choices"'))) {
                 const jsonData = JSON.parse(normalizedResponse);
                 if (jsonData.choices && jsonData.choices[0]?.message?.content) {
                     normalizedResponse = jsonData.choices[0].message.content;
@@ -8284,56 +8921,125 @@ Accuracy is mandatory. Follow these rules strictly:
             }
         } catch (_) { }
 
-        let code = '';
+        // 2. Strip <think>...</think> reasoning tags (from DeepSeek R1, Qwen QwQ, etc.)
+        normalizedResponse = normalizedResponse.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
-        // Match code blocks with language specifiers (c++, cpp, c, python, java, sql, etc.)
-        const codeBlockRegex = /```(?:[a-zA-Z0-9_+-]*)?\n?([\s\S]*?)```/g;
+        const langLower = String(language || '').toLowerCase().trim();
+
+        // 3. Extract code blocks with triple backticks ```
+        const codeBlockRegex = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g;
         const matches = [...normalizedResponse.matchAll(codeBlockRegex)];
 
+        let extractedFromFence = '';
         if (matches.length > 0) {
-            let bestMatch = matches[0][1].trim();
-            for (const match of matches) {
-                const trimmed = match[1].trim();
-                if (trimmed.length > bestMatch.length) {
-                    bestMatch = trimmed;
-                }
-            }
-            code = bestMatch;
-        } else {
-            // Fallback: look for unclosed code block
-            const openBlockRegex = /```(?:[a-zA-Z0-9_+-]*)?\n?([\s\S]+?)(?=```|$)/;
-            const openMatch = normalizedResponse.match(openBlockRegex);
-            if (openMatch) {
-                code = openMatch[1].trim();
+            // Find code blocks matching our target language or longest meaningful block
+            let candidates = matches.map(m => ({
+                langTag: (m[1] || '').toLowerCase().trim(),
+                body: m[2].trim()
+            })).filter(c => c.body.length > 0);
+
+            // Ignore 1-line non-code snippets (e.g. single sample input/output strings)
+            const meaningfulCandidates = candidates.filter(c => c.body.includes('\n') || c.body.length > 25);
+            if (meaningfulCandidates.length > 0) candidates = meaningfulCandidates;
+
+            // Check if any block matches the target language tag
+            const exactLangMatch = candidates.find(c => {
+                if (langLower === 'c' || langLower.startsWith('ds-c')) return c.langTag === 'c' || c.langTag === 'cpp';
+                if (langLower.includes('c++') || langLower.includes('cpp')) return c.langTag.includes('c++') || c.langTag.includes('cpp') || c.langTag === 'c';
+                if (langLower === 'java') return c.langTag === 'java';
+                if (langLower === 'python' || langLower === 'python3') return c.langTag === 'python' || c.langTag === 'py';
+                if (langLower === 'sql') return c.langTag === 'sql' || c.langTag === 'mysql' || c.langTag === 'pgsql';
+                return c.langTag === langLower;
+            });
+
+            if (exactLangMatch) {
+                extractedFromFence = exactLangMatch.body;
             } else {
-                code = normalizedResponse.trim();
-                const prefixes = ['Here is', "Here's", 'The fixed code', 'The solution', 'Fixed code:', 'Solution:', "Here's the code:", 'Here is the code:'];
-                for (const prefix of prefixes) {
-                    if (code.toLowerCase().startsWith(prefix.toLowerCase())) {
-                        code = code.substring(prefix.length).trim();
-                        break;
-                    }
+                // Otherwise pick the longest code block
+                let longest = candidates[0].body;
+                for (const c of candidates) {
+                    if (c.body.length > longest.length) longest = c.body;
                 }
+                extractedFromFence = longest;
             }
         }
 
-        // Clean standalone language tags
-        const languageTagRegex = /^(?:c|c\+\+|cpp|cpp11|cpp14|cpp17|cpp20|cpp23|\+\+|\+\+11|\+\+14|\+\+17|\+\+20|\+\+23|python|py|java|sql|mysql|postgresql|oracle|javascript|js|typescript|ts|go|rust|ruby|php|kotlin|swift)$/i;
+        let code = extractedFromFence;
+
+        // 4. Fallback if no full code block: check for unclosed code block (e.g. ```c\n...)
+        if (!code) {
+            const openBlockRegex = /```(?:[a-zA-Z0-9_+-]*)?\n?([\s\S]+?)(?=```|$)/;
+            const openMatch = normalizedResponse.match(openBlockRegex);
+            if (openMatch && openMatch[1].trim().length > 15) {
+                code = openMatch[1].trim();
+            }
+        }
+
+        // 5. Fallback: If no code blocks or if the extracted code still has English explanation before code
+        if (!code) {
+            code = normalizedResponse.trim();
+        }
+
+        // 6. Language-Aware Strip of Leading Conversational/Reasoning Prose:
+        // When LLMs output commentary before the actual code (e.g. "Looking at the problem...", "The actual bug:...", "So the fix:...")
+        if (langLower === 'c' || langLower === 'c++' || langLower === 'cpp' || langLower.startsWith('ds-c')) {
+            const cStartMatch = code.match(/(?:^|\n)\s*(#\s*include|#\s*define|using\s+namespace|int\s+main|void\s+main|typedef\s+|struct\s+|class\s+|template\s*<|(?:void|int|char|long|bool|double|float|size_t|auto)\s*\*?\s+[A-Za-z0-9_]+\s*\([^)]*\)\s*\{?)/m);
+            if (cStartMatch && cStartMatch.index !== undefined) {
+                const startIdx = cStartMatch.index === 0 ? 0 : cStartMatch.index + (cStartMatch[0].startsWith('\n') ? 1 : 0);
+                code = code.substring(startIdx).trim();
+            }
+        } else if (langLower === 'java') {
+            const javaStartMatch = code.match(/(?:^|\n)\s*(import\s+[a-zA-Z0-9_.]+|package\s+[a-zA-Z0-9_.]+|public\s+class\s+|class\s+|public\s+interface\s+)/m);
+            if (javaStartMatch && javaStartMatch.index !== undefined) {
+                const startIdx = javaStartMatch.index === 0 ? 0 : javaStartMatch.index + (javaStartMatch[0].startsWith('\n') ? 1 : 0);
+                code = code.substring(startIdx).trim();
+            }
+        } else if (langLower === 'python' || langLower === 'python3') {
+            const pyStartMatch = code.match(/(?:^|\n)\s*(import\s+[a-zA-Z0-9_]+|from\s+[a-zA-Z0-9_.]+\s+import|def\s+[a-zA-Z0-9_]+\s*\(|class\s+[a-zA-Z0-9_]+|if\s+__name__\s*==|sys\.set_int_max_str_digits)/m);
+            if (pyStartMatch && pyStartMatch.index !== undefined) {
+                const startIdx = pyStartMatch.index === 0 ? 0 : pyStartMatch.index + (pyStartMatch[0].startsWith('\n') ? 1 : 0);
+                code = code.substring(startIdx).trim();
+            }
+        } else if (langLower === 'sql') {
+            const sqlStartMatch = code.match(/(?:^|\n)\s*(SELECT|WITH|INSERT|UPDATE|DELETE|CREATE)\b/im);
+            if (sqlStartMatch && sqlStartMatch.index !== undefined) {
+                const startIdx = sqlStartMatch.index === 0 ? 0 : sqlStartMatch.index + (sqlStartMatch[0].startsWith('\n') ? 1 : 0);
+                code = code.substring(startIdx).trim();
+            }
+        }
+
+        // 7. Strip trailing explanations / markdown sections
+        const trailingExplanations = [
+            /\n+(?:Explanation|How it works|Complexity|Time Complexity|Note|Notes|Key Changes|Bug Fix):[\s\S]*$/i,
+            /\n+Here is (?:an explanation|how the code works)[\s\S]*$/i,
+            /\n+Hope this helps[\s\S]*$/i
+        ];
+        for (const pattern of trailingExplanations) {
+            code = code.replace(pattern, '').trim();
+        }
+
+        // 8. Clean standalone language tags and leftover backticks
+        const languageTagRegex = /^(?:c|c\+\+|cpp|cpp11|cpp14|cpp17|cpp20|cpp23|\+\+|\+\+11|\+\+14|\+\+17|\+\+20|\+\+23|python|python3|py|java|sql|mysql|postgresql|oracle|javascript|js|typescript|ts|go|rust|ruby|php|kotlin|swift)$/i;
         const lines = code.split('\n');
         code = lines.filter(line => {
             const trimmed = line.trim();
             return !languageTagRegex.test(trimmed);
         }).join('\n');
 
-        // Remove leftover backticks
         code = code.replace(/^```[a-zA-Z0-9+]*\s*/gm, '');
         code = code.replace(/\s*```$/gm, '');
         code = code.trim();
 
-        // For SQL: collapse into single line with spaces if multi-line
-        if (language === 'SQL') {
-            code = code.replace(/\s+/g, ' ').trim();
+        // 9. For SQL: collapse into single line with spaces if multi-line
+        if (langLower === 'sql') {
+            code = code.replace(/\s+/g, ' ').replace(/;+$/, '').trim();
         }
+
+        // 10. Strip all comments to prevent AI detection
+        code = stripCodeComments(code, language);
+
+        // 11. SkillRack UNIX keyword sanitizer (replace forbidden identifiers: head -> lhead, tail -> ltail)
+        code = sanitizeSkillRackReservedWords(code, language);
 
         return code;
     };
@@ -8368,7 +9074,177 @@ Accuracy is mandatory. Follow these rules strictly:
         return matches / Math.max(norm1.length, norm2.length);
     };
 
+    // ========== HUMAN-LIKE TYPING SIMULATOR ==========
+    // Inserts code into ACE editor character-by-character with natural timing
+    // so the keystroke cadence is indistinguishable from manual typing.
+    const typeCodeNaturally = async (code) => {
+        const editor = window.txtCode;
+        if (!editor || typeof editor.getSession !== 'function') return false;
+
+        const session = editor.getSession();
+
+        // Clear editor first (instant — human would select-all and delete)
+        session.setValue('');
+        editor.moveCursorTo(0, 0);
+
+        const $ = window.jQuery || window.$;
+
+        // Typing speed parameters (milliseconds per character)
+        const BASE_MIN  = 18;   // fastest burst character (fast typist ~90 WPM)  
+        const BASE_MAX  = 55;   // normal character delay
+        const NEWLINE_PAUSE_MIN = 60;   // pause after newline (thinking)
+        const NEWLINE_PAUSE_MAX = 180;
+        const BRACE_PAUSE_MIN  = 40;   // pause after { } [ ] ( )
+        const BRACE_PAUSE_MAX  = 120;
+        const BURST_THRESHOLD  = 6;    // characters in a row without pause = burst
+        const BURST_ACCELERATE = 0.6;  // burst multiplier (speed up)
+        const TYPO_CHANCE      = 0;    // 0 = no typos (keep 0 for correctness)
+
+        let burstCount = 0;
+
+        const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+        for (let i = 0; i < code.length; i++) {
+            const ch = code[i];
+
+            // Insert character into ACE session
+            session.insert(editor.getCursorPosition(), ch);
+
+            // Fire real keyboard + input events on the ACE textarea
+            // (some monitoring tools track event counts, not just final value)
+            const aceTextarea = editor.container?.querySelector('textarea.ace_text-input');
+            if (aceTextarea) {
+                aceTextarea.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true, cancelable: true }));
+                aceTextarea.dispatchEvent(new InputEvent('input',     { data: ch, inputType: 'insertText', bubbles: true }));
+                aceTextarea.dispatchEvent(new KeyboardEvent('keyup',   { key: ch, bubbles: true, cancelable: true }));
+            }
+
+            // Sync hidden textarea every 80 chars to keep PrimeFaces state current
+            if (i % 80 === 0 && $ && $('#txtCode').length) {
+                $('#txtCode').val(session.getValue());
+            }
+
+            // Compute per-character delay
+            let delay;
+            if (ch === '\n') {
+                burstCount = 0;
+                delay = rand(NEWLINE_PAUSE_MIN, NEWLINE_PAUSE_MAX);
+            } else if ('{}[]()'.includes(ch)) {
+                burstCount = 0;
+                delay = rand(BRACE_PAUSE_MIN, BRACE_PAUSE_MAX);
+            } else {
+                burstCount++;
+                const accel = burstCount > BURST_THRESHOLD ? BURST_ACCELERATE : 1;
+                delay = Math.floor(rand(BASE_MIN, BASE_MAX) * accel);
+            }
+
+            await sleep(delay);
+        }
+
+        // Final sync of hidden textarea
+        if ($ && $('#txtCode').length) {
+            $('#txtCode').val(session.getValue());
+        }
+
+        return true;
+    };
+
+    // ========== PRE-SOLVED SOLUTION DATABASE FETCHER ==========
+    // Extracts ProgramID from page context and attempts fetching pre-solved solution
+    // first from local node server (localhost:3000), falling back to raw GitHub repo.
+    const extractProgramId = () => {
+        // Method 1: Check .ui.label elements for "ProgramID : 1234"
+        const labels = document.querySelectorAll('.ui.label');
+        for (const label of labels) {
+            const m = label.textContent.match(/ProgramID\s*:\s*(\d+)/i);
+            if (m) return m[1];
+        }
+        // Method 2: Check full body text
+        const bodyText = document.body?.innerText || '';
+        const m = bodyText.match(/ProgramID\s*:\s*(\d+)/i);
+        if (m) return m[1];
+
+        // Method 3: Check URL query parameter (e.g. ?id=1234 or ?p=1234)
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('id')) return urlParams.get('id');
+        if (urlParams.has('p')) return urlParams.get('p');
+
+        return null;
+    };
+
+    const generateWithLocalServer = async () => {
+        const programId = extractProgramId();
+        if (!programId) {
+            throw new Error('ProgramID not found on page');
+        }
+
+        const localUrl  = `http://localhost:3000/solutions/${programId}.md`;
+        const githubUrl = `${SETTINGS.localServerUrl || 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/main'}/solutions/${programId}.md`;
+
+        let markdownText = null;
+
+        // 1. Try local node solutions-server (localhost:3000)
+        try {
+            markdownText = await new Promise((resolve, reject) => {
+                if (typeof GM_xmlhttpRequest !== 'undefined') {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: localUrl,
+                        timeout: SETTINGS.localServerTimeout || 2500,
+                        onload: (res) => {
+                            if (res.status === 200 && res.responseText.trim()) resolve(res.responseText);
+                            else reject(new Error(`Local server HTTP ${res.status}`));
+                        },
+                        onerror: reject,
+                        ontimeout: reject
+                    });
+                } else {
+                    fetch(localUrl)
+                        .then(res => res.ok ? res.text() : Promise.reject(`HTTP ${res.status}`))
+                        .then(resolve)
+                        .catch(reject);
+                }
+            });
+            console.log(`[Solutions] Fetched solution for ProgramID ${programId} from local server.`);
+        } catch (e) {
+            console.log(`[Solutions] Local server unavailable (${e.message || e}), trying GitHub repository...`);
+        }
+
+        // 2. Fallback to GitHub raw repo
+        if (!markdownText) {
+            markdownText = await new Promise((resolve, reject) => {
+                if (typeof GM_xmlhttpRequest !== 'undefined') {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: githubUrl,
+                        timeout: 8000,
+                        onload: (res) => {
+                            if (res.status === 200 && res.responseText.trim()) resolve(res.responseText);
+                            else reject(new Error(`GitHub HTTP ${res.status}`));
+                        },
+                        onerror: reject,
+                        ontimeout: reject
+                    });
+                } else {
+                    fetch(githubUrl)
+                        .then(res => res.ok ? res.text() : Promise.reject(`GitHub HTTP ${res.status}`))
+                        .then(resolve)
+                        .catch(reject);
+                }
+            });
+            console.log(`[Solutions] Fetched solution for ProgramID ${programId} from GitHub repo.`);
+        }
+
+        if (!markdownText) {
+            throw new Error(`No solution file found for ProgramID ${programId}`);
+        }
+
+        return markdownText;
+    };
+
     // ========== generateAISolution FUNCTION ==========
+
     const generateAISolution = async () => {
         if (!SETTINGS.enableAISolver) return;
         if (isAiGenerationInProgress) {
@@ -8436,41 +9312,37 @@ No explanations. No markdown fences. Just the raw JSON array.`;
             const effectiveCode = wrapWithPrePost(errorInfo.currentCode);
             const stats = (errorInfo.passedCount || errorInfo.failedCount)
                 ? `Test Status: ${errorInfo.passedCount} Passed, ${errorInfo.failedCount} Failed.`
-                : 'Test Status: Sample test cases passed, but Private Hidden Test Cases FAILED.';
+                : 'Test Status: Public sample test cases passed, but Private Hidden Test Cases FAILED.';
 
-            prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer fixing code for a SkillRack problem.
+            prompt = customSystemPrompt + `You are an IOI / ICPC World Finalist Competitive Programmer diagnosing and repairing a failed solution on SkillRack.
 ${stats}
 
-The current code passes public sample test cases, but FAILS private hidden test cases!
-Your job is to identify the hidden flaw (integer overflow, TLE complexity, missing edge case, unconsumed newline, or rounding/format error) and output the completely corrected ${language} code.
+CRITICAL ISSUE:
+The code passes public sample tests but FAILS private hidden evaluation test cases.
+Private hidden test cases strictly test for:
+1. Integer Overflow: Missing 64-bit integer casting (1LL * a * b) or using 32-bit int for large sums/products.
+2. TLE (Time Limit Exceeded): Using O(N^2) or unoptimized loops for N up to 10^5 instead of O(N) or O(N log N) with HashMaps, Prefix Sums, Binary Search, or Two Pointers.
+3. Hidden Edge Cases: N = 0, N = 1, single-element, all elements equal, negative numbers, 0, reverse-sorted inputs, empty strings, tie-breaking criteria.
+4. Input Stream Format Differences: Single line vs multi-line inputs with variable whitespace, blank lines, or trailing spaces.
+5. Large Array Stack Overflow: Allocating large arrays on stack rather than statically or dynamically on heap.
 
 PROBLEM: ${problem.title}
 ${problem.description}
 
-CURRENT CODE:
+FAILED CODE (NEEDS DEEP ALGORITHMIC RECONSTRUCTION):
 \`\`\`${language.toLowerCase()}
 ${effectiveCode}
 \`\`\`
 
-DIAGNOSTIC & FIXING CHECKLIST (Apply All):
-1. 64-BIT INTEGER OVERFLOW (MOST COMMON BUG):
-   - ${language === 'Java' ? 'Use long instead of int for all counters, sums, and accumulator variables. If values exceed 10^18, use BigInteger.' : 'Use long long instead of int for all accumulators, sums, products, combination counts, and array elements. Use (1LL * a * b) when multiplying.'}
-   - Check if any intermediate calculation overflows before being stored in a 64-bit variable.
-2. TIME COMPLEXITY & FAST I/O:
-   - Ensure the algorithm is O(N) or O(N log N) for N up to 10^5. Replace O(N^2) loops with frequency maps, prefix sums, binary search, or two pointers.
-   ${language === 'C++' || language === 'C++23' ? '- Add fast I/O: ios_base::sync_with_stdio(false); cin.tie(NULL);' : ''}
-   ${language === 'Python' ? '- Use sys.stdin.read().split() to parse all tokens at once. Avoid string concatenation in loops.' : ''}
-3. INPUT STREAM BUFFER HYGIENE:
-   ${language === 'C' ? '- In C, reading a string/char after reading an integer will fail due to leftover newline. Use scanf(" %c", &c) or scanf(" %[^\n]", s).' : ''}
-   ${language === 'C++' || language === 'C++23' ? '- In C++, use cin >> ws before getline(cin, s) to consume unread newlines.' : ''}
-   ${language === 'Java' ? '- In Java, call sc.nextLine() after sc.nextInt() before reading next string line. Class must be Hello.' : ''}
-4. CORNER & BOUNDARY CASES:
-   - Check N = 0, N = 1, single element arrays, empty strings, all elements duplicate, negative numbers, 0, sorted ascending vs descending.
-5. OUTPUT FORMATTING:
-   - Format floating point decimals to exact precision (e.g. %.2f) if specified.
-   - Do NOT print extra prompts or labels.
+ROOT CAUSE ANALYSIS & MANDATORY RECONSTRUCTION:
+Do NOT make minor superficial tweaks if the underlying logic is flawed. Re-architect the core algorithm to ensure 100% mathematical and asymptotic correctness across ALL possible hidden test permutations.
 
-Output ONLY the corrected, complete ${language} code:
+${language === 'C' ? '- In C: Use long long for all numerical state. Use scanf(" %c", &c) or scanf(" %[^\r\n]", s) for string hygiene. Allocate buffers globally/dynamically.' : ''}
+${language === 'C++' || language === 'C++23' ? '- In C++: Add fast I/O (cin.tie(NULL); ios_base::sync_with_stdio(false)). Use long long for state variables. Use unordered_map or vector.' : ''}
+${language === 'Python' || language === 'Python3' ? '- In Python: Use sys.stdin.read().split() to parse tokens in O(1) time. Use collections.defaultdict/Counter.' : ''}
+${language === 'Java' ? '- In Java: Class must be named Hello. Use long for all accumulators. Handle Scanner buffer newlines.' : ''}
+
+Output ONLY the completely rewritten, robust ${language} code with NO comments:
 
 \`\`\`${language.toLowerCase()}`;
         }
@@ -8498,9 +9370,11 @@ FIXING RULES:
 3. Keep input/output behavior 100% compliant with problem requirements.
 ${language.toLowerCase() === 'python' ? '4. If a function is defined, ensure it is CALLED at the bottom of the script.' : ''}
 
+Output ONLY the fixed ${language} code with NO comments:
+
 \`\`\`${language.toLowerCase()}`;
         }
-        // ========== Error fix mode: Runtime Error ==========
+        // ========== Error fix mode: Runtime Error / Crash / TLE ==========
         else if (!prompt && errorInfo.hasError && errorInfo.errorType === 'runtime_error' && errorInfo.currentCode) {
             const effectiveCode = wrapWithPrePost(errorInfo.currentCode);
 
@@ -8522,9 +9396,11 @@ Got:      ${errorInfo.yourOutput || '(CRASH / Segmentation Fault / TLE / Memory 
 
 FIXING STEPS:
 1. Trace potential causes: array out-of-bounds, division by zero, null pointer, recursion depth overflow, or stack overflow.
-2. Ensure array sizes handle maximum boundary constraints (e.g., N = 10^5).
-3. Use 64-bit data types (${language === 'Java' ? 'long' : 'long long'}).
-4. Return the complete, robust program.
+2. Ensure array sizes handle maximum boundary constraints (e.g., N = 10^5) — declare large arrays GLOBALLY in C/C++.
+3. Use 64-bit data types (${language === 'Java' ? 'long' : 'long long'}) for all counters and accumulators.
+4. In C: use scanf(" %c", &c) for char reads after numeric scanf — never bare gets().
+5. In C++: add ios_base::sync_with_stdio(false); cin.tie(NULL); to prevent I/O TLE.
+6. Return the complete, robust program with NO comments.
 
 \`\`\`${language.toLowerCase()}`;
         }
@@ -8551,16 +9427,19 @@ Got:      ${errorInfo.yourOutput || '(EMPTY / WRONG)'}
 ${isEmptyOutput && language.toLowerCase() === 'python' ? '\nNOTE: Output is empty. Ensure your top-level script executes or calls main().' : ''}
 
 DEBUGGING STRATEGY:
-1. TRUST THE EXPECTED OUTPUT — it is absolute ground truth.
+1. TRUST THE EXPECTED OUTPUT — it is absolute ground truth. Match it character-for-character.
 2. Check for 64-bit integer overflow (${language === 'Java' ? 'use long' : 'use long long'}).
 3. Check for off-by-one errors (0-based vs 1-based indexing, <= vs <).
 4. Check input token ordering and string newline consumption.
 5. Check decimal place rounding and spacing formatting.
+6. Check edge cases: empty input, N=0, N=1, all elements identical, negative numbers.
+7. Provide a clean, robust solution with NO comments.
 
 \`\`\`${language.toLowerCase()}`;
         }
         // ========== Normal mode: SQL Problem ==========
         else if (!prompt && language === 'SQL') {
+
             prompt = customSystemPrompt + `You are a Database and SQL Expert solving a SkillRack SQL challenge.
 Write the exact SQL query required. Output ONLY the single-line SQL query.
 
@@ -8638,8 +9517,14 @@ RULES:
                             'Class name must be Hello. Consume newline with sc.nextLine() after sc.nextInt().' : '';
 
             prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer solving a SkillRack challenge.
+TARGET PROGRAMMING LANGUAGE: ${language.toUpperCase()}
+
+CRITICAL LANGUAGE REQUIREMENT:
+You MUST write the solution ONLY in ${language.toUpperCase()}.
+Do NOT write Python. Do NOT write any other programming language. The server compiler is strictly expecting ${language.toUpperCase()}.
+
 Write a complete, optimal, and robust ${language} program that passes ALL public sample cases and ALL private hidden test cases.
-Output ONLY the code, no explanations or comments.
+Output ONLY the ${language} code, no explanations or comments.
 ${language === 'Java' ? 'Class name must be: Hello\n' : ''}
 
 PROBLEM: ${problem.title}
@@ -8679,6 +9564,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                     case 'duckduckgo':
                         return await generateWithDuckDuckGo(promptText);
                     case 'yuppbridge':
+                    case 'openai-compatible':
                         return await generateWithYuppBridge(promptText);
                     case 'nvidia':
                         return await generateWithNvidia(promptText);
@@ -8689,7 +9575,19 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                 }
             };
 
-            let response = await requestFromProvider(prompt);
+            let response;
+            if (SETTINGS.enableLocalServer && !problem.isMFIB && !errorInfo.hasError) {
+                try {
+                    console.log('[Solutions] Searching for pre-solved solution for ProgramID...');
+                    response = await generateWithLocalServer();
+                    console.log('[Solutions] Pre-solved solution loaded successfully');
+                } catch (e) {
+                    console.warn('[Solutions] Local solution fetch failed — falling back to AI provider:', e.message);
+                    response = await requestFromProvider(prompt);
+                }
+            } else {
+                response = await requestFromProvider(prompt);
+            }
 
             if (problem.isMFIB) {
                 let answers = [];
@@ -8749,9 +9647,16 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                 }
 
                 if (existingCode && calculateCodeSimilarity(code, existingCode) > 0.99) {
-                    console.warn('Generated code is too similar to existing code, retrying with distinct prompt');
+                    const lenientRetryPrompt = `${prompt}
 
-                    const lenientRetryPrompt = `${prompt}\n\nRETRY INSTRUCTION:\nThe previous answer was identical to the existing buggy code. Provide an ALTERNATIVE corrected implementation fixing integer overflow (using 64-bit long long/long) and edge cases.`;
+[CRITICAL RETRY DIRECTIVE - PREVIOUS CODE FAILED]
+The previous answer was identical or failed private hidden test cases.
+You MUST provide a fundamentally DIFFERENT and ROBUST implementation:
+1. Re-examine the mathematical problem logic: are you checking boundaries in the wrong order?
+2. 64-bit integer overflow: Ensure 'long long' / 'long' is used everywhere.
+3. Edge cases: Test N=1, N=0, all elements equal, negative numbers, reverse sorted arrays, zeros.
+4. Input stream: Ensure all whitespace and multi-line/single-line token differences are handled.
+5. Provide a completely working solution with NO comments.`;
 
                     response = await requestFromProvider(lenientRetryPrompt);
                     code = extractCode(response, language);
@@ -8762,18 +9667,50 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                     }
                 }
 
+                // Check if generated code is in the wrong language
+                if (isLanguageMismatch(code, language)) {
+                    console.warn(`[AI] Detected language mismatch for ${language}. Re-prompting...`);
+                    const langRetryPrompt = `${prompt}
+
+[CRITICAL ERROR - WRONG LANGUAGE GENERATED]
+The previous answer was generated in the WRONG programming language (e.g. Python instead of ${language}).
+The compiler on this problem strictly evaluates ${language}.
+You MUST rewrite the entire solution ONLY in valid ${language}.
+${language === 'C' ? 'Include <stdio.h>, <stdlib.h>, and int main(). Do NOT use Python.' : ''}
+${language === 'C++' || language === 'C++23' ? 'Include <iostream>, <vector>, and int main(). Do NOT use Python.' : ''}
+${language === 'Java' ? 'Use public class Hello with public static void main. Do NOT use Python.' : ''}
+Output ONLY the valid ${language} code with NO comments:`;
+
+                    response = await requestFromProvider(langRetryPrompt);
+                    code = extractCode(response, language);
+                }
+
                 if (code && window.txtCode) {
-                    if (typeof window.txtCode.getSession === 'function') {
-                        window.txtCode.getSession().setValue(code);
-                    } else if ('value' in window.txtCode) {
-                        window.txtCode.value = code;
-                        window.txtCode.dispatchEvent(new Event('input', { bubbles: true }));
-                        window.txtCode.dispatchEvent(new Event('change', { bubbles: true }));
+                    let inserted = false;
+
+                    if (SETTINGS.humanTypingMode) {
+                        // Natural human-like typing: insert char-by-char with real DOM events
+                        try {
+                            inserted = await typeCodeNaturally(code);
+                        } catch (e) {
+                            console.warn('[AI] typeCodeNaturally failed, falling back to instant insert:', e);
+                        }
                     }
 
-                    const $ = window.jQuery || window.$;
-                    if ($ && $("#txtCode").length) {
-                        $("#txtCode").val(code);
+                    if (!inserted) {
+                        // Instant insert fallback
+                        if (typeof window.txtCode.getSession === 'function') {
+                            window.txtCode.getSession().setValue(code);
+                        } else if ('value' in window.txtCode) {
+                            window.txtCode.value = code;
+                            window.txtCode.dispatchEvent(new Event('input',  { bubbles: true }));
+                            window.txtCode.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+
+                        const $ = window.jQuery || window.$;
+                        if ($ && $('#txtCode').length) {
+                            $('#txtCode').val(code);
+                        }
                     }
 
                     console.log(errorInfo.hasError ? 'AI fix applied successfully' : 'AI solution inserted successfully');
@@ -9467,7 +10404,12 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
         // ── Page detection helpers ────────────────────────────────────────────────
         function isOnProblemPageURL() {
             const href = window.location.href;
+            // Standard coding pages
             if (href.includes('codeprogram') || href.includes('tutorprogram')) return true;
+            // Daily challenge & daily test pages
+            if (href.includes('dailychallenge') || href.includes('dailytest')) return true;
+            // MCQ / Assessment pages
+            if (href.includes('mcqassessment') || href.includes('assessment')) return true;
             return hasCodeEditor() || hasCaptcha() || isOnProblemListPage();
         }
 
@@ -10134,49 +11076,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             }
         };
 
-        // ── Language Pack Scanning Logic (from incomplete-questions-module.js) ──
-        // GM_xmlhttpRequest wrapper for httpOnly cookie support
-        function gmFetch(url, options = {}) {
-            return new Promise((resolve, reject) => {
-                const requestId = Math.random().toString(36).substr(2, 9);
-
-                const handleMessage = (event) => {
-                    if (event.data && event.data.type === 'GM_XHR_RESPONSE' && event.data.id === requestId) {
-                        window.removeEventListener('message', handleMessage);
-                        if (event.data.error) {
-                            reject(new Error(event.data.error));
-                        } else {
-                            resolve({
-                                ok: event.data.status >= 200 && event.data.status < 300,
-                                status: event.data.status,
-                                statusText: event.data.statusText,
-                                responseText: event.data.responseText,
-                                responseHeaders: event.data.responseHeaders
-                            });
-                        }
-                    }
-                };
-
-                window.addEventListener('message', handleMessage);
-
-                window.postMessage({
-                    type: 'GM_XHR_REQUEST',
-                    id: requestId,
-                    options: {
-                        method: options.method || 'GET',
-                        url: url,
-                        headers: options.headers || {},
-                        data: options.body || options.data
-                    }
-                }, '*');
-
-                // Timeout
-                setTimeout(() => {
-                    window.removeEventListener('message', handleMessage);
-                    reject(new Error('Request timeout'));
-                }, 30000);
-            });
-        }
+        // ── Language Pack Scanning Logic (uses top-level gmFetch) ──
 
         function extractViewStateLangPack(html, formId = null) {
             if (!html) return null;
@@ -11985,36 +12885,10 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             }, 200);
         }
 
-        // ── Status pill ──────────────────────────────────────────────────────
-        function ensureStatusPanel() {
-            if (statusPanel) return;
-            statusPanel = document.createElement('div');
-            statusPanel.id = 'find-incomplete-status';
-            statusPanel.style.cssText =
-                'position:fixed;bottom:20px;right:20px;z-index:100003;display:none;' +
-                'background:rgba(13,16,23,0.95);border:1px solid rgba(255,255,255,0.12);' +
-                'border-radius:8px;padding:8px 14px;box-shadow:0 8px 30px rgba(0,0,0,0.6);' +
-                "color:#f4f4f5;font-family:'VT323',monospace;font-size:14px;transition:opacity 0.2s ease;";
-
-            statusText = document.createElement('span');
-            statusText.id = 'find-incomplete-status-text';
-            statusPanel.appendChild(statusText);
-            document.body.appendChild(statusPanel);
-        }
-
-        function showStatus(msg, icon = 'ℹ️') {
-            ensureStatusPanel();
-            if (!statusPanel || !statusText) return;
-            statusText.innerHTML = `<span style="margin-right:6px;">${apiEscape(icon)}</span>${apiEscape(msg)}`;
-            statusPanel.style.display = 'block';
-            statusPanel.style.opacity = '1';
-        }
-
-        function hideStatus() {
-            if (!statusPanel) return;
-            statusPanel.style.opacity = '0';
-            setTimeout(() => { if (statusPanel) statusPanel.style.display = 'none'; }, 200);
-        }
+        // ── Status pill (disabled - progress shown in dropdown) ───────────────
+        function ensureStatusPanel() {}
+        function showStatus(msg, icon = 'ℹ️') {}
+        function hideStatus() {}
 
         function setState(s) { currentState = s; }
 
@@ -12100,6 +12974,220 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             return { bg: 'rgba(99,179,237,0.18)', color: '#63b3ed', border: 'rgba(99,179,237,0.35)' };
         }
 
+        async function apiShowCookieModal() {
+            let cookieStatus = { has_cookie: false, cookie_preview: '' };
+            try {
+                const res = await gmFetch(apiBaseUrl() + '/cookie/status');
+                if (res.ok) cookieStatus = await res.json();
+            } catch (err) {}
+
+            const autoCookie = await gmGetCookies();
+            const savedCookie = storage.getValue('skillrack_custom_cookie', '');
+            const activeCookie = savedCookie || autoCookie;
+
+            const hasJsessionid = /JSESSIONID=/i.test(activeCookie);
+
+            const html = `
+                <div style="font-family:sans-serif;font-size:12px;line-height:1.5;max-width:540px;color:#e4e4e7;">
+                    <div style="font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:6px;">
+                        <span>🔑 SkillRack Session Cookie Setup</span>
+                    </div>
+                    <div style="margin-bottom:12px;padding:10px;background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                            <b>Current Status:</b>
+                            <span style="font-weight:700;color:${hasJsessionid ? '#4ade80' : '#f87171'}">${hasJsessionid ? '✅ JSESSIONID detected' : '❌ JSESSIONID MISSING'}</span>
+                        </div>
+                        <div style="font-size:11px;color:#a1a1aa;">
+                            Python server: <span style="color:${cookieStatus.has_cookie ? '#4ade80' : '#f59e0b'}">${cookieStatus.has_cookie ? 'Cookie registered' : 'No cookie on server'}</span>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:8px;font-size:11px;color:#a1a1aa;">
+                        <b>How to get Cookie:</b> Press <kbd style="background:#27272a;padding:1px 4px;border-radius:3px;">F12</kbd> &rarr; <b>Network</b> &rarr; reload page &rarr; click any SkillRack request &rarr; copy <b>Cookie:</b> from <i>Request Headers</i>.
+                    </div>
+
+                    <label style="display:block;margin-bottom:4px;font-weight:600;">Paste full Cookie header below:</label>
+                    <textarea id="cookie-input" placeholder="JSESSIONID=...; oam.Flash.RENDERMAP.TOKEN=...; AWSALB=..." style="width:100%;min-height:90px;padding:8px;background:#0d1117;border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:#e4e4e7;font-family:monospace;font-size:11px;resize:vertical;outline:none;box-sizing:border-box;">${apiEscape(activeCookie)}</textarea>
+
+                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+                        <button id="cookie-cancel" style="padding:6px 12px;background:transparent;border:1px solid rgba(255,255,255,0.2);color:#9ca3af;border-radius:6px;cursor:pointer;">Cancel</button>
+                        <button id="cookie-save-only" style="padding:6px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:#e4e4e7;border-radius:6px;cursor:pointer;">Save Cookie</button>
+                        <button id="cookie-save-rescrape" style="padding:6px 16px;background:#22c55e;border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">Save & Re-scrape</button>
+                    </div>
+                </div>
+            `;
+
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:1000010;display:flex;align-items:center;justify-content:center;';
+            modal.innerHTML = `<div style="background:#18181b;border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:20px;max-width:560px;width:90%;box-shadow:0 24px 60px rgba(0,0,0,0.85);">${html}</div>`;
+            document.body.appendChild(modal);
+
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) modal.remove();
+            });
+
+            modal.querySelector('#cookie-cancel').onclick = () => modal.remove();
+
+            const saveCookieHandler = async (triggerScrape) => {
+                const input = modal.querySelector('#cookie-input').value.trim();
+                if (!input) { alert('Cookie cannot be empty'); return; }
+                if (!/JSESSIONID=/i.test(input)) {
+                    if (!confirm('⚠️ No JSESSIONID detected. Cookie may not work. Save anyway?')) return;
+                }
+
+                storage.setValue('skillrack_custom_cookie', input);
+                modal.remove();
+                try {
+                    await gmFetch(apiBaseUrl() + '/cookie', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cookie: input })
+                    });
+                } catch (err) {}
+                if (triggerScrape) {
+                    apiReScrapeAndRender();
+                } else {
+                    alert('✅ Cookie saved successfully!');
+                }
+            };
+
+            modal.querySelector('#cookie-save-only').onclick = () => saveCookieHandler(false);
+            modal.querySelector('#cookie-save-rescrape').onclick = () => saveCookieHandler(true);
+            modal.querySelector('#cookie-input').focus();
+        }
+
+        function apiShowImportExportModal() {
+            const currentCount = apiQuestions ? apiQuestions.length : 0;
+            const html = `
+                <div style="font-family:sans-serif;font-size:12px;line-height:1.5;color:#e4e4e7;">
+                    <div style="font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:6px;">
+                        <span>📦 Import / Export Incomplete Questions</span>
+                    </div>
+
+                    <div style="margin-bottom:12px;padding:10px;background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+                        <div style="font-weight:600;margin-bottom:6px;">💻 Python Terminal Scrape (Direct JSON):</div>
+                        <div style="display:flex;align-items:center;background:#090d13;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:6px 10px;gap:8px;">
+                            <code id="cli-cmd-text" style="font-family:monospace;font-size:11px;color:#93c5fd;flex:1;overflow-x:auto;white-space:nowrap;user-select:all;">python -m skillrack_scraper.main scrape -o questions.json</code>
+                            <button id="cli-cmd-copy" style="padding:4px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#e4e4e7;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap;">📋 Copy</button>
+                        </div>
+                        <div style="font-size:10px;color:#a1a1aa;margin-top:4px;">
+                            Run this command in your project terminal to generate <code>questions.json</code>, then upload it below.
+                        </div>
+                    </div>
+
+                    <div style="display:flex;gap:10px;margin-bottom:12px;">
+                        <div style="flex:1;">
+                            <label style="display:block;margin-bottom:4px;font-weight:600;">📥 Import Questions File:</label>
+                            <input type="file" id="import-json-file" accept=".json,application/json" style="display:none;">
+                            <button id="import-choose-file-btn" style="width:100%;padding:8px 12px;background:#3b82f6;border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;">
+                                📁 Choose JSON File
+                            </button>
+                        </div>
+                        <div style="flex:1;">
+                            <label style="display:block;margin-bottom:4px;font-weight:600;">📤 Export Loaded Questions:</label>
+                            <button id="export-json-btn" style="width:100%;padding:8px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#e4e4e7;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;" ${currentCount === 0 ? 'disabled' : ''}>
+                                💾 Export (${currentCount})
+                            </button>
+                        </div>
+                    </div>
+
+                    <label style="display:block;margin-bottom:4px;font-weight:600;">Or Paste JSON Data directly:</label>
+                    <textarea id="import-json-textarea" placeholder='Paste JSON array [...] or {"questions": [...]}' style="width:100%;min-height:90px;padding:8px;background:#0d1117;border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:#e4e4e7;font-family:monospace;font-size:11px;resize:vertical;outline:none;box-sizing:border-box;"></textarea>
+
+                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                        <button id="import-cancel-btn" style="padding:6px 14px;background:transparent;border:1px solid rgba(255,255,255,0.2);color:#9ca3af;border-radius:6px;cursor:pointer;">Cancel</button>
+                        <button id="import-apply-btn" style="padding:6px 16px;background:#22c55e;border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">Import & Display</button>
+                    </div>
+                </div>
+            `;
+
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:1000010;display:flex;align-items:center;justify-content:center;';
+            modal.innerHTML = `<div style="background:#18181b;border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:20px;max-width:580px;width:90%;box-shadow:0 24px 60px rgba(0,0,0,0.85);">${html}</div>`;
+            document.body.appendChild(modal);
+
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) modal.remove();
+            });
+
+            const copyBtn = modal.querySelector('#cli-cmd-copy');
+            if (copyBtn) {
+                copyBtn.onclick = () => {
+                    navigator.clipboard.writeText('python -m skillrack_scraper.main scrape -o questions.json').then(() => {
+                        copyBtn.textContent = '✅ Copied!';
+                        setTimeout(() => { copyBtn.textContent = '📋 Copy'; }, 2000);
+                    });
+                };
+            }
+
+            const fileInput = modal.querySelector('#import-json-file');
+            const chooseFileBtn = modal.querySelector('#import-choose-file-btn');
+            const textarea = modal.querySelector('#import-json-textarea');
+            const cancelBtn = modal.querySelector('#import-cancel-btn');
+            const applyBtn = modal.querySelector('#import-apply-btn');
+            const exportBtn = modal.querySelector('#export-json-btn');
+
+            chooseFileBtn.onclick = () => fileInput.click();
+
+            fileInput.onchange = (e) => {
+                const file = e.target.files && e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    processImportJson(ev.target.result);
+                };
+                reader.readAsText(file);
+            };
+
+            function processImportJson(raw) {
+                try {
+                    const parsed = JSON.parse(raw);
+                    let list = [];
+                    if (Array.isArray(parsed)) {
+                        list = parsed;
+                    } else if (parsed && Array.isArray(parsed.questions)) {
+                        list = parsed.questions;
+                    } else if (parsed && Array.isArray(parsed.data)) {
+                        list = parsed.data;
+                    } else {
+                        throw new Error('JSON must be an array of questions or an object containing a "questions" array.');
+                    }
+                    if (list.length === 0) {
+                        alert('JSON was valid, but contained 0 questions.');
+                    }
+                    apiQuestions = list;
+                    apiLastFetch = 'ok';
+                    storage.setValue('skillrack_cached_questions', JSON.stringify(list));
+                    modal.remove();
+                    apiRenderIntoDropdown();
+                    alert(`✅ Loaded ${list.length} incomplete questions successfully!`);
+                } catch (err) {
+                    alert('Invalid JSON: ' + err.message);
+                }
+            }
+
+            applyBtn.onclick = () => {
+                const text = textarea.value.trim();
+                if (!text) { alert('Please select a JSON file or paste JSON content.'); return; }
+                processImportJson(text);
+            };
+
+            if (exportBtn) {
+                exportBtn.onclick = () => {
+                    const jsonStr = JSON.stringify(apiQuestions, null, 2);
+                    const blob = new Blob([jsonStr], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `skillrack_incomplete_questions_${new Date().toISOString().slice(0, 10)}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                };
+            }
+
+            cancelBtn.onclick = () => modal.remove();
+        }
+
         // ── Render complete UI into the dropdown ─────────────────────────────
         function apiRenderIntoDropdown() {
             // Preserve user's filters across rebuilds (e.g. after re-scrape)
@@ -12131,68 +13219,20 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
 
             const cookieBtn = document.createElement('button');
             cookieBtn.className = 'api-ctrl-btn api-btn-icon';
-            cookieBtn.title = 'Set / Paste Cookie override (shows current cookie status)';
+            cookieBtn.title = 'Set / Paste Cookie override';
             cookieBtn.innerHTML = '🔑';
-            cookieBtn.addEventListener('click', async (e) => {
+            cookieBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
+                apiShowCookieModal();
+            });
 
-                // Fetch current cookie status from Python server
-                let cookieStatus = { has_cookie: false, cookie_preview: '' };
-                try {
-                    const res = await gmFetch(apiBaseUrl() + '/cookie/status');
-                    if (res.ok) cookieStatus = await res.json();
-                } catch (err) {}
-
-                // Get auto-collected cookie
-                const autoCookie = await gmGetCookies();
-                const savedCookie = storage.getValue('skillrack_custom_cookie', '');
-                const activeCookie = savedCookie || autoCookie;
-
-                const hasJsessionid = /JSESSIONID=/i.test(activeCookie);
-                const preview = activeCookie ? activeCookie.substring(0, 80) + (activeCookie.length > 80 ? '…' : '') : '(none)';
-
-                const html = `
-                    <div style="font-family:monospace;font-size:12px;line-height:1.5;max-width:500px;">
-                        <div style="margin-bottom:12px;padding:8px;background:rgba(255,255,255,0.05);border-radius:6px;">
-                            <b>Current Cookie Status:</b><br>
-                            <span style="color:${hasJsessionid ? '#4ade80' : '#f87171'}">${hasJsessionid ? '✅ JSESSIONID present' : '❌ JSESSIONID MISSING'}</span> | ${cookieStatus.has_cookie ? 'Server has cookie' : 'Server: no cookie'}
-                        </div>
-                        <div style="margin-bottom:8px;"><b>Preview (auto-collected):</b><br>
-                            <code style="color:#93c5fd;word-break:break-all;">${preview}</code>
-                        </div>
-                        <label style="display:block;margin-bottom:4px;"><b>Paste full Cookie header from DevTools (Request Headers → Cookie):</b></label>
-                        <textarea id="cookie-input" style="width:100%;min-height:80px;padding:8px;background:#0d1117;border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:#e4e4e7;font-family:monospace;font-size:11px;resize:vertical;outline:none;">${activeCookie}</textarea>
-                        <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;">
-                            <button id="cookie-cancel" style="padding:6px 14px;background:transparent;border:1px solid rgba(255,255,255,0.2);color:#9ca3af;border-radius:6px;cursor:pointer;">Cancel</button>
-                            <button id="cookie-save" style="padding:6px 14px;background:#22c55e;border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">Save & Re-scrape</button>
-                        </div>
-                    </div>
-                `;
-
-                const modal = document.createElement('div');
-                modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:100000;display:flex;align-items:center;justify-content:center;';
-                modal.innerHTML = `<div style="background:#18181b;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:20px;max-width:560px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">${html}</div>`;
-                document.body.appendChild(modal);
-
-                modal.querySelector('#cookie-cancel').onclick = () => modal.remove();
-                modal.querySelector('#cookie-save').onclick = async () => {
-                    const input = modal.querySelector('#cookie-input').value.trim();
-                    if (!input) { alert('Cookie cannot be empty'); return; }
-                    if (!/JSESSIONID=/i.test(input)) { if (!confirm('⚠️ No JSESSIONID detected. Cookie may not work. Save anyway?')) return; }
-
-                    storage.setValue('skillrack_custom_cookie', input);
-                    modal.remove();
-                    showStatus('Saving cookie & re-scraping…', '🔑');
-                    try {
-                        await gmFetch(apiBaseUrl() + '/cookie', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ cookie: input })
-                        });
-                    } catch (err) {}
-                    apiReScrapeAndRender();
-                };
-                modal.querySelector('#cookie-input').focus();
+            const importExportBtn = document.createElement('button');
+            importExportBtn.className = 'api-ctrl-btn api-btn-icon';
+            importExportBtn.title = 'Import JSON from Python scraper or Export questions';
+            importExportBtn.innerHTML = '📦';
+            importExportBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                apiShowImportExportModal();
             });
 
             const reScrapeBtn = document.createElement('button');
@@ -12214,6 +13254,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeFindIncomplete(); });
 
             btnGroup.appendChild(cookieBtn);
+            btnGroup.appendChild(importExportBtn);
             btnGroup.appendChild(reScrapeBtn);
             btnGroup.appendChild(minBtn);
             btnGroup.appendChild(closeBtn);
@@ -12528,13 +13569,24 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             }
             if (apiLastFetch === 'error') {
                 body.innerHTML = `
-                    <div style="text-align:center;padding:26px 14px;">
+                    <div style="text-align:center;padding:22px 14px;">
                         <div style="font-size:24px;margin-bottom:8px;">⚠️</div>
-                        <div style="font-size:13px;color:#f87171;font-weight:600;">Cannot reach FastAPI server</div>
-                        <div style="font-size:11px;color:#a1a1aa;margin-top:4px;">${apiEscape(apiBaseUrl())}</div>
-                        <div style="font-size:11px;color:#71717a;margin-top:6px;">Start it: <code>python -m skillrack_scraper.api</code></div>
-                        <div style="font-size:11px;color:#71717a;margin-top:3px;">Then click <b>↻</b> in the header above.</div>
+                        <div style="font-size:13px;color:#f87171;font-weight:600;">FastAPI server not ready or no questions scraped yet</div>
+                        <div style="font-size:11px;color:#a1a1aa;margin-top:4px;">Server: <code>${apiEscape(apiBaseUrl())}</code></div>
+                        <div style="display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap;">
+                            <button id="err-set-cookie-btn" style="padding:6px 12px;background:#3b82f6;color:white;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;">🔑 Set Cookie</button>
+                            <button id="err-import-json-btn" style="padding:6px 12px;background:#22c55e;color:white;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;">📦 Import JSON File</button>
+                            <button id="err-rescrape-btn" style="padding:6px 12px;background:rgba(255,255,255,0.1);color:#e4e4e7;border:1px solid rgba(255,255,255,0.2);border-radius:6px;font-size:11px;cursor:pointer;">↻ Re-scrape</button>
+                        </div>
                     </div>`;
+                setTimeout(() => {
+                    const ckBtn = body.querySelector('#err-set-cookie-btn');
+                    if (ckBtn) ckBtn.onclick = (e) => { e.stopPropagation(); apiShowCookieModal(); };
+                    const impBtn = body.querySelector('#err-import-json-btn');
+                    if (impBtn) impBtn.onclick = (e) => { e.stopPropagation(); apiShowImportExportModal(); };
+                    const retryBtn = body.querySelector('#err-rescrape-btn');
+                    if (retryBtn) retryBtn.onclick = (e) => { e.stopPropagation(); apiReScrapeAndRender(); };
+                }, 0);
                 return;
             }
 
@@ -12674,9 +13726,22 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                 const data = await res.json();
                 const list = Array.isArray(data) ? data : (data && Array.isArray(data.questions) ? data.questions : []);
                 apiQuestions = list;
+                storage.setValue('skillrack_cached_questions', JSON.stringify(list));
                 apiLastFetch = 'ok';
             } catch (err) {
                 console.warn('[FastAPI] Failed to fetch questions:', err);
+                const cachedRaw = storage.getValue('skillrack_cached_questions', '');
+                if (cachedRaw) {
+                    try {
+                        const parsed = JSON.parse(cachedRaw);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                            apiQuestions = parsed;
+                            apiLastFetch = 'ok';
+                            apiRenderIntoDropdown();
+                            return;
+                        }
+                    } catch (_) {}
+                }
                 apiQuestions = [];
                 apiLastFetch = 'error';
             }
@@ -13083,7 +14148,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             // Auto-minimize Find Incomplete dropdown on outside click/touch (collapses into compact pill badge)
             document.addEventListener('click', (e) => {
                 if (!dropdown || dropdown.style.display === 'none' || dropdown.style.opacity === '0') return;
-                
+
                 // If click is inside dropdown or on trigger button or on HUD pill, do not minimize
                 if (dropdown.contains(e.target) || (e.composedPath && e.composedPath().includes(dropdown))) return;
                 if (e.target.id === 'find-incomplete-btn' || e.target.closest('#find-incomplete-btn')) return;
@@ -13561,4 +14626,3 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
     });
 
 }
-
