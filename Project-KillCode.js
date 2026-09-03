@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Project-KillCode Master
 // @namespace    http://tampermonkey.net/
-// @version      7.0
+// @version      5.1
 // @description  Bypass tab switching, copy/paste restrictions, full-screen enforcement, auto-solve captcha, AI-powered solution generator (9 AI providers), local pre-solved database, and FastAPI scraper
 // @author       ToonTamilIndia & Vishnu-tppr (Captcha solver by adithyagenie)
 // @match        https://*.skillrack.com/*
