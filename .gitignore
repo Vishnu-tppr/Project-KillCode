@@ -1,7 +1,10 @@
-# Ignore the bundled openai-oauth subpackage — tracked separately upstream
+# Ignore subpackages / dependencies
 openai-oauth/
+node_modules/
+.env
 
-# Dev & helper scripts / data files
+# Scratch & temporary dev scripts
+check_syntax.py
 icon_b64.txt
 icon_small_b64.txt
 bump_font_size.py
@@ -11,12 +14,14 @@ verify_ui.py
 implementation_plan.md
 skillrack_context.md
 level1_context.md
-userscript.user.js
 
-# OS noise
+# Logs & caches
+*.log
+__pycache__/
+*.pyc
+
+# OS & Editor noise
 .DS_Store
 Thumbs.db
-
-# Editor folders
 .vscode/
 .idea/
