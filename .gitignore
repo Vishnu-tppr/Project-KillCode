@@ -24,6 +24,7 @@
 # ------------------------------------------------------------------------------
 !assets/
 !chrome-extension/
+!skillrack_scraper/
 !skillrack-scraper/
 !tools/
 
