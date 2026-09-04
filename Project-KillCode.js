@@ -11,6 +11,9 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_cookie
 // @grant        GM.cookie
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
 // @grant        unsafeWindow
 // @connect      integrate.api.nvidia.com
 // @connect      127.0.0.1
@@ -91,7 +94,7 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
                 ];
                 const results = await Promise.all(gmQueries.map(q => GM.cookie.list(q).catch(() => [])));
                 for (const r of results) addCookies(r);
-            } catch (e) {}
+            } catch (e) { }
         }
 
         // 3. Fallback: Parse document.cookie (non-HttpOnly cookies only)
@@ -119,12 +122,12 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
                         url: 'https://www.skillrack.com/faces/candidate/codetutor.xhtml',
                         // Don't set Cookie header - let browser attach it automatically
                         anonymous: false, // Use browser's cookie jar
-                        onload: function(response) {
+                        onload: function (response) {
                             // The browser's actual cookie header was sent with the request
                             // Check if response has Set-Cookie for session refresh
                             resolve(response);
                         },
-                        onerror: function(err) {
+                        onerror: function (err) {
                             reject(err);
                         }
                     });
@@ -157,7 +160,7 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
                         break;
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
         }
 
         if (cookieMap.size === 0) return '';
@@ -304,9 +307,40 @@ function mainCode() {
             }
             const match = (document.documentElement.innerHTML || '').match(/[;?&]jsessionid=([A-Za-z0-9.\-_]{16,})/i);
             if (match && match[1]) return match[1];
-        } catch (e) {}
+        } catch (e) { }
         return '';
     }
+
+    // ── Storage Wrapper (defined early: used by gmGetCookies below) ─────────
+    const storage = {
+        getValue(key, def) {
+            try {
+                if (typeof GM_getValue !== 'undefined') {
+                    return GM_getValue(key, def);
+                }
+            } catch (_) { }
+            const val = localStorage.getItem(key);
+            return val !== null ? val : def;
+        },
+        setValue(key, value) {
+            try {
+                if (typeof GM_setValue !== 'undefined') {
+                    GM_setValue(key, value);
+                    return;
+                }
+            } catch (_) { }
+            localStorage.setItem(key, value);
+        },
+        deleteValue(key) {
+            try {
+                if (typeof GM_deleteValue !== 'undefined') {
+                    GM_deleteValue(key);
+                    return;
+                }
+            } catch (_) { }
+            localStorage.removeItem(key);
+        }
+    };
 
     // A wrapper to extract full SkillRack cookies (including httpOnly) via GM_cookie bridge
     const gmGetCookies = () => {
@@ -442,7 +476,7 @@ function mainCode() {
                 localStorage.setItem('killcode_cached_remote_version', versionMatch[1]);
                 return versionMatch[1];
             }
-        } catch (e) {}
+        } catch (e) { }
         return cachedVersion || null;
     };
 
@@ -938,6 +972,18 @@ function mainCode() {
     // ========== NON-BLOCKING TOAST NOTIFICATION SYSTEM ==========
     const showToastPill = (message, type = 'info', duration = 2500) => {
         try {
+            // Stealth mode check: Do not show popups in stealth/ghost mode
+            let isGhosted = false;
+            try {
+                if (typeof WASDBridge !== 'undefined' && WASDBridge.state && WASDBridge.state.ghosted) {
+                    isGhosted = true;
+                } else if (localStorage.getItem('killcode_wasd_ghosted') === 'true') {
+                    isGhosted = true;
+                }
+            } catch (_) {}
+
+            if (isGhosted) return;
+
             let container = document.getElementById('pkc-toast-container');
             if (!container) {
                 container = document.createElement('div');
@@ -947,7 +993,7 @@ function mainCode() {
             }
 
             const toast = document.createElement('div');
-            toast.style.cssText = 'background:rgba(20,20,26,0.94);color:#ffffff;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:500;box-shadow:0 6px 20px rgba(0,0,0,0.4);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.12);transition:all 0.25s ease-out;opacity:0;transform:translateY(-8px);pointer-events:auto;display:flex;align-items:center;gap:8px;';
+            toast.style.cssText = 'background:linear-gradient(135deg, rgba(8, 14, 28, 0.96), rgba(15, 23, 42, 0.96));color:#ffffff;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:500;box-shadow:0 8px 24px rgba(0,0,0,0.6);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(59,130,246,0.35);transition:all 0.25s ease-out;opacity:0;transform:translateY(-8px);pointer-events:auto;display:flex;align-items:center;gap:8px;';
 
             const isError = type === 'error' || message.toLowerCase().includes('error') || message.toLowerCase().includes('failed');
             const icon = isError ? '✕' : type === 'success' ? '✓' : 'ℹ';
@@ -6207,7 +6253,7 @@ function mainCode() {
                 get: () => false,
                 configurable: true
             });
-        } catch (e) {}
+        } catch (e) { }
 
         // ── 1b. Trap Window Focus API (Always FOCUSED) ─────────────────────────
         try {
@@ -6221,7 +6267,7 @@ function mainCode() {
                 writable: true,
                 configurable: true
             });
-        } catch (e) {}
+        } catch (e) { }
 
         // ── 1c. Block window/document level event handlers ──────────────────────
         const nullifyProperties = ['onblur', 'onfocus', 'onmouseleave', 'onmouseout', 'onvisibilitychange', 'onpagehide'];
@@ -6239,7 +6285,7 @@ function mainCode() {
                     set: (fn) => console.log(`[KillCode Sandbox] Blocked document.${prop} assignment`),
                     configurable: true
                 });
-            } catch (e) {}
+            } catch (e) { }
         });
 
         // ── 1d. Block Proctoring Event Listeners (Tab Switch, Blur, Mouse Leave) ──
@@ -6254,6 +6300,7 @@ function mainCode() {
             if (ISOLATED_BLOCKED_EVENTS.has(typeLower)) {
                 if (this === window || this === document || this === document.body || this === document.documentElement) {
                     console.log(`[KillCode Sandbox] Blocked isolated ${type} listener on ${this.constructor.name}`);
+                    return;
                 }
             }
             return originalAddEventListener.call(this, type, listener, options);
@@ -6266,10 +6313,10 @@ function mainCode() {
 
         // ── 1f. Suppress native alert/confirm popups during tests & assessments ──
         const isTestOrAssessment = location.href.includes('dailytest') ||
-                                   location.href.includes('dailychallenge') ||
-                                   location.href.includes('mcq') ||
-                                   location.href.includes('assessment') ||
-                                   location.href.includes('test');
+            location.href.includes('dailychallenge') ||
+            location.href.includes('mcq') ||
+            location.href.includes('assessment') ||
+            location.href.includes('test');
         if (isTestOrAssessment || !SETTINGS.enablePopupMode) {
             window.alert = function (msg) {
                 console.log('[Native Alert Suppressed]', msg);
@@ -6286,13 +6333,14 @@ function mainCode() {
 
     // ========== KEYBOARD SHORTCUT: Press 'Q' to toggle Human Typing Speed Mode ==========
     window.addEventListener('keydown', (e) => {
+        if (!e.isTrusted) return;
         if (e.key && e.key.toLowerCase() === 'q') {
             const active = document.activeElement;
             const tag = (active?.tagName || '').toUpperCase();
             const isEditable = active?.isContentEditable ||
-                               tag === 'INPUT' ||
-                               tag === 'TEXTAREA' ||
-                               active?.classList?.contains('ace_text-input');
+                tag === 'INPUT' ||
+                tag === 'TEXTAREA' ||
+                active?.classList?.contains('ace_text-input');
 
             // If user is NOT actively typing in an input field, toggle Human Typing Speed Mode
             if (!isEditable && !e.ctrlKey && !e.altKey && !e.metaKey) {
@@ -6844,14 +6892,14 @@ function mainCode() {
                         method: 'HEAD',
                         url: location.href,
                         onload: () => console.log('[KillCode Sandbox] Session refreshed silently.'),
-                        onerror: () => {}
+                        onerror: () => { }
                     });
                 } else if (originalFetch) {
                     originalFetch(location.href, { method: 'HEAD', cache: 'no-store' })
                         .then(() => console.log('[KillCode Sandbox] Session refreshed silently.'))
-                        .catch(() => {});
+                        .catch(() => { });
                 }
-            } catch (e) {}
+            } catch (e) { }
         }, 150000); // 2.5 minutes
     };
     startSessionKeepAlive();
@@ -6983,59 +7031,88 @@ function mainCode() {
     let captchaRunInProgress = false;
     let captchaPageObserver = null;
 
-    // Find captcha image dynamically
-    function findCaptchaImage() {
-        const allImages = document.querySelectorAll('img');
-        const idPattern = /^j_id_[a-zA-Z0-9]+$/;
-
-        for (const img of allImages) {
-            if (img.id && idPattern.test(img.id)) {
-                if (img.src && img.src.length > 100) {
-                    console.log(`[Captcha] Found image with matching ID pattern: ${img.id}`);
-                    return img;
-                }
-            }
-        }
-
-        const knownIds = ['j_id_5s', 'j_id_76', 'j_id_75', 'j_id_74', 'j_id_5r', 'j_id_5t'];
-        for (const id of knownIds) {
-            const img = document.getElementById(id);
-            if (img && img.tagName === 'IMG' && img.src && img.src.length > 100) {
-                console.log(`[Captcha] Found image with known ID: ${id}`);
-                return img;
-            }
-        }
-
-        const base64Images = document.querySelectorAll('img[src^="data:image"]');
-        for (const img of base64Images) {
-            const width = img.width || img.naturalWidth;
-            const height = img.height || img.naturalHeight;
-
-            if (width > 50 && width < 400 && height > 20 && height < 100) {
-                console.log(`[Captcha] Found base64 image: ${width}x${height}`);
-                return img;
-            }
-        }
-
-        const codeEditorPanel = document.getElementById('codeeditorpanel');
-        if (codeEditorPanel) {
-            const img = codeEditorPanel.querySelector('img[src^="data:image"]');
-            if (img && img.src && img.src.length > 100) {
-                console.log('[Captcha] Found image in code editor panel');
-                return img;
-            }
-        }
+    // Find proceed / submit button for captcha dynamically
+    function findCaptchaProceedButton() {
+        let btn = document.getElementById(PROCEED_BTN_ID);
+        if (btn) return btn;
 
         const captchaInput = document.getElementById(CAPTCHA_INPUT_ID);
         if (captchaInput) {
             let container = captchaInput.parentElement;
             for (let i = 0; i < 5 && container; i++) {
-                const img = container.querySelector('img[src^="data:image"]');
-                if (img && img.src && img.src.length > 100) {
-                    console.log(`[Captcha] Found image near input (depth: ${i})`);
-                    return img;
+                btn = container.querySelector('button, input[type="submit"], input[type="button"], .ui-button');
+                if (btn) return btn;
+                container = container.parentElement;
+            }
+        }
+
+        const allButtons = document.querySelectorAll('button, input[type="submit"], .ui-button');
+        for (const b of allButtons) {
+            const txt = (b.textContent || b.value || '').toLowerCase();
+            if (txt.includes('proceed') || txt.includes('submit') || txt.includes('continue') || txt.includes('solve')) {
+                return b;
+            }
+        }
+        return null;
+    }
+
+    // Find captcha image dynamically
+    function findCaptchaImage() {
+        const captchaInput = document.getElementById(CAPTCHA_INPUT_ID);
+
+        // 1. Priority 1: Image near captcha input box
+        if (captchaInput) {
+            let container = captchaInput.parentElement;
+            for (let i = 0; i < 5 && container; i++) {
+                const imgs = container.querySelectorAll('img');
+                for (const img of imgs) {
+                    if (img.src && (img.src.startsWith('data:image') || img.src.toLowerCase().includes('captcha') || img.src.length > 50)) {
+                        console.log(`[Captcha] Found image near input (depth: ${i})`);
+                        return img;
+                    }
                 }
                 container = container.parentElement;
+            }
+        }
+
+        // 2. Priority 2: Code editor / challenge panel captcha container
+        const codeEditorPanel = document.getElementById('codeeditorpanel');
+        if (codeEditorPanel) {
+            const img = codeEditorPanel.querySelector('img[src^="data:image"], img[src*="captcha" i]');
+            if (img && img.src && img.src.length > 50) {
+                console.log('[Captcha] Found image in code editor panel');
+                return img;
+            }
+        }
+
+        // 3. Priority 3: Base64 images sized like captchas
+        const base64Images = document.querySelectorAll('img[src^="data:image"]');
+        for (const img of base64Images) {
+            const width = img.width || img.naturalWidth;
+            const height = img.height || img.naturalHeight;
+
+            if (width > 50 && width < 400 && height > 15 && height < 120) {
+                console.log(`[Captcha] Found base64 image: ${width}x${height}`);
+                return img;
+            }
+        }
+
+        // 4. Priority 4: Images with captcha keyword in ID or alt/src
+        const captchaKeywordImgs = document.querySelectorAll('img[src*="captcha" i], img[alt*="captcha" i], img[id*="captcha" i]');
+        for (const img of captchaKeywordImgs) {
+            if (img.src && img.src.length > 20) {
+                console.log(`[Captcha] Found image with captcha keyword: ${img.id || 'img'}`);
+                return img;
+            }
+        }
+
+        // 5. Fallback: Known JSF image IDs
+        const knownIds = ['j_id_5s', 'j_id_76', 'j_id_75', 'j_id_74', 'j_id_5r', 'j_id_5t'];
+        for (const id of knownIds) {
+            const img = document.getElementById(id);
+            if (img && img.tagName === 'IMG' && img.src && img.src.length > 50) {
+                console.log(`[Captcha] Found image with known ID: ${id}`);
+                return img;
             }
         }
 
@@ -7129,187 +7206,224 @@ function mainCode() {
         return null;
     }
 
-    // ===== IMPROVED: Enhanced image processing for better OCR =====
+    // ===== IMPROVED: Image processing techniques for robust OCR =====
+    function processImageAdaptive(image) {
+        try {
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            const scale = 3;
+            canvas.width = (image.width || image.naturalWidth || 200) * scale;
+            canvas.height = (image.height || image.naturalHeight || 50) * scale;
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+
+            // Calculate average luminance for adaptive thresholding
+            let totalLuminance = 0;
+            const count = data.length / 4;
+            for (let i = 0; i < data.length; i += 4) {
+                totalLuminance += (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+            }
+            const avgLuminance = totalLuminance / count;
+            const threshold = Math.min(Math.max(avgLuminance * 0.88, 90), 160);
+
+            for (let i = 0; i < data.length; i += 4) {
+                const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                const val = lum < threshold ? 0 : 255;
+                data[i] = data[i + 1] = data[i + 2] = val;
+            }
+            ctx.putImageData(imageData, 0, 0);
+            return canvas.toDataURL();
+        } catch (_) { return image.src; }
+    }
+
     function processImageForOCR(image) {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
+        try {
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            const scale = 3;
+            canvas.width = (image.width || image.naturalWidth || 200) * scale;
+            canvas.height = (image.height || image.naturalHeight || 50) * scale;
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-        // Scale up for better OCR accuracy
-        const scale = 3;
-        canvas.width = (image.width || image.naturalWidth || 200) * scale;
-        canvas.height = (image.height || image.naturalHeight || 50) * scale;
-
-        // Enable image smoothing for upscaling
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-
-        // Draw scaled image
-        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-        // Get image data
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-
-        // ===== ENHANCED PROCESSING =====
-        // Convert to high contrast black/white with threshold
-        for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-
-            // Calculate luminance
-            const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-
-            // Apply threshold (adjust if needed - lower = more black)
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
             const threshold = 140;
-            const value = luminance < threshold ? 0 : 255;
 
-            data[i] = value;     // R
-            data[i + 1] = value; // G
-            data[i + 2] = value; // B
-            // Alpha stays the same
-        }
-
-        ctx.putImageData(imageData, 0, 0);
-
-        return canvas.toDataURL();
+            for (let i = 0; i < data.length; i += 4) {
+                const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                const val = lum < threshold ? 0 : 255;
+                data[i] = data[i + 1] = data[i + 2] = val;
+            }
+            ctx.putImageData(imageData, 0, 0);
+            return canvas.toDataURL();
+        } catch (_) { return image.src; }
     }
 
-    // ===== IMPROVED: Alternative invert processing =====
+    function processImageHighContrast(image) {
+        try {
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            const scale = 3;
+            canvas.width = (image.width || image.naturalWidth || 200) * scale;
+            canvas.height = (image.height || image.naturalHeight || 50) * scale;
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+
+            // Find min/max luminance for contrast stretching
+            let minLum = 255, maxLum = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                if (lum < minLum) minLum = lum;
+                if (lum > maxLum) maxLum = lum;
+            }
+            const range = (maxLum - minLum) || 1;
+
+            for (let i = 0; i < data.length; i += 4) {
+                const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                const normLum = ((lum - minLum) / range) * 255;
+                const val = normLum < 128 ? 0 : 255;
+                data[i] = data[i + 1] = data[i + 2] = val;
+            }
+            ctx.putImageData(imageData, 0, 0);
+            return canvas.toDataURL();
+        } catch (_) { return image.src; }
+    }
+
     function invertColors(image) {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-
-        const scale = 2;
-        canvas.width = (image.width || image.naturalWidth || 200) * scale;
-        canvas.height = (image.height || image.naturalHeight || 50) * scale;
-
-        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-        ctx.globalCompositeOperation = "difference";
-        ctx.fillStyle = "white";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        return canvas.toDataURL();
+        try {
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            const scale = 2.5;
+            canvas.width = (image.width || image.naturalWidth || 200) * scale;
+            canvas.height = (image.height || image.naturalHeight || 50) * scale;
+            ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+            ctx.globalCompositeOperation = "difference";
+            ctx.fillStyle = "white";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            return canvas.toDataURL();
+        } catch (_) { return image.src; }
     }
 
-    // ===== IMPROVED: Smarter math expression parser =====
+    // ===== IMPROVED: Multi-operator math expression parser =====
     function solveCaptcha(text) {
+        if (!text) return null;
         const username = SETTINGS.captchaUsername || "";
         let cleanedText = text;
 
-        // Remove username patterns (handle OCR adding spaces)
-        // Pattern: 12 digits followed by @ and letters (with possible spaces)
-        cleanedText = cleanedText.replace(/\d{9,12}\s*@\s*[a-zA-Z]+/gi, "").trim();
+        // 1. Remove noise words & prompts
+        cleanedText = cleanedText.replace(/(solve|captcha|value|enter|result|answer|equals?|question|page|tutor|find|calculate|sum|what\s*is)/gi, " ");
 
-        // Also remove any standalone 12-digit numbers (roll numbers)
-        cleanedText = cleanedText.replace(/\b\d{9,12}\b/g, "").trim();
+        // 2. Remove email handles & roll number patterns (6-14 digits)
+        cleanedText = cleanedText.replace(/\d{6,14}\s*@\s*[a-zA-Z0-9._-]+/gi, " ");
+        cleanedText = cleanedText.replace(/@[a-zA-Z0-9._-]+/gi, " ");
+        cleanedText = cleanedText.replace(/\b\d{7,14}\b/g, " ");
 
-        // Also try removing the configured username (with flexible spacing)
+        // 3. Remove user configured username if specified
         if (username) {
-            // Create pattern that allows spaces around @
             const escapedUsername = username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const flexiblePattern = escapedUsername.replace(/@/g, '\\s*@\\s*');
-            cleanedText = cleanedText.replace(new RegExp(flexiblePattern, "gi"), "").trim();
+            cleanedText = cleanedText.replace(new RegExp(flexiblePattern, "gi"), " ");
         }
 
-        // Remove any remaining @ symbols and email-like patterns
-        cleanedText = cleanedText.replace(/@[a-zA-Z]+/gi, "").trim();
+        // 4. Strip punctuation like = ? : ; !
+        cleanedText = cleanedText.replace(/[=\?:;!]/g, " ");
+        cleanedText = cleanedText.replace(/[\r\n\t]/g, " ").replace(/\s+/g, " ").trim();
 
-        // Remove common OCR noise
-        cleanedText = cleanedText.replace(/[\n\r\t]/g, " ").trim();
+        console.log(`[Captcha] Cleaned OCR text: "${cleanedText}"`);
 
-        // Remove multiple spaces
-        cleanedText = cleanedText.replace(/\s+/g, " ").trim();
+        // Helper evaluator for arithmetic
+        const evalOp = (n1, op, n2) => {
+            const a = parseInt(n1, 10);
+            const b = parseInt(n2, 10);
+            if (isNaN(a) || isNaN(b)) return null;
+            if (op === '+') return a + b;
+            if (op === '-') return a - b;
+            if (op === '*' || op === 'x' || op === 'X') return a * b;
+            if (op === '/') return b !== 0 ? Math.floor(a / b) : null;
+            return null;
+        };
 
-        console.log(`[Captcha] Cleaned text: "${cleanedText}"`);
-
-        // ===== METHOD 1: Standard pattern with + sign =====
-        // This should match "100+3", "5+6", "23+45" etc.
-        let match = cleanedText.match(/(\d+)\s*\+\s*(\d+)/);
+        // 5. WORD OPERATORS: "plus", "minus", "times", "divided"
+        let match = cleanedText.match(/(\d{1,4})\s+(plus|minus|times|divided(?:\s+by)?)\s+(\d{1,4})/i);
         if (match) {
-            const num1 = parseInt(match[1], 10);
-            const num2 = parseInt(match[2], 10);
-            // Validate both numbers are reasonable (1-999 to handle 3-digit numbers)
-            if (num1 >= 1 && num1 <= 999 && num2 >= 1 && num2 <= 999) {
-                const result = num1 + num2;
-                console.log(`[Captcha] Pattern 1 (X+Y): ${num1} + ${num2} = ${result}`);
-                return result;
+            const wOp = match[2].toLowerCase();
+            const symbol = wOp === 'plus' ? '+' : (wOp === 'minus' ? '-' : (wOp.startsWith('divide') ? '/' : '*'));
+            const res = evalOp(match[1], symbol, match[3]);
+            if (res !== null) {
+                console.log(`[Captcha] Pattern (Words): ${match[1]} ${symbol} ${match[3]} = ${res}`);
+                return res;
             }
         }
 
-        // ===== METHOD 2: Handle 2-digit number that should be two single digits =====
-        // e.g., "72" is really "7+2" (OCR missed the + sign)
+        // 6. STANDARD ARITHMETIC OPERATORS: +, -, *, x, X, /
+        match = cleanedText.match(/(\d{1,4})\s*([\+\-\*\x\X\/÷×])\s*(\d{1,4})/);
+        if (match) {
+            let symbol = match[2];
+            if (symbol === '×') symbol = '*';
+            if (symbol === '÷') symbol = '/';
+            const res = evalOp(match[1], symbol, match[3]);
+            if (res !== null && res >= 0) {
+                console.log(`[Captcha] Pattern (Standard Op): ${match[1]} ${symbol} ${match[3]} = ${res}`);
+                return res;
+            }
+        }
+
+        // 7. OCR MISREAD OPERATOR: (e.g., "12 t 5" -> 12+5, "10 f 4" -> 10+4, "15 m 3" -> 15-3)
+        match = cleanedText.match(/(\d{1,3})\s*([tTfFkK\+†‡~])\s*(\d{1,3})/);
+        if (match) {
+            const res = parseInt(match[1], 10) + parseInt(match[3], 10);
+            console.log(`[Captcha] Pattern (OCR operator fix +): ${match[1]} + ${match[3]} = ${res}`);
+            return res;
+        }
+
+        // 8. TWO SEPARATE NUMBERS WITH SPACE (Default to addition)
+        match = cleanedText.match(/(\d{1,3})\s+(\d{1,3})/);
+        if (match) {
+            const res = parseInt(match[1], 10) + parseInt(match[2], 10);
+            console.log(`[Captcha] Pattern (Space split +): ${match[1]} + ${match[2]} = ${res}`);
+            return res;
+        }
+
+        // 9. MERGED SINGLE DIGITS (e.g., "72" -> 7+2=9)
         match = cleanedText.match(/^(\d{2})$/);
         if (match) {
-            const numStr = match[1];
-            const num1 = parseInt(numStr[0], 10);
-            const num2 = parseInt(numStr[1], 10);
-            // Both should be non-zero single digits
-            if (num1 >= 1 && num1 <= 9 && num2 >= 1 && num2 <= 9) {
-                const result = num1 + num2;
-                console.log(`[Captcha] Pattern 2 (XY->X+Y): ${num1} + ${num2} = ${result}`);
-                return result;
+            const d1 = parseInt(match[1][0], 10);
+            const d2 = parseInt(match[1][1], 10);
+            if (d1 >= 1 && d1 <= 9 && d2 >= 1 && d2 <= 9) {
+                const res = d1 + d2;
+                console.log(`[Captcha] Pattern (2-digit split): ${d1} + ${d2} = ${res}`);
+                return res;
             }
         }
 
-        // ===== METHOD 3: Handle merged 3-4 digits (1748 -> 17+48) =====
-        // Look for 3-4 digit number that could be two numbers merged
+        // 10. MERGED 3-4 DIGITS (e.g., "1748" -> 17+48=65, "105" -> 10+5=15)
         match = cleanedText.match(/(\d{3,4})/);
         if (match) {
             const numStr = match[1];
-            console.log(`[Captcha] Found merged number: ${numStr}`);
-
-            // Try splitting at different positions
             const results = [];
-
             for (let i = 1; i < numStr.length; i++) {
-                const num1 = parseInt(numStr.substring(0, i), 10);
-                const num2 = parseInt(numStr.substring(i), 10);
-
-                // Valid split: both numbers should be reasonable (1-99)
-                if (num1 >= 1 && num1 <= 99 && num2 >= 1 && num2 <= 99) {
-                    const sum = num1 + num2;
-                    results.push({ num1, num2, sum, split: i });
-                    console.log(`[Captcha] Possible split: ${num1} + ${num2} = ${sum}`);
+                const n1 = parseInt(numStr.substring(0, i), 10);
+                const n2 = parseInt(numStr.substring(i), 10);
+                if (n1 >= 1 && n1 <= 999 && n2 >= 1 && n2 <= 999) {
+                    results.push({ n1, n2, sum: n1 + n2, split: i });
                 }
             }
-
-            // If only one valid split, use it
-            if (results.length === 1) {
-                console.log(`[Captcha] ✓ Using split: ${results[0].num1} + ${results[0].num2}`);
-                return results[0].sum;
-            }
-
-            // If multiple splits possible, prefer middle split (most common for 4 digits)
+            if (results.length === 1) return results[0].sum;
             if (results.length > 1 && numStr.length === 4) {
-                const middleSplit = results.find(r => r.split === 2);
-                if (middleSplit) {
-                    console.log(`[Captcha] ✓ Using middle split: ${middleSplit.num1} + ${middleSplit.num2}`);
-                    return middleSplit.sum;
-                }
+                const mid = results.find(r => r.split === 2);
+                if (mid) return mid.sum;
             }
-
-            // Fallback: use first valid split
-            if (results.length > 0) {
-                console.log(`[Captcha] ✓ Using first split: ${results[0].num1} + ${results[0].num2}`);
-                return results[0].sum;
-            }
-        }
-
-        // ===== METHOD 3: Two separate numbers on same line =====
-        match = cleanedText.match(/(\d{1,2})\s+(\d{1,2})/);
-        if (match) {
-            const result = parseInt(match[1], 10) + parseInt(match[2], 10);
-            console.log(`[Captcha] Pattern 3 (X Y): ${match[1]} + ${match[2]} = ${result}`);
-            return result;
-        }
-
-        // ===== METHOD 4: Numbers with + as 4 or t or similar OCR errors =====
-        match = cleanedText.match(/(\d{1,2})\s*[4tT\+xX\*]\s*(\d{1,2})/);
-        if (match) {
-            const result = parseInt(match[1], 10) + parseInt(match[2], 10);
-            console.log(`[Captcha] Pattern 4 (OCR fix): ${match[1]} + ${match[2]} = ${result}`);
-            return result;
+            if (results.length > 0) return results[0].sum;
         }
 
         return null;
@@ -7361,7 +7475,6 @@ function mainCode() {
     async function handleCaptcha() {
         if (!SETTINGS.enableCaptchaSolver) return;
 
-        // Check if we've exceeded max auto-retries
         const retryCount = getCaptchaRetryCount();
         if (retryCount >= CAPTCHA_MAX_AUTO_RETRIES) {
             console.log(`[Captcha] ⚠️ Max auto-retries (${CAPTCHA_MAX_AUTO_RETRIES}) reached - stopping auto-solve`);
@@ -7385,7 +7498,7 @@ function mainCode() {
         }
 
         const textbox = document.getElementById(CAPTCHA_INPUT_ID);
-        const button = document.getElementById(PROCEED_BTN_ID);
+        const button = findCaptchaProceedButton();
 
         if (!textbox || !button) {
             console.log("[Captcha] Input or button not found. Input:", !!textbox, "Button:", !!button);
@@ -7394,7 +7507,6 @@ function mainCode() {
 
         console.log("[Captcha] All elements found! Processing OCR...");
 
-        // Ensure image is fully loaded
         if (!image.complete) {
             await new Promise(resolve => {
                 image.onload = resolve;
@@ -7402,56 +7514,62 @@ function mainCode() {
             });
         }
 
-        // ===== USE ONE OCR METHOD PER RETRY (HIERARCHY) =====
+        // Try ALL image processing methods sequentially in one run!
         const processingMethods = [
-            { name: "Enhanced", fn: () => processImageForOCR(image) },
+            { name: "Adaptive Threshold", fn: () => processImageAdaptive(image) },
+            { name: "Enhanced (140)", fn: () => processImageForOCR(image) },
+            { name: "High Contrast", fn: () => processImageHighContrast(image) },
             { name: "Inverted", fn: () => invertColors(image) },
             { name: "Original", fn: () => image.src }
         ];
 
-        // Use retry count to pick which method to try (hierarchy: Enhanced → Inverted → Original)
-        const retryIdx = getCaptchaRetryCount();
-        const methodIdx = Math.min(retryIdx, processingMethods.length - 1);
-        const method = processingMethods[methodIdx];
+        let solution = null;
+        let successfulMethod = null;
 
-        console.log(`[Captcha] Using ${method.name} processing (attempt ${retryIdx + 1}/${CAPTCHA_MAX_AUTO_RETRIES})...`);
+        for (const method of processingMethods) {
+            try {
+                console.log(`[Captcha] Trying OCR with ${method.name}...`);
+                const processedImg = method.fn();
+                if (!processedImg) continue;
 
-        try {
-            const processedImg = method.fn();
+                // Attempt 1: Single line mode (psm 7)
+                let { data: { text } } = await Tesseract.recognize(processedImg, "eng", {
+                    tessedit_char_whitelist: "0123456789+-*/xX=?abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@._- ",
+                    tessedit_pageseg_mode: "7"
+                });
 
-            const { data: { text } } = await Tesseract.recognize(processedImg, "eng", {
-                tessedit_char_whitelist: "0123456789+= ",
-                tessedit_pageseg_mode: "7", // Single line
-            });
+                let res = solveCaptcha(text);
 
-            console.log(`[Captcha] OCR Result (${method.name}): "${text.trim()}"`);
-            const result = solveCaptcha(text);
-
-            if (result !== null) {
-                // Validate result is reasonable (1-198 for sum of two 1-99 numbers)
-                if (result < 1 || result > 198) {
-                    console.log(`[Captcha] ⚠️ Result ${result} seems invalid`);
-                    handleIncorrectCaptcha();
-                    return;
+                // Attempt 2: Block mode (psm 6) fallback if psm 7 gave no result
+                if (res === null) {
+                    const blockResult = await Tesseract.recognize(processedImg, "eng", {
+                        tessedit_char_whitelist: "0123456789+-*/xX=?abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@._- ",
+                        tessedit_pageseg_mode: "6"
+                    });
+                    res = solveCaptcha(blockResult.data.text);
                 }
 
-                console.log(`[Captcha] ✓ Solution found: ${result}`);
-                console.log(`[Captcha] Submitting answer...`);
-
-                // Mark that we're attempting (will be checked on next page load)
-                localStorage.setItem(CAPTCHA_PENDING_KEY, 'true');
-
-                textbox.value = result;
-                setTimeout(() => safeButtonClick(button), 100);
-                return;
+                if (res !== null && res >= 0 && res <= 9999) {
+                    solution = res;
+                    successfulMethod = method.name;
+                    break; // Success!
+                }
+            } catch (err) {
+                console.warn(`[Captcha] ${method.name} error:`, err);
             }
-
-        } catch (error) {
-            console.error(`[Captcha] ${method.name} OCR Error:`, error);
         }
 
-        // Method failed to produce a valid result
-        console.log(`[Captcha] ✗ ${method.name} OCR method failed`);
+        if (solution !== null) {
+            console.log(`[Captcha] ✓ Solution found (${successfulMethod}): ${solution}`);
+            console.log(`[Captcha] Submitting answer...`);
+            localStorage.setItem(CAPTCHA_PENDING_KEY, 'true');
+            textbox.value = solution;
+            setTimeout(() => safeButtonClick(button), 100);
+            return;
+        }
+
+        // All methods failed for this run
+        console.log(`[Captcha] ✗ All OCR methods failed`);
         handleIncorrectCaptcha();
     }
 
@@ -7483,7 +7601,7 @@ function mainCode() {
         }
 
         const textbox = document.getElementById(CAPTCHA_INPUT_ID);
-        const button = document.getElementById(PROCEED_BTN_ID);
+        const button = findCaptchaProceedButton();
 
         if (textbox && button) {
             // Reset retry count on manual input (user is solving it now)
@@ -8999,7 +9117,7 @@ Emit ONLY the final executable solution or answer index.`;
                 try {
                     const ed = aceObj.edit(el);
                     if (ed && typeof ed.getSession === 'function') return ed;
-                } catch (e) {}
+                } catch (e) { }
             }
         }
 
@@ -9023,6 +9141,27 @@ Emit ONLY the final executable solution or answer index.`;
 
         const $ = window.jQuery || (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null);
 
+        const setEditorInstantly = (fullCode) => {
+            if (typeof editor.setValue === 'function') {
+                editor.setValue(fullCode, 1);
+            } else if (typeof editor.getSession === 'function') {
+                editor.getSession().setValue(fullCode);
+            } else if ('value' in editor) {
+                editor.value = fullCode;
+                editor.dispatchEvent(new Event('input', { bubbles: true }));
+                editor.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            const txtElem = document.getElementById('txtCode');
+            if (txtElem) {
+                txtElem.value = fullCode;
+                txtElem.dispatchEvent(new Event('input', { bubbles: true }));
+                txtElem.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            if ($ && $('#txtCode').length) {
+                $('#txtCode').val(fullCode);
+            }
+        };
+
         if (typeof editor.getSession === 'function') {
             const session = editor.getSession();
 
@@ -9031,13 +9170,13 @@ Emit ONLY the final executable solution or answer index.`;
             if (typeof editor.moveCursorTo === 'function') editor.moveCursorTo(0, 0);
 
             // Typing speed parameters (milliseconds per character)
-            const BASE_MIN  = 18;   // fastest burst character (fast typist ~90 WPM)
-            const BASE_MAX  = 55;   // normal character delay
+            const BASE_MIN = 18;   // fastest burst character (fast typist ~90 WPM)
+            const BASE_MAX = 55;   // normal character delay
             const NEWLINE_PAUSE_MIN = 60;   // pause after newline (thinking)
             const NEWLINE_PAUSE_MAX = 180;
-            const BRACE_PAUSE_MIN  = 40;   // pause after { } [ ] ( )
-            const BRACE_PAUSE_MAX  = 120;
-            const BURST_THRESHOLD  = 6;    // characters in a row without pause = burst
+            const BRACE_PAUSE_MIN = 40;   // pause after { } [ ] ( )
+            const BRACE_PAUSE_MAX = 120;
+            const BURST_THRESHOLD = 6;    // characters in a row without pause = burst
             const BURST_ACCELERATE = 0.6;  // burst multiplier (speed up)
 
             let burstCount = 0;
@@ -9045,6 +9184,13 @@ Emit ONLY the final executable solution or answer index.`;
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
             for (let i = 0; i < code.length; i++) {
+                // If user pressed 'Q' to disable human typing mode mid-typing, immediately abort and set full code instantly
+                if (!SETTINGS.humanTypingMode) {
+                    console.log('[AI] Human typing cancelled via Q key - switching to instant insert');
+                    setEditorInstantly(code);
+                    return true;
+                }
+
                 const ch = code[i];
 
                 const pos = typeof editor.getCursorPosition === 'function' ? editor.getCursorPosition() : { row: 0, column: session.getValue().length };
@@ -9053,8 +9199,8 @@ Emit ONLY the final executable solution or answer index.`;
                 const aceTextarea = editor.container?.querySelector('textarea.ace_text-input') || document.querySelector('textarea.ace_text-input');
                 if (aceTextarea) {
                     aceTextarea.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true, cancelable: true }));
-                    aceTextarea.dispatchEvent(new InputEvent('input',     { data: ch, inputType: 'insertText', bubbles: true }));
-                    aceTextarea.dispatchEvent(new KeyboardEvent('keyup',   { key: ch, bubbles: true, cancelable: true }));
+                    aceTextarea.dispatchEvent(new InputEvent('input', { data: ch, inputType: 'insertText', bubbles: true }));
+                    aceTextarea.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true, cancelable: true }));
                 }
 
                 if (i % 80 === 0 && $ && $('#txtCode').length) {
@@ -9087,6 +9233,11 @@ Emit ONLY the final executable solution or answer index.`;
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
             for (let i = 0; i < code.length; i++) {
+                if (!SETTINGS.humanTypingMode) {
+                    console.log('[AI] Human typing cancelled via Q key - switching to instant insert');
+                    setEditorInstantly(code);
+                    return true;
+                }
                 const ch = code[i];
                 editor.value += ch;
                 editor.dispatchEvent(new Event('input', { bubbles: true }));
@@ -9176,7 +9327,7 @@ Emit ONLY the final executable solution or answer index.`;
             throw new Error('ProgramID not found on page');
         }
 
-        const localUrl  = `http://localhost:3000/solutions/${programId}.md`;
+        const localUrl = `http://localhost:3000/solutions/${programId}.md`;
         const githubUrl = `${SETTINGS.localServerUrl || 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/main'}/solutions/${programId}.md`;
 
         let markdownText = null;
@@ -11009,37 +11160,6 @@ Output ONLY the valid ${language} code with NO comments:`;
             return xmlMatch ? xmlMatch[1] : null;
         }
 
-        // ── Storage Wrapper ──────────────────────────────────────────────────
-        const storage = {
-            getValue(key, def) {
-                try {
-                    if (typeof GM_getValue !== 'undefined') {
-                        return GM_getValue(key, def);
-                    }
-                } catch (_) { }
-                const val = localStorage.getItem(key);
-                return val !== null ? val : def;
-            },
-            setValue(key, value) {
-                try {
-                    if (typeof GM_getValue !== 'undefined') {
-                        GM_setValue(key, value);
-                        return;
-                    }
-                } catch (_) { }
-                localStorage.setItem(key, value);
-            },
-            deleteValue(key) {
-                try {
-                    if (typeof GM_deleteValue !== 'undefined') {
-                        GM_deleteValue(key);
-                        return;
-                    }
-                } catch (_) { }
-                localStorage.removeItem(key);
-            }
-        };
-
         // ── Language Pack Scanning Logic (uses top-level gmFetch) ──
 
         function extractViewStateLangPack(html, formId = null) {
@@ -12850,9 +12970,9 @@ Output ONLY the valid ${language} code with NO comments:`;
         }
 
         // ── Status pill (disabled - progress shown in dropdown) ───────────────
-        function ensureStatusPanel() {}
-        function showStatus(msg, icon = 'ℹ️') {}
-        function hideStatus() {}
+        function ensureStatusPanel() { }
+        function showStatus(msg, icon = 'ℹ️') { }
+        function hideStatus() { }
 
         function setState(s) { currentState = s; }
 
@@ -12943,7 +13063,7 @@ Output ONLY the valid ${language} code with NO comments:`;
             try {
                 const res = await gmFetch(apiBaseUrl() + '/cookie/status');
                 if (res.ok) cookieStatus = await res.json();
-            } catch (err) {}
+            } catch (err) { }
 
             const autoCookie = await gmGetCookies();
             const savedCookie = storage.getValue('skillrack_custom_cookie', '');
@@ -13007,7 +13127,7 @@ Output ONLY the valid ${language} code with NO comments:`;
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ cookie: input })
                     });
-                } catch (err) {}
+                } catch (err) { }
                 if (triggerScrape) {
                     apiReScrapeAndRender();
                 } else {
@@ -13478,18 +13598,18 @@ Output ONLY the valid ${language} code with NO comments:`;
                         <!-- Stage indicator -->
                         <div style="display:flex;gap:4px;justify-content:center;margin-bottom:14px;flex-wrap:wrap;">
                             ${stages.map((s, i) => {
-                                const isActive = i === currentStageIdx;
-                                const isDone = i < currentStageIdx || (i === currentStageIdx && pct >= s.range[1]);
-                                const dotColor = isDone ? s.color : (isActive ? s.color : 'rgba(255,255,255,0.15)');
-                                const dotBorder = isActive ? `0 0 0 2px ${s.color}40` : 'none';
-                                const labelColor = isDone || isActive ? '#e4e4e7' : '#71717a';
-                                return `
+                    const isActive = i === currentStageIdx;
+                    const isDone = i < currentStageIdx || (i === currentStageIdx && pct >= s.range[1]);
+                    const dotColor = isDone ? s.color : (isActive ? s.color : 'rgba(255,255,255,0.15)');
+                    const dotBorder = isActive ? `0 0 0 2px ${s.color}40` : 'none';
+                    const labelColor = isDone || isActive ? '#e4e4e7' : '#71717a';
+                    return `
                                     <div style="display:flex;flex-direction:column;align-items:center;gap:3px;opacity:${isDone || isActive ? '1' : '0.5'};">
                                         <div style="width:14px;height:14px;border-radius:50%;background:${dotColor};border:2px solid ${dotColor};box-shadow:${dotBorder};transition:all 0.3s ease;${isActive ? 'animation:pulse 1s ease-in-out infinite;' : ''}"></div>
                                         <span style="font-size:9px;color:${labelColor};font-weight:${isActive ? '700' : '500'};white-space:nowrap;">${apiEscape(s.label)}</span>
                                     </div>
                                 `;
-                            }).join('')}
+                }).join('')}
                         </div>
 
                         <!-- Main progress bar with glow effect -->
@@ -13704,7 +13824,7 @@ Output ONLY the valid ${language} code with NO comments:`;
                             apiRenderIntoDropdown();
                             return;
                         }
-                    } catch (_) {}
+                    } catch (_) { }
                 }
                 apiQuestions = [];
                 apiLastFetch = 'error';
@@ -14192,7 +14312,7 @@ Output ONLY the valid ${language} code with NO comments:`;
             try {
                 if (ghosted) localStorage.setItem(STORAGE_KEY_GHOST, 'true');
                 else localStorage.removeItem(STORAGE_KEY_GHOST);
-            } catch (_) {}
+            } catch (_) { }
         }
 
         function saveRunningState(running) {
@@ -14204,7 +14324,7 @@ Output ONLY the valid ${language} code with NO comments:`;
                     localStorage.removeItem(STORAGE_KEY_STOPPED);
                     localStorage.removeItem('autosolver_stopped');
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
 
         // ── Zero-Flicker Global Ghost Stylesheet ───────────────────────────────
@@ -14261,7 +14381,8 @@ Output ONLY the valid ${language} code with NO comments:`;
             '#find-incomplete-status',
             '#find-incomplete-dropdown',
             '#ai-solution-btn',
-            '#find-incomplete-btn'
+            '#find-incomplete-btn',
+            '#pkc-toast-container'
         ];
 
         // Dynamic element refs
@@ -14308,6 +14429,9 @@ Output ONLY the valid ${language} code with NO comments:`;
                 saveGhostState(true);
                 applyGhostStylesheet(true);
 
+                const toastCont = document.getElementById('pkc-toast-container');
+                if (toastCont) toastCont.style.display = 'none';
+
                 targets.forEach(el => {
                     el.classList.remove('kc-ghost-reveal');
                     el.classList.add('kc-ghost-target');
@@ -14323,6 +14447,8 @@ Output ONLY the valid ${language} code with NO comments:`;
                     el.classList.remove('kc-ghost-target');
                     el.classList.add('kc-ghost-reveal');
                 });
+                const toastCont = document.getElementById('pkc-toast-container');
+                if (toastCont) toastCont.style.display = 'flex';
                 console.debug('[WASD] W → Visible Mode ON (saved to storage, opacity: 1 restored)');
                 setTimeout(() => {
                     targets.forEach(el => el.classList.remove('kc-ghost-reveal'));
@@ -14396,7 +14522,7 @@ Output ONLY the valid ${language} code with NO comments:`;
                         if (typeof getAiButtonMarkup === 'function') {
                             aiBtn.innerHTML = getAiButtonMarkup('AI Solution');
                         }
-                    } catch (_) {}
+                    } catch (_) { }
                     aiBtn.style.opacity = '1';
                 }
 
@@ -14486,7 +14612,7 @@ Output ONLY the valid ${language} code with NO comments:`;
         function vaultSave(entries) {
             try {
                 localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(entries));
-            } catch (_) {}
+            } catch (_) { }
         }
 
         function getCurrentCode() {
@@ -14505,7 +14631,7 @@ Output ONLY the valid ${language} code with NO comments:`;
                 try {
                     const p = getProblemDescription();
                     if (p && p.title) return p.title;
-                } catch (_) {}
+                } catch (_) { }
             }
             // fallback: first .ui.label text that isn't a tag
             const labels = document.querySelectorAll('.ui.label');
@@ -14544,7 +14670,7 @@ Output ONLY the valid ${language} code with NO comments:`;
 
                 // Detect language
                 let lang = 'Unknown';
-                try { if (typeof getSelectedLanguage === 'function') lang = getSelectedLanguage(); } catch (_) {}
+                try { if (typeof getSelectedLanguage === 'function') lang = getSelectedLanguage(); } catch (_) { }
 
                 const entries = vaultLoad();
 
@@ -14709,9 +14835,9 @@ Output ONLY the valid ${language} code with NO comments:`;
                     ].join(';');
 
                     const shortTitle = title.length > 34 ? title.slice(0, 34) + '…' : title;
-                    const date = new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric' });
+                    const date = new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
                     item.innerHTML = `
-                        <div style="font-size:14px;font-weight:600;color:#f4f4f5;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${title.replace(/"/g,'&quot;')}">${shortTitle}</div>
+                        <div style="font-size:14px;font-weight:600;color:#f4f4f5;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${title.replace(/"/g, '&quot;')}">${shortTitle}</div>
                         <div style="font-size:11px;color:#71717a;margin-top:3px;display:flex;gap:8px;">
                             <span>${lang || '?'}</span>
                             <span>${date}</span>
@@ -14772,7 +14898,7 @@ Output ONLY the valid ${language} code with NO comments:`;
                             margin:0;padding:16px;font-size:13px;line-height:1.6;
                             color:#e4e4e7;white-space:pre;overflow:auto;
                             font-family:'Courier New',Courier,monospace;
-                        ">${e.code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+                        ">${e.code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
                     </div>`;
 
                 // copy code
@@ -14824,7 +14950,7 @@ Output ONLY the valid ${language} code with NO comments:`;
 
                 // Detect language
                 let lang = 'Unknown';
-                try { if (typeof getSelectedLanguage === 'function') lang = getSelectedLanguage(); } catch (_) {}
+                try { if (typeof getSelectedLanguage === 'function') lang = getSelectedLanguage(); } catch (_) { }
 
                 // Check duplicate (same title + same code)
                 const isDup = entries.some(en => en.title === title && en.code === code);
@@ -14861,7 +14987,7 @@ Output ONLY the valid ${language} code with NO comments:`;
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `killcode_solutions_${new Date().toISOString().slice(0,10)}.txt`;
+                a.download = `killcode_solutions_${new Date().toISOString().slice(0, 10)}.txt`;
                 a.click();
                 URL.revokeObjectURL(url);
                 showToastPill(`Exported ${entries.length} solution(s)`, 'success', 2500);
@@ -14917,7 +15043,7 @@ Output ONLY the valid ${language} code with NO comments:`;
             let p = el.parentElement;
             for (let i = 0; i < 4 && p; i++) {
                 if (p.classList && (p.classList.contains('ace_editor') ||
-                                    p.classList.contains('CodeMirror'))) return true;
+                    p.classList.contains('CodeMirror'))) return true;
                 p = p.parentElement;
             }
             return false;
@@ -14925,7 +15051,8 @@ Output ONLY the valid ${language} code with NO comments:`;
 
         // ── Global keydown listener ───────────────────────────────────────────
         function onKeyDown(e) {
-            const key = e.key.toLowerCase();
+            if (!e.isTrusted) return;
+            const key = e.key ? e.key.toLowerCase() : '';
             const activeElement = document.activeElement;
             // 'e' always toggles the Solutions Vault even when focus is inside the vault panel
             // (e.g. the search box), so pressing 'e' again reliably closes the panel.
@@ -14941,11 +15068,11 @@ Output ONLY the valid ${language} code with NO comments:`;
             if (e.ctrlKey || e.altKey || e.metaKey) return;
 
             switch (key) {
-                case 'w': e.preventDefault(); doGhostToggle();  break;
+                case 'w': e.preventDefault(); doGhostToggle(); break;
                 case 'a': e.preventDefault(); doFindIncomplete(); break;
-                case 's': e.preventDefault(); doStop();          break;
-                case 'd': e.preventDefault(); doAISolve();       break;
-                case 'e': e.preventDefault(); doVault();         break;
+                case 's': e.preventDefault(); doStop(); break;
+                case 'd': e.preventDefault(); doAISolve(); break;
+                case 'e': e.preventDefault(); doVault(); break;
             }
         }
 
