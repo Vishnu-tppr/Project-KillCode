@@ -14534,6 +14534,9 @@ Output ONLY the valid ${language} code with NO comments:`;
                     #ai-solution-btn,
                     #find-incomplete-btn,
                     #auto-solver-stop,
+                    #kc-vault-panel,
+                    #pkc-toast-container,
+                    #killcode-autosolver-hud,
                     div[id^="auto-solver"],
                     button[title="Bypass Settings"] {
                         opacity: 0 !important;
@@ -14572,7 +14575,13 @@ Output ONLY the valid ${language} code with NO comments:`;
             '#find-incomplete-status',
             '#find-incomplete-dropdown',
             '#ai-solution-btn',
-            '#find-incomplete-btn'
+            '#find-incomplete-btn',
+            '#auto-solver-stop',
+            '#auto-solver-status',
+            '#killcode-autosolver-hud',
+            '#kc-vault-panel',
+            '#pkc-toast-container',
+            "#hud-drag-handle"
         ];
 
         // Dynamic element refs
@@ -14817,6 +14826,12 @@ Output ONLY the valid ${language} code with NO comments:`;
                 window.__kcStopped = false;
                 saveRunningState(true);
 
+                // Clear stale automation flags — a previous STOP may have left
+                // __kcAbortTyping true, which would kill the next insertCodeIntoEditor
+                // before it even starts (D-key "Failed to insert code").
+                window.__kcAbortTyping = false;
+                window.__kcPauseTyping = false;
+
                 // Resume AutoSolver
                 try {
                     if (typeof AutoSolver !== 'undefined' && typeof AutoSolver.resume === 'function') {
@@ -14842,6 +14857,9 @@ Output ONLY the valid ${language} code with NO comments:`;
 
         // ── D — Trigger AI Solution ───────────────────────────────────────────
         function doAISolve() {
+            // A D-press is an explicit "solve now" intent — clear any stale abort
+            // flag left by a prior S-stop so insertion isn't killed pre-emptively.
+            window.__kcAbortTyping = false;
             try {
                 if (typeof generateAISolution === 'function') {
                     generateAISolution();
