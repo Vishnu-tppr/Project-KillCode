@@ -1356,6 +1356,28 @@ function mainCode() {
             return s.accessToken;
         }
 
+        // Force a token refresh regardless of expiry (used on HTTP 401 recovery)
+        async function forceRefresh() {
+            const s = getSession();
+            if (!s?.refreshToken) return null;
+            try {
+                const newTokens = await refreshTokens(s.refreshToken);
+                const newSession = {
+                    ...s,
+                    accessToken: newTokens.access_token,
+                    refreshToken: newTokens.refresh_token || s.refreshToken,
+                    expiresAt: newTokens.expires_in
+                        ? new Date(Date.now() + newTokens.expires_in * 1000).toISOString()
+                        : undefined
+                };
+                setSession(newSession);
+                return newSession.accessToken;
+            } catch (e) {
+                console.warn('[OAuthLogin] Forced refresh failed:', e);
+                return null;
+            }
+        }
+
         // ---- encode the state for the Chrome extension ----
         function createExtensionState(callbackUrl) {
             const payload = {
@@ -1507,6 +1529,7 @@ function mainCode() {
             isExtensionInstalled,
             getSession,
             getAccessToken,
+            forceRefresh,
             initiateLogin,
             handleCallbackIfPresent,
             logout,
@@ -1697,7 +1720,10 @@ function mainCode() {
             }
 
             const session = OAuthLogin.getSession();
-            if (session && session.accessToken) {
+            // getAccessToken() auto-refreshes near-expiry tokens; raw
+            // session.accessToken may already be expired -> HTTP 401.
+            let accessToken = await OAuthLogin.getAccessToken();
+            if (session && accessToken) {
                 // ── DIRECT BROWSER CALL FIRST ──
                 try {
                     const clientVersion = "0.144.1";
@@ -1705,7 +1731,7 @@ function mainCode() {
                         method: 'GET',
                         headers: {
                             'Accept': 'application/json',
-                            'Authorization': `Bearer ${session.accessToken}`,
+                            'Authorization': `Bearer ${accessToken}`,
                             'chatgpt-account-id': session.accountId || ''
                         }
                     });
@@ -1889,8 +1915,11 @@ function mainCode() {
 
             if (isChatGPTMode()) {
                 const session = OAuthLogin.getSession();
+                // getAccessToken() refreshes near-expiry tokens; raw session.accessToken
+                // can be stale and cause HTTP 401 on the direct Codex call.
+                let accessToken = await OAuthLogin.getAccessToken();
                 let directErrorMsg = 'Not signed in or session invalid.';
-                if (session && session.accessToken) {
+                if (session && accessToken) {
                     // Helper to extract text from Codex SSE stream
                     const parseSseText = (sseText) => {
                         let fullText = '';
@@ -1948,20 +1977,20 @@ function mainCode() {
                         include: ["reasoning.encrypted_content"]
                     };
 
-                    const directHeaders = {
+                    const makeHeaders = (tok) => ({
                         'Content-Type': 'application/json',
                         'Accept': 'text/event-stream',
-                        'Authorization': `Bearer ${session.accessToken}`,
+                        'Authorization': `Bearer ${tok}`,
                         'chatgpt-account-id': session.accountId || '',
                         'Origin': 'https://chatgpt.com',
                         'Referer': 'https://chatgpt.com/'
-                    };
+                    });
 
-                    // ── DIRECT BROWSER CALL FIRST ──
-                    try {
+                    // ── DIRECT BROWSER CALL FIRST (with 401 retry after forced token refresh) ──
+                    const directAttempt = async (tok) => {
                         const directResp = await gmFetch('https://chatgpt.com/backend-api/codex/responses', {
                             method: 'POST',
-                            headers: directHeaders,
+                            headers: makeHeaders(tok),
                             body: JSON.stringify(codexPayload)
                         });
 
@@ -1972,22 +2001,43 @@ function mainCode() {
                                 return fullText;
                             }
                             throw new Error('OpenAI returned an empty response stream.');
-                        } else {
-                            let detail = '';
-                            try {
-                                const errText = await directResp.text();
-                                try {
-                                    const parsed = JSON.parse(errText);
-                                    detail = parsed?.detail || parsed?.message || parsed?.error?.message || errText;
-                                } catch {
-                                    detail = errText;
-                                }
-                            } catch { }
-                            throw new Error(`Server returned HTTP ${directResp.status}${detail ? ': ' + detail : ''}`);
                         }
+                        let detail = '';
+                        try {
+                            const errText = await directResp.text();
+                            try {
+                                const parsed = JSON.parse(errText);
+                                detail = parsed?.detail || parsed?.message || parsed?.error?.message || errText;
+                            } catch {
+                                detail = errText;
+                            }
+                        } catch { }
+                        throw new Error(`Server returned HTTP ${directResp.status}${detail ? ': ' + detail : ''}`);
+                    };
+
+                    try {
+                        return await directAttempt(accessToken);
                     } catch (e) {
-                        directErrorMsg = e.message || String(e);
-                        console.warn('[openai-oauth] Direct responses call threw error:', e);
+                        // HTTP 401 -> token invalid even after proactive refresh.
+                        // Force one refresh (bypassing expiry check) and retry once.
+                        if (/HTTP 401/.test(e.message || '') && session.refreshToken) {
+                            console.warn('[openai-oauth] Got 401 - forcing token refresh and retrying...');
+                            const forced = await OAuthLogin.forceRefresh();
+                            if (forced) {
+                                accessToken = forced;
+                                try {
+                                    return await directAttempt(accessToken);
+                                } catch (e2) {
+                                    directErrorMsg = e2.message || String(e2);
+                                    console.warn('[openai-oauth] Direct responses call threw error (after retry):', e2);
+                                }
+                            } else {
+                                directErrorMsg = e.message || String(e);
+                            }
+                        } else {
+                            directErrorMsg = e.message || String(e);
+                            console.warn('[openai-oauth] Direct responses call threw error:', e);
+                        }
                     }
                 }
 
@@ -6088,6 +6138,23 @@ function mainCode() {
         // KEYBOARD EVENT INTERCEPTION (for Ctrl+V in ACE)
         // ============================================
 
+        // True only while SkillRack's blocking 'bte' command still owns the
+        // dispatch hash for the clipboard keys. SkillRack can define bte so it
+        // survives byName deletion (non-configurable), so check the actual
+        // dispatch surface — commandKeyBinding — not byName. After
+        // bypassAceEditor reassigns those keys, fall through and let Ace's
+        // native copy/paste/cut/undo handle the key (that path also keeps
+        // PrimeFaces' hidden-field sync intact).
+        const aceHijacked = (editor) => {
+            try {
+                const kb = editor && editor.commands && editor.commands.commandKeyBinding;
+                if (!kb) return false;
+                const hit = kb['ctrl-v'] || kb['ctrl-c'] || kb['ctrl-x'] || kb['ctrl-z'];
+                const arr = Array.isArray(hit) ? hit : [hit];
+                return arr.some(x => x && x.name === 'bte');
+            } catch (e) { return false; }
+        };
+
         // Intercept keydown at the highest priority to ensure Ctrl+V works
         window.addEventListener('keydown', function (e) {
             // Handle Ctrl+V / Cmd+V
@@ -6095,7 +6162,7 @@ function mainCode() {
                 const activeEl = document.activeElement;
                 const aceContainer = activeEl?.closest('.ace_editor');
 
-                if (aceContainer && aceContainer.env?.editor) {
+                if (aceContainer && aceContainer.env?.editor && aceHijacked(aceContainer.env.editor)) {
                     e.stopImmediatePropagation();
                     // Don't preventDefault - allow the native paste event to fire
 
@@ -6131,7 +6198,7 @@ function mainCode() {
                 const activeEl = document.activeElement;
                 const aceContainer = activeEl?.closest('.ace_editor');
 
-                if (aceContainer && aceContainer.env?.editor) {
+                if (aceContainer && aceContainer.env?.editor && aceHijacked(aceContainer.env.editor)) {
                     e.stopImmediatePropagation();
 
                     const editor = aceContainer.env.editor;
@@ -6148,7 +6215,7 @@ function mainCode() {
                 const activeEl = document.activeElement;
                 const aceContainer = activeEl?.closest('.ace_editor');
 
-                if (aceContainer && aceContainer.env?.editor) {
+                if (aceContainer && aceContainer.env?.editor && aceHijacked(aceContainer.env.editor)) {
                     e.stopImmediatePropagation();
 
                     const editor = aceContainer.env.editor;
@@ -6166,7 +6233,7 @@ function mainCode() {
                 const activeEl = document.activeElement;
                 const aceContainer = activeEl?.closest('.ace_editor');
 
-                if (aceContainer && aceContainer.env?.editor) {
+                if (aceContainer && aceContainer.env?.editor && aceHijacked(aceContainer.env.editor)) {
                     e.stopImmediatePropagation();
                     aceContainer.env.editor.undo();
                 }
@@ -6322,6 +6389,10 @@ function mainCode() {
     // ========== KEYBOARD SHORTCUT: Press 'Q' to toggle Human Typing Speed Mode ==========
     window.addEventListener('keydown', (e) => {
         if (e.key && e.key.toLowerCase() === 'q') {
+            if (e.repeat) return; // no re-toggle on key-hold
+            // Never switch typing mode mid-insertion — would change behavior
+            // between pause and resume of an in-flight human-typing run.
+            if (window.__kcTyping) return;
             const active = document.activeElement;
             const tag = (active?.tagName || '').toUpperCase();
             const isEditable = active?.isContentEditable ||
@@ -6554,6 +6625,36 @@ function mainCode() {
                     } catch (e) { }
                 });
 
+                // SkillRack binds one 'bte' command to EVERY clipboard shortcut
+                // (bindKey: "ctrl-c|ctrl-v|ctrl-x|ctrl-z|ctrl-shift-v|shift-del|cmd-c|cmd-v|cmd-x|...")
+                // removeCommand() deletes it from byName, but Ace's dispatch hash
+                // (commandKeyBinding) still points at 'bte' under the LOWERCASE keys
+                // ("ctrl-c", "ctrl-v", ...), so copy/paste/cut/undo keep hitting the
+                // no-op. bindKey() alone does NOT fix this (it re-keys with the
+                // command's original capitalized bindKey string, e.g. "Ctrl-C", which
+                // Ace never matches). Directly assign the native command objects onto
+                // the lowercase hash keys instead.
+                try {
+                    const kb = editor.commands.commandKeyBinding;
+                    const cp = editor.commands.byName;
+                    if (kb && cp) {
+                        const rebind = {
+                            'ctrl-c': 'copy', 'cmd-c': 'copy',
+                            'ctrl-x': 'cut', 'cmd-x': 'cut',
+                            'ctrl-v': 'paste', 'cmd-v': 'paste',
+                            'ctrl-shift-v': 'paste',
+                            'ctrl-z': 'undo',
+                            'shift-delete': 'cut_or_delete'
+                        };
+                        Object.keys(rebind).forEach(key => {
+                            const cmd = cp[rebind[key]];
+                            if (cmd) { kb[key] = cmd; }
+                        });
+                    }
+                } catch (e) {
+                    console.warn('Clipboard key hash repair failed:', e);
+                }
+
                 // Also remove any command with empty exec that binds to clipboard keys
                 if (editor.commands.commands) {
                     Object.keys(editor.commands.commands).forEach(cmdName => {
@@ -6612,10 +6713,24 @@ function mainCode() {
                 editor.session.setValue = function (text, cursorPos) {
                     const currentValue = originalGetValue();
 
-                    // If current value is substantial and new value is much shorter, block it
-                    // This catches the anti-paste reset
+                    // The script's own writes set session._kcIntent to the (possibly
+                    // empty) string it intends to write immediately before calling
+                    // setValue, then clear it on match. This lets our own clear-and-retype
+                    // and shorter-retry replacements through WITHOUT trusting the long-lived
+                    // global __kcTyping flag — which also stays true while SkillRack's own
+                    // anti-paste change-handler fires mid-typing and would otherwise smuggle
+                    // a template-restore past the length guard.
+                    const intent = this._kcIntent;
+                    if (intent != null && text === intent) {
+                        this._kcIntent = null;
+                        return originalSetValue(text, cursorPos);
+                    }
+
+                    // Any other write goes through the length guard — including SkillRack
+                    // template restores (default boilerplate, with/without the username
+                    // watermark) and empty-buffer clears: all much shorter than a real solution.
                     if (currentValue.length > 10 && text.length < currentValue.length - 10) {
-                        console.log('Blocked setValue reset attempt');
+                        console.log('[KillCode] Blocked setValue reset attempt');
                         return;
                     }
 
@@ -7422,6 +7537,32 @@ function mainCode() {
     }
 
     // ===== IMPROVED: Multiple OCR attempts with different processing =====
+    // Ensure Tesseract is available. @require loads it into the sandbox, but if
+    // the CDN failed (jsDelivr is intermittently blocked in some regions), load
+    // it dynamically from unpkg into the page and read it back via unsafeWindow.
+    function ensureTesseract() {
+        if (typeof Tesseract !== 'undefined') return Promise.resolve(Tesseract);
+        if (typeof unsafeWindow !== 'undefined' && unsafeWindow.Tesseract) {
+            return Promise.resolve(unsafeWindow.Tesseract);
+        }
+        return new Promise((resolve) => {
+            console.warn('[Captcha] Tesseract missing - loading fallback from unpkg...');
+            const s = document.createElement('script');
+            s.src = 'https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js';
+            s.onload = () => {
+                const T = (typeof unsafeWindow !== 'undefined' && unsafeWindow.Tesseract) || window.Tesseract;
+                if (T) console.log('[Captcha] Fallback Tesseract loaded');
+                else console.error('[Captcha] Fallback loaded but Tesseract still missing');
+                resolve(T || null);
+            };
+            s.onerror = () => {
+                console.error('[Captcha] Could not load Tesseract (CDN blocked?) - auto-solve disabled');
+                resolve(null);
+            };
+            (document.head || document.documentElement).appendChild(s);
+        });
+    }
+
     async function handleCaptcha() {
         if (!SETTINGS.enableCaptchaSolver) return;
 
@@ -7433,7 +7574,8 @@ function mainCode() {
             return;
         }
 
-        if (typeof Tesseract === 'undefined') {
+        const T = await ensureTesseract();
+        if (!T) {
             console.log('[Captcha] Tesseract not loaded, skipping');
             return;
         }
@@ -7483,7 +7625,7 @@ function mainCode() {
         try {
             const processedImg = method.fn();
 
-            const { data: { text } } = await Tesseract.recognize(processedImg, "eng", {
+            const { data: { text } } = await T.recognize(processedImg, "eng", {
                 tessedit_char_whitelist: "0123456789+=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@._- ",
                 tessedit_pageseg_mode: "7", // Single line
             });
@@ -8298,6 +8440,8 @@ SECTION 1: OUTPUT FORMAT PROTOCOLS (STRICT NON-NEGOTIABLE)
 1. FULL CODE / FUNCTION PROBLEMS (C, C++, Java, Python, etc.):
    - Output ONLY the clean, executable source code inside a SINGLE markdown code block (\`\`\`c, \`\`\`cpp, \`\`\`java, \`\`\`python).
    - ABSOLUTELY ZERO COMMENTS (no //, no /* */, no #, no --).
+   - The emitted program MUST end with a single trailing newline after the final closing brace (the judge compares output line-by-line).
+   - Output formatting: when using a loop to emit N lines, print the newline AFTER EVERY line — including the LAST — so there is a trailing newline. NEVER gate the newline with \`if (i < n)\`, \`if (i <= n - 1)\`, or similar (SkillRack's judge treats the missing final newline as a wrong answer).
    - ZERO conversational preamble, explanation, reasoning, or postscript.
 
 2. MULTIPLE CHOICE QUESTIONS (MCQ):
@@ -8358,6 +8502,8 @@ Before sending the final answer, silently run:
 6. Is the I/O stream handling correct for all lines (mixed numeric+string)? ✓
 7. Are UNIX reserved words \`head\`/\`tail\` only as \`lhead\`/\`ltail\`? ✓
 8. Does the code compile cleanly and print EXACTLY the format the sample shows? ✓
+9. Are all C/C++ keywords lowercase (int, if, else, return...) and NOT capitalized (NO Int, If, Else, Return)? ✓
+10. When outputting N lines in a loop, is there a trailing newline after the LAST line (never guarded by \`if (i < n)\`)? ✓
 
 Emit ONLY the final executable solution or answer index.`;
     const generateWithGemini = async (prompt, systemInstruction = '') => {
@@ -8823,6 +8969,24 @@ Emit ONLY the final executable solution or answer index.`;
         const langLower = String(language || '').toLowerCase().trim();
         if (langLower === 'sql') return code;
 
+        // Some weaker models emit capitalized C keywords (Int, If, Else, Return...)
+        // which fail compilation. Normalize them to lowercase while walking outside
+        // string/char literals (same walker as the UNIX-keyword fix below).
+        // C-family ONLY — Java/other langs have legit TitleCase identifiers (e.g. `class Main`).
+        const isCFamily = langLower === 'c' || langLower === 'c++' || langLower === 'cpp' || langLower.startsWith('ds-c');
+        const KW_CASE_NORM = {
+            Int: 'int', If: 'if', Else: 'else', Return: 'return', For: 'for',
+            While: 'while', Void: 'void', Char: 'char', Long: 'long',
+            Double: 'double', Float: 'float', Short: 'short', Struct: 'struct',
+            Typedef: 'typedef', Unsigned: 'unsigned', Signed: 'signed',
+            Const: 'const', Static: 'static', Switch: 'switch', Case: 'case',
+            Break: 'break', Continue: 'continue', Do: 'do', Sizeof: 'sizeof',
+            Enum: 'enum', Union: 'union', Extern: 'extern', Register: 'register',
+            Volatile: 'volatile', Main: 'main', Printf: 'printf', Scanf: 'scanf',
+            Putchar: 'putchar', Puts: 'puts', Gets: 'gets', Include: 'include',
+            Define: 'define', Bool: 'bool', Auto: 'auto', Inline: 'inline'
+        };
+
         let result = '';
         let i = 0;
         const len = code.length;
@@ -8863,7 +9027,7 @@ Emit ONLY the final executable solution or answer index.`;
                 } else if (word === 'tail') {
                     result += 'ltail';
                 } else {
-                    result += word;
+                    result += (isCFamily && KW_CASE_NORM[word] !== undefined) ? KW_CASE_NORM[word] : word;
                 }
                 continue;
             }
@@ -9012,6 +9176,14 @@ Emit ONLY the final executable solution or answer index.`;
         // 11. SkillRack UNIX keyword sanitizer (replace forbidden identifiers: head -> lhead, tail -> ltail)
         code = sanitizeSkillRackReservedWords(code, language);
 
+        // 12. C-family programs MUST end with exactly one trailing newline.
+        //     Every .trim() above strips it, and the SkillRack judge compares output
+        //     line-by-line — a missing final \n can fail otherwise-correct programs
+        //     (e.g. pattern printers that emit \n only between lines).
+        if (langLower === 'c' || langLower === 'c++' || langLower === 'cpp' || langLower.startsWith('ds-c')) {
+            code = code.replace(/\s*$/, '\n');
+        }
+
         return code;
     };
 
@@ -9067,14 +9239,30 @@ Emit ONLY the final executable solution or answer index.`;
             }
         }
 
-        // 3. Check for .ace_editor DOM element env property
+        // 3. Real Ace editor element — env.editor is set by Ace on every .ace_editor
+        //    div (works even when there is NO global window.ace, e.g. Daily Challenge).
+        //    MUST win over the hidden submit textarea: insertCodeIntoEditor syncs the
+        //    hidden .ui-inputtextarea itself after writing the Ace session, so treating
+        //    the textarea as "the editor" here leaves the visible Ace untouched and the
+        //    judge compiles the stale template ("Code did not pass").
         const aceEl = document.getElementById('txtCode') || document.querySelector('.ace_editor');
-        if (aceEl && aceEl.env && aceEl.env.editor) {
-            return aceEl.env.editor;
+        if (aceEl) {
+            if (aceEl.env && aceEl.env.editor && typeof aceEl.env.editor.getSession === 'function') {
+                return aceEl.env.editor;
+            }
+            const aceObj = window.ace || (typeof unsafeWindow !== 'undefined' ? unsafeWindow.ace : null);
+            if (aceObj && typeof aceObj.edit === 'function') {
+                try {
+                    const ed = aceObj.edit(aceEl);
+                    if (ed && typeof ed.getSession === 'function') return ed;
+                } catch (e) { }
+            }
         }
 
-        // 4. Return textarea element if present
-        const ta = document.getElementById('txtCode') || document.querySelector('textarea.ace_text-input') || document.querySelector('textarea');
+        // 4. Textarea element only as last resort (no Ace editor on page at all).
+        const ta = document.getElementById('txtCode')
+            || document.querySelector('textarea.ui-inputtextarea')
+            || document.querySelector('textarea:not(.ace_text-input)');
         if (ta) return ta;
 
         return null;
@@ -9091,6 +9279,7 @@ Emit ONLY the final executable solution or answer index.`;
             const session = editor.getSession();
 
             // Clear editor first
+            session._kcIntent = '';
             session.setValue('');
             if (typeof editor.moveCursorTo === 'function') editor.moveCursorTo(0, 0);
 
@@ -9107,8 +9296,22 @@ Emit ONLY the final executable solution or answer index.`;
             let burstCount = 0;
             const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+            // Pause support — S toggles pause mid-typing; resume continues from
+            // the exact character where it stopped (never restarts).
+            const waitWhilePaused = async () => {
+                while (window.__kcPauseTyping && !window.__kcAbortTyping) {
+                    await sleep(120);
+                }
+            };
 
             for (let i = 0; i < code.length; i++) {
+                // Abort check — a full stop (doStop) halts insertion immediately
+                if (window.__kcAbortTyping) {
+                    console.debug('[AI] Human typing aborted via stop');
+                    return false;
+                }
+                await waitWhilePaused();
+                if (window.__kcAbortTyping) return false; // aborted while paused
                 const ch = code[i];
 
                 const pos = typeof editor.getCursorPosition === 'function' ? editor.getCursorPosition() : { row: 0, column: session.getValue().length };
@@ -9116,9 +9319,11 @@ Emit ONLY the final executable solution or answer index.`;
 
                 const aceTextarea = editor.container?.querySelector('textarea.ace_text-input') || document.querySelector('textarea.ace_text-input');
                 if (aceTextarea) {
-                    aceTextarea.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true, cancelable: true }));
+                    // bubbles:false — must NOT reach the document-level hotkey listener
+                    // (a synthetic 'e' keydown bubbling up would open the Solutions Vault)
+                    aceTextarea.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: false, cancelable: true }));
                     aceTextarea.dispatchEvent(new InputEvent('input', { data: ch, inputType: 'insertText', bubbles: true }));
-                    aceTextarea.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true, cancelable: true }));
+                    aceTextarea.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: false, cancelable: true }));
                 }
 
                 if (i % 80 === 0 && $ && $('#txtCode').length) {
@@ -9151,6 +9356,14 @@ Emit ONLY the final executable solution or answer index.`;
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
             for (let i = 0; i < code.length; i++) {
+                if (window.__kcAbortTyping) {
+                    console.debug('[AI] Human typing aborted via stop');
+                    return false;
+                }
+                while (window.__kcPauseTyping && !window.__kcAbortTyping) {
+                    await sleep(120);
+                }
+                if (window.__kcAbortTyping) return false; // aborted while paused
                 const ch = code[i];
                 editor.value += ch;
                 editor.dispatchEvent(new Event('input', { bubbles: true }));
@@ -9165,47 +9378,113 @@ Emit ONLY the final executable solution or answer index.`;
 
     const insertCodeIntoEditor = async (code) => {
         if (!code) return false;
+        // Respect a just-issued stop: a queued insert must not begin typing
+        // (and must not wipe the abort flag it is about to observe).
+        if (window.__kcAbortTyping) return false;
         const editor = getEditor();
 
+        // Flag active during insertion so the global hotkey listener and the
+        // vault auto-save observer ignore events we generate ourselves.
+        window.__kcTyping = true;
+        window.__kcPauseTyping = false;
+        window.__kcAbortTyping = false;
+        // Run token: a stale release-timeout from a previous insert must never
+        // clear flags belonging to this (newer) run — rapid consecutive inserts.
+        const runId = (window.__kcRunId = (window.__kcRunId || 0) + 1);
         let inserted = false;
 
-        if (SETTINGS.humanTypingMode && editor) {
-            try {
-                inserted = await typeCodeNaturally(code);
-            } catch (e) {
-                console.warn('[AI] typeCodeNaturally failed, falling back to instant set:', e);
-            }
-        }
-
-        if (!inserted) {
-            if (editor) {
-                if (typeof editor.setValue === 'function') {
-                    editor.setValue(code, 1);
-                    inserted = true;
-                } else if (typeof editor.getSession === 'function') {
-                    editor.getSession().setValue(code);
-                    inserted = true;
-                } else if ('value' in editor) {
-                    editor.value = code;
-                    editor.dispatchEvent(new Event('input', { bubbles: true }));
-                    editor.dispatchEvent(new Event('change', { bubbles: true }));
-                    inserted = true;
+        try {
+            if (SETTINGS.humanTypingMode && editor) {
+                try {
+                    inserted = await typeCodeNaturally(code);
+                } catch (e) {
+                    console.warn('[AI] typeCodeNaturally failed, falling back to instant set:', e);
                 }
             }
 
-            // Sync hidden textarea #txtCode
-            const $ = window.jQuery || (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null);
-            const txtElem = document.getElementById('txtCode');
-            if (txtElem) {
-                txtElem.value = code;
-                txtElem.dispatchEvent(new Event('input', { bubbles: true }));
-                txtElem.dispatchEvent(new Event('change', { bubbles: true }));
-                inserted = true;
+            // Aborted via S (stop) — do NOT fall back to instant insert
+            if (window.__kcAbortTyping) {
+                return false;
             }
-            if ($ && $('#txtCode').length) {
-                $('#txtCode').val(code);
-                inserted = true;
+
+            // #txtCode sync happens AFTER the fallback branch below — see the
+            // else-branch there for the human-typing success path.
+
+            if (!inserted) {
+                if (editor) {
+                    if (typeof editor.setValue === 'function') {
+                        // Stamp the intent token so the real Ace session accepts the
+                        // replacement even when it is shorter than the template (retries).
+                        const sess = editor.getSession ? editor.getSession() : editor.session;
+                        if (sess) sess._kcIntent = code;
+                        editor.setValue(code, 1);
+                        inserted = true;
+                    } else if (typeof editor.getSession === 'function') {
+                        const sess = editor.getSession();
+                        sess._kcIntent = code;
+                        sess.setValue(code);
+                        inserted = true;
+                    } else if ('value' in editor) {
+                        editor.value = code;
+                        editor.dispatchEvent(new Event('input', { bubbles: true }));
+                        editor.dispatchEvent(new Event('change', { bubbles: true }));
+                        inserted = true;
+                    }
+                }
+
+                // Fallback-path sync of submit field (no Ace found — plain textarea page)
+                const $ = window.jQuery || (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null);
+                const txtEl = document.getElementById('txtCode')
+                    || document.querySelector('textarea.ui-inputtextarea');
+                if (txtEl) {
+                    txtEl.value = code;
+                    txtEl.dispatchEvent(new Event('input', { bubbles: true }));
+                    txtEl.dispatchEvent(new Event('change', { bubbles: true }));
+                    inserted = true;
+                }
+                if ($) {
+                    const $ta = $('#txtCode').length ? $('#txtCode') : $('textarea.ui-inputtextarea');
+                    if ($ta.length) {
+                        $ta.val(code);
+                        inserted = true;
+                    }
+                }
+            } else {
+                // Sync hidden textarea #txtCode — the field SkillRack's form actually
+                // submits. MUST run on EVERY successful insert (including human-typing
+                // path); it previously lived only in the !inserted fallback, so the
+                // judge received empty code while the Ace editor looked correct.
+                const finalCode = editor && typeof editor.getSession === 'function'
+                    ? editor.getSession().getValue()
+                    : code;
+                const $ = window.jQuery || (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null);
+                // #txtCode exists on problem pages; Daily Challenge has no #txtCode — the
+                // form submits a hidden PrimeFaces textarea (.ui-inputtextarea, random id).
+                const txtEl = document.getElementById('txtCode')
+                    || document.querySelector('textarea.ui-inputtextarea');
+                if (txtEl) {
+                    txtEl.value = finalCode;
+                    txtEl.dispatchEvent(new Event('input', { bubbles: true }));
+                    txtEl.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                if ($) {
+                    const $ta = $('#txtCode').length ? $('#txtCode') : $('textarea.ui-inputtextarea');
+                    if ($ta.length) $ta.val(finalCode);
+                }
+                console.debug('[AI] Synced submit field for judge (' + finalCode.length + ' chars)');
             }
+        } finally {
+            // Release flags after editor settles (small delay so trailing
+            // synthetic events don't leak into listeners after insertion).
+            // Token-guarded: only the newest run may release its own flags.
+            const myRun = runId;
+            setTimeout(() => {
+                if (window.__kcRunId === myRun) {
+                    window.__kcTyping = false;
+                    window.__kcPauseTyping = false;
+                    window.__kcAbortTyping = false;
+                }
+            }, 250);
         }
 
         return inserted;
@@ -9731,8 +10010,7 @@ Output ONLY the valid ${language} code with NO comments:`;
                 if (code) {
                     const inserted = await insertCodeIntoEditor(code);
                     if (inserted) {
-                        console.log(errorInfo.hasError ? 'AI fix applied successfully' : 'AI solution inserted successfully');
-                        showToastPill(errorInfo.hasError ? 'AI Fix Applied!' : 'AI Solution Inserted!', 'success', 2500);
+                        // Silent success — no toast, no console output
                     } else {
                         console.warn('[AI] Could not find suitable editor element to insert code.');
                         showToastPill('Failed to insert code into editor. Please check editor.', 'error', 3000);
@@ -14340,6 +14618,7 @@ Output ONLY the valid ${language} code with NO comments:`;
                 state.ghosted = true;
                 saveGhostState(true);
                 applyGhostStylesheet(true);
+                removeHelpPanel(); // help panel must vanish with everything else
 
                 targets.forEach(el => {
                     el.classList.remove('kc-ghost-reveal');
@@ -14363,6 +14642,80 @@ Output ONLY the valid ${language} code with NO comments:`;
             }
 
             setTimeout(() => { state.transitioning = false; }, TRANSITION_MS + 20);
+        }
+
+        // ── H — Hotkey Help Overlay ───────────────────────────────────────────
+        const HOTKEY_HELP_ITEMS = [
+            ['Q', 'Human Typing Speed Mode ON / OFF (natural WPM typing vs instant insert)'],
+            ['W', 'Ghost Mode — hide / show the script UI (stays clickable)'],
+            ['A', 'Find incomplete / unsolved questions'],
+            ['S', 'Stop all automation — press again to re-arm (during typing: pause/resume)'],
+            ['D', 'Trigger AI Solution generation'],
+            ['E', 'Toggle Solutions Vault'],
+            ['H', 'Show / hide this help panel'],
+            ['Esc', 'Close Find Incomplete, Settings, Vault & Help panels']
+        ];
+
+        let _helpPanel = null;
+
+        function removeHelpPanel() {
+            if (_helpPanel) {
+                _helpPanel.remove();
+                _helpPanel = null;
+            }
+        }
+
+        function doHelpToggle() {
+            if (_helpPanel && document.contains(_helpPanel)) {
+                removeHelpPanel();
+                console.debug('[WASD] H → Help panel hidden');
+                return;
+            }
+            removeHelpPanel();
+
+            const panel = document.createElement('div');
+            panel.id = 'kc-help-panel';
+            panel.innerHTML = `
+                <div style="font-weight:700;font-size:14px;margin-bottom:10px;letter-spacing:.4px;">⌨️ KillCode Hotkeys</div>
+                ${HOTKEY_HELP_ITEMS.map(([k, desc]) => `
+                    <div style="display:flex;align-items:center;gap:10px;margin:6px 0;">
+                        <kbd style="min-width:34px;text-align:center;padding:3px 8px;border-radius:6px;background:#2d2d3a;border:1px solid #4a4a5e;border-bottom-width:2px;color:#7ee787;font-family:monospace;font-size:12px;font-weight:700;">${k}</kbd>
+                        <span style="color:#d0d0dc;font-size:12px;">${desc}</span>
+                    </div>`).join('')}
+                <div style="margin-top:10px;padding-top:8px;border-top:1px solid #3a3a4a;color:#8888a0;font-size:11px;">Press H or Esc to close · WASD work while this is open</div>
+            `;
+            Object.assign(panel.style, {
+                position: 'fixed',
+                left: '24px',
+                bottom: '24px',
+                zIndex: '2147483646',
+                background: 'rgba(20,20,30,0.96)',
+                border: '1px solid #4a4a5e',
+                borderRadius: '12px',
+                padding: '14px 18px',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.55)',
+                fontFamily: 'system-ui, sans-serif',
+                maxWidth: '420px',
+                backdropFilter: 'blur(8px)'
+            });
+            document.body.appendChild(panel);
+            _helpPanel = panel;
+            console.debug('[WASD] H → Help panel shown');
+        }
+
+        // ── Esc — Close / minimize panels ─────────────────────────────────────
+        function doEscapeClose() {
+            removeHelpPanel();
+            try {
+                const vault = document.getElementById('kc-vault-panel');
+                if (vault && vault.style.display !== 'none' && vault.offsetParent !== null) {
+                    doVault();
+                }
+            } catch (_) { }
+            ['find-incomplete-dropdown', 'bypass-settings-panel'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = 'none';
+            });
         }
 
         // ── A — Find Incomplete / Unsolved Questions ──────────────────────────
@@ -14400,6 +14753,10 @@ Output ONLY the valid ${language} code with NO comments:`;
                 state.running = false;
                 window.__kcStopped = true;
                 saveRunningState(false);
+
+                // Kill any in-flight human typing immediately
+                window.__kcAbortTyping = true;
+                window.__kcPauseTyping = false;
 
                 // 1. Stop AutoSolver
                 try {
@@ -14958,8 +15315,36 @@ Output ONLY the valid ${language} code with NO comments:`;
 
         // ── Global keydown listener ───────────────────────────────────────────
         function onKeyDown(e) {
+            // Ignore synthetic (untrusted) keyboard events — our own typing simulator
+            // and AI insertion dispatch fake 'e' keydowns; they must never trigger hotkeys.
+            if (!e.isTrusted) return;
+            if (e.repeat) return; // key-hold auto-repeat must not re-toggle hotkeys
             const key = e.key.toLowerCase();
+
+            // While human-typing is in progress, S toggles pause/resume — typing
+            // continues exactly where it stopped. Other hotkeys stay suppressed.
+            if (window.__kcTyping) {
+                if (key === 's' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                    e.preventDefault();
+                    if (window.__kcPauseTyping) {
+                        window.__kcPauseTyping = false;
+                        showToastPill('▶ Typing resumed — continuing where it stopped', 'success', 2200);
+                        console.debug('[WASD] S → typing resumed');
+                    } else {
+                        window.__kcPauseTyping = true;
+                        showToastPill('⏸ Typing paused — press S again to resume', 'info', 2200);
+                        console.debug('[WASD] S → typing paused');
+                    }
+                }
+                return;
+            }
+            // NOTE: __kcAbortTyping is intentionally NOT cleared here. It resets
+            // only at the start of a new insert (insertCodeIntoEditor), so a
+            // keydown can never un-abort a stopped insert.
             const activeElement = document.activeElement;
+            // No shortcut keys inside Ace/CodeMirror/inputs — they are all real
+            // characters there. Hotkeys work only outside editable fields.
+            if (isTypingTarget(activeElement)) return;
             // 'e' always toggles the Solutions Vault even when focus is inside the vault panel
             // (e.g. the search box), so pressing 'e' again reliably closes the panel.
             const inVaultPanel = activeElement && activeElement.closest && activeElement.closest('#kc-vault-panel');
@@ -14968,9 +15353,6 @@ Output ONLY the valid ${language} code with NO comments:`;
                 doVault();
                 return;
             }
-            const aceTarget = activeElement?.closest?.('.ace_editor') ||
-                activeElement?.classList?.contains('ace_text-input');
-            if (isTypingTarget(activeElement) && !(aceTarget && (key === 'w' || key === 's'))) return;
             if (e.ctrlKey || e.altKey || e.metaKey) return;
 
             switch (key) {
@@ -14979,6 +15361,8 @@ Output ONLY the valid ${language} code with NO comments:`;
                 case 's': e.preventDefault(); doStop(); break;
                 case 'd': e.preventDefault(); doAISolve(); break;
                 case 'e': e.preventDefault(); doVault(); break;
+                case 'h': e.preventDefault(); doHelpToggle(); break;
+                case 'escape': e.preventDefault(); doEscapeClose(); break;
             }
         }
 
@@ -15032,6 +15416,9 @@ Output ONLY the valid ${language} code with NO comments:`;
 
             const checkForSuccess = () => {
                 try {
+                    // Do not auto-save while AI generation or code insertion is active
+                    if (isAiGenerationInProgress || (typeof window !== 'undefined' && window.__kcTyping)) return;
+
                     // Check error panel FIRST to avoid "9 Passed 3 Failed" matching "passed"
                     const errText = ((document.getElementById('errormsg')?.innerText || '') + ' ' + (document.getElementById('errormsg_content')?.innerText || '')).toLowerCase();
                     if (errText.includes('private') || errText.includes('hidden') ||
@@ -15043,7 +15430,7 @@ Output ONLY the valid ${language} code with NO comments:`;
 
                     // Check success message panel
                     const successEl = document.getElementById('successmsg');
-                    if (successEl) {
+                    if (successEl && (successEl.offsetParent !== null || successEl.offsetHeight > 0)) {
                         const text = (successEl.innerText || '').toLowerCase();
                         if ((text.includes('passed') || text.includes('success') || text.includes('correct')) &&
                             !text.includes('fail') && !text.includes('wrong') && !text.includes('error')) {
@@ -15078,14 +15465,29 @@ Output ONLY the valid ${language} code with NO comments:`;
                 }
             };
 
-            // Observe DOM changes for success messages
-            const observer = new MutationObserver(() => {
-                checkForSuccess();
-            });
-            observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+            // Observe ONLY SkillRack's own success/error nodes — never document.body
+            // (body-wide observation picked up our own toast pills and caused an
+            // auto-save → toast → auto-save feedback loop) and no periodic polling.
+            const targetIds = ['successmsg', 'msg_growl_container'];
+            const observed = new Set();
 
-            // Also check periodically as a fallback
-            setInterval(checkForSuccess, 3000);
+            const attachObserver = () => {
+                targetIds.forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el && !observed.has(id)) {
+                        observed.add(id);
+                        observer.observe(el, { childList: true, subtree: true, characterData: true });
+                    }
+                });
+            };
+
+            attachObserver();
+            // SkillRack panels can be (re)created after navigation — retry briefly
+            const retry = setInterval(() => {
+                attachObserver();
+                if (observed.size === targetIds.length) clearInterval(retry);
+            }, 2000);
+            setTimeout(() => clearInterval(retry), 60000);
         }
 
         // ── Init ──────────────────────────────────────────────────────────────
