@@ -7,6 +7,12 @@ node_modules/
 check_syntax.py
 fast_check.py
 line_check.py
+audit_braces.py
+brace_audit.py
+check_all_zeros.py
+depth_check.py
+run_node_check.py
+verify_node.py
 icon_b64.txt
 icon_small_b64.txt
 bump_font_size.py
@@ -21,6 +27,12 @@ level1_context.md
 *.log
 __pycache__/
 *.pyc
+.pytest_cache/
+
+# Chrome extension build artifacts (bun run build / build:dev / pack)
+chrome-extension/dist/
+chrome-extension/dist-dev/
+chrome-extension/dist-pack/
 
 # OS & Editor noise
 .DS_Store

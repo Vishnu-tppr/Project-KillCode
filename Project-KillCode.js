@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      5.1a
 // @description  Bypass tab switching, copy/paste restrictions, full-screen enforcement, auto-solve captcha, and AI-powered solution generator
-// @author       ToonTamilIndia (Captcha solver by adithyagenie)
+// @author       ToonTamilIndia & Vishnu-tppr (Captcha solver by adithyagenie)
 // @match        https://*.skillrack.com/*
 // @match        https://skillrack.com/*
 // @require      https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js
@@ -165,7 +165,13 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
     }
 
     // Listen for requests from the webpage context
+    // SECURITY: Only accept messages from same-origin pages to prevent malicious scripts from triggering privileged requests
     window.addEventListener('message', async (event) => {
+        // Validate origin to prevent CSRF-like attacks
+        if (event.origin !== window.location.origin) {
+            console.warn('[KillCode] Blocked postMessage from unauthorized origin:', event.origin);
+            return;
+        }
         if (event.data && event.data.type === 'GM_XHR_REQUEST') {
             const { id, options } = event.data;
             const reqTimeout = options.timeout || 180000;
@@ -221,12 +227,12 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
         }
     });
 
-    // Inject the main code into the webpage context
-    const script = document.createElement('script');
-    script.textContent = `(${mainCode.toString()})();`;
-    (document.head || document.documentElement).appendChild(script);
-    script.remove();
 }
+
+const script = document.createElement('script');
+script.textContent = `(${mainCode.toString()})();`;
+(document.head || document.documentElement).appendChild(script);
+script.remove();
 
 function mainCode() {
     'use strict';
@@ -242,6 +248,8 @@ function mainCode() {
             }, timeoutMs + 1000);
 
             const handleMessage = (event) => {
+                // Validate origin to prevent spoofed responses
+                if (event.origin !== window.location.origin) return;
                 if (event.data && event.data.type === 'GM_XHR_RESPONSE' && event.data.id === requestId) {
                     clearTimeout(timeoutId);
                     window.removeEventListener('message', handleMessage);
@@ -319,6 +327,8 @@ function mainCode() {
             }, 1500);
 
             const handleMessage = (event) => {
+                // Validate origin to prevent spoofed responses
+                if (event.origin !== window.location.origin) return;
                 if (event.data && event.data.type === 'GM_GET_COOKIES_RESPONSE' && event.data.id === requestId) {
                     clearTimeout(timer);
                     window.removeEventListener('message', handleMessage);
@@ -384,19 +394,23 @@ function mainCode() {
             });
             clearTimeout(timeoutId);
             if (!response.ok) {
-                localStorage.removeItem(SCRIPT_DISABLED_KEY);
-                return true;
+                console.warn('[KillCode] Kill-switch check failed (HTTP', response.status, ') - respecting cached state');
+                // FAIL-SAFE: Respect the cached disabled state; if no cache, assume enabled
+                return cachedDisabled !== 'true';
             }
             const text = (await response.text()).trim().toLowerCase();
             if (text === 'false' || text === 'disabled' || text === 'kill' || text === '0') {
                 localStorage.setItem(SCRIPT_DISABLED_KEY, 'true');
+                console.log('[KillCode] Kill-switch activated - script disabled');
                 return false;
             }
             localStorage.removeItem(SCRIPT_DISABLED_KEY);
             return true;
         } catch (e) {
-            localStorage.removeItem(SCRIPT_DISABLED_KEY);
-            return true;
+            console.warn('[KillCode] Kill-switch check error:', e.message, '- respecting cached state');
+            // FAIL-SAFE: Network errors should not override cached disabled state
+            // If previously marked disabled, stay disabled; otherwise assume enabled
+            return cachedDisabled !== 'true';
         }
     };
 
@@ -902,11 +916,20 @@ function mainCode() {
         return { ...DEFAULT_SETTINGS };
     };
 
-    const saveSettings = (settings) => {
+    const saveSettings = (settings = SETTINGS) => {
         try {
+            if (!settings || typeof settings !== 'object') {
+                console.warn('[Settings] Invalid settings object provided, using current SETTINGS');
+                settings = SETTINGS;
+            }
             localStorage.setItem('skillrack_bypass_settings', JSON.stringify(settings));
+            console.debug('[Settings] Saved successfully');
         } catch (e) {
-            console.log('Failed to save settings:', e);
+            console.error('[Settings] Failed to save settings:', e.message);
+            // Attempt to store in memory fallback if localStorage is full
+            if (e.name === 'QuotaExceededError') {
+                console.warn('[Settings] localStorage quota exceeded - settings saved in current session only');
+            }
         }
     };
 
@@ -6266,9 +6289,9 @@ function mainCode() {
         if (e.key && e.key.toLowerCase() === 'q') {
             const active = document.activeElement;
             const tag = (active?.tagName || '').toUpperCase();
-            const isEditable = active?.isContentEditable || 
-                               tag === 'INPUT' || 
-                               tag === 'TEXTAREA' || 
+            const isEditable = active?.isContentEditable ||
+                               tag === 'INPUT' ||
+                               tag === 'TEXTAREA' ||
                                active?.classList?.contains('ace_text-input');
 
             // If user is NOT actively typing in an input field, toggle Human Typing Speed Mode
@@ -6810,8 +6833,6 @@ function mainCode() {
         };
     } // End of SETTINGS.blockTelemetry
 
-    } // End of SETTINGS.blockTelemetry
-
     // 6. SILENT SESSION KEEP-ALIVE (PREVENT SESSION EXPIRATION)
     // Sends a background HEAD request every 2.5 minutes to refresh session cookies.
     // Prevents backend session timeout while leaving proctoring system blind.
@@ -6959,6 +6980,8 @@ function mainCode() {
         maxRetries: 12,
         observerTimeout: 8000
     };
+    let captchaRunInProgress = false;
+    let captchaPageObserver = null;
 
     // Find captcha image dynamically
     function findCaptchaImage() {
@@ -7432,6 +7455,16 @@ function mainCode() {
         handleIncorrectCaptcha();
     }
 
+    async function runCaptchaSolver() {
+        if (captchaRunInProgress) return;
+        captchaRunInProgress = true;
+        try {
+            await handleCaptcha();
+        } finally {
+            captchaRunInProgress = false;
+        }
+    }
+
 
     function handleIncorrectCaptcha() {
         if (!SETTINGS.enableCaptchaSolver) return;
@@ -7579,15 +7612,28 @@ function mainCode() {
             return;
         }
 
-        handleCaptcha();
+        runCaptchaSolver();
     }
 
     // Initialize captcha solver only if script is enabled
     onScriptEnabled(() => {
+        const startCaptchaSolver = () => {
+            initCaptchaSolver();
+
+            if (captchaPageObserver || !document.body) return;
+            captchaPageObserver = new MutationObserver(() => {
+                const textbox = document.getElementById(CAPTCHA_INPUT_ID);
+                if (hasCaptchaElements() && textbox && !textbox.value) {
+                    runCaptchaSolver();
+                }
+            });
+            captchaPageObserver.observe(document.body, { childList: true, subtree: true });
+        };
+
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initCaptchaSolver);
+            document.addEventListener('DOMContentLoaded', startCaptchaSolver, { once: true });
         } else {
-            setTimeout(initCaptchaSolver, 100);
+            setTimeout(startCaptchaSolver, 100);
         }
 
         window.addEventListener("load", function () {
@@ -7611,7 +7657,7 @@ function mainCode() {
                 const textbox = document.getElementById(CAPTCHA_INPUT_ID);
                 if (img && textbox && !textbox.value) {
                     console.log('[Captcha] Backup initialization triggered');
-                    handleCaptcha();
+                    runCaptchaSolver();
                 }
             }, 500);
         });
@@ -8179,25 +8225,22 @@ function mainCode() {
     // ==============================================================
     // GRANDMASTER COMPETITIVE PROGRAMMING SYSTEM PROMPTS
     // ==============================================================
-    const GRANDMASTER_SYSTEM_PROMPT = `You are a Principal Staff Software Engineer, Tech Lead, and IOI/ICPC World Finalist Grandmaster solving competitive programming challenges on the SkillRack platform.
+    const GRANDMASTER_SYSTEM_PROMPT = `You are an Elite Principal Software Engineer, a Top-Tier Competitive Programmer, and a Technical Architect with deep pathological hidden-test-case intuition. You write flawless, bulletproof, production-grade code that passes EVERY hidden test case on the SkillRack automated judge on the FIRST submission. You think like a compiler, an adversary, and a mathematician all at once.
 
-Your code is directly fed into an automated judge system. Zero conversational preamble, zero concluding explanations, and zero comments are allowed. Accuracy and optimal asymptotic performance are mandatory.
+Your code is directly fed into an automated judge system. Zero preambles, zero concluding explanations, zero comments, zero scaffolding text. Only the exact, complete, runnable program. Maximum correctness and optimal asymptotic performance are non-negotiable.
 
-================================================================================
 SECTION 1: OUTPUT FORMAT PROTOCOLS (STRICT NON-NEGOTIABLE)
-================================================================================
 
 1. FULL CODE / FUNCTION PROBLEMS (C, C++, Java, Python, etc.):
    - Output ONLY the clean, executable source code inside a SINGLE markdown code block (\`\`\`c, \`\`\`cpp, \`\`\`java, \`\`\`python).
    - ABSOLUTELY ZERO COMMENTS (no //, no /* */, no #, no --).
    - ZERO conversational preamble, explanation, reasoning, or postscript.
 
-2. MULTIPLE CHOICE QUESTIONS (MCQ Assessment):
-   - When presented with a Multiple Choice Question and numbered options (0, 1, 2, 3...):
+2. MULTIPLE CHOICE QUESTIONS (MCQ):
    - Output ONLY the 0-based index number of the single correct answer.
    - Example: Output \`1\` if Option 1 is correct. No fences, no explanations.
 
-3. FILL-IN-THE-BLANKS (MFIB) PROBLEMS:
+3. FILL-IN-THE-BLANKS (MFIB):
    - Output ONLY the exact missing tokens for [BLANK_0], [BLANK_1], etc., one per line in order.
    - Do NOT wrap in markdown fences or include explanations.
 
@@ -8205,54 +8248,54 @@ SECTION 1: OUTPUT FORMAT PROTOCOLS (STRICT NON-NEGOTIABLE)
    - Output the complete query as a SINGLE CONTINUOUS LINE without newlines.
    - Do NOT wrap in markdown code fences.
 
-================================================================================
 SECTION 2: PROFESSIONAL ENGINEERING & PERFORMANCE PROTOCOLS
-================================================================================
 
 1. 64-BIT INTEGER OVERFLOW IMMUNITY:
    - Default to 64-bit integers (\`long long\` in C/C++, \`long\` in Java) for all counters, sums, products, array indices, prefix sums, and coordinate arithmetic.
-   - For products: ALWAYS write \`(1LL * a * b)\` or \`((long long)a * b)\` to prevent 32-bit truncation before assignment.
+   - For products: ALWAYS use \`(1LL * a * b)\` or \`((long long)a * b)\` to prevent 32-bit truncation before assignment.
    - Modulo arithmetic: Always use \`((a % M) + M) % M\` to handle negative remainders cleanly.
 
-2. ASYMPTOTIC COMPLEXITY & TLE IMMUNITY:
+2. ASYMPTOTIC COMPLEXITY & TIME LIMIT IMMUNITY:
    - If N <= 10^5: Complexity MUST be O(N) or O(N log N). Never use O(N^2) loops for N > 2000.
-   - C++ Fast I/O:
-     std::ios_base::sync_with_stdio(false);
-     std::cin.tie(NULL);
-   - Python Fast I/O: Use \`sys.stdin.read().split()\` to tokenize all input in one O(1) pass. Set \`sys.setrecursionlimit(300000)\` for deep recursion.
-   - C Buffer Hygiene: Allocate large arrays (>= 10^5) globally or dynamically (\`malloc\`/\`calloc\`) to avoid stack overflow.
+   - Select the exactly right algorithm: prefix sums / sliding window / two pointers / monotonic deque / hash map / binary search / DSU / BST / Dijkstra / BFS / DFS / topological sort / DP with memoization or tabulation etc.
+   - Do not allocate trailing unused space: arrays sized precisely to N, or N+1 if 1-based.
 
-3. I/O STREAM & BUFFER HYGIENE:
-   - C: Use \`scanf(" %c", &ch)\` or \`scanf(" %[^\r\n]", str)\` with a leading space to skip unread whitespace. Never use \`gets()\`.
-   - C++: Use \`std::cin >> std::ws\` before \`std::getline(cin, str)\`.
-   - Java: Class name MUST be \`Hello\`. Call \`sc.nextLine()\` after numeric reads before reading strings.
+SECTION 3: I/O STREAM & BUFFER HYGIENE
 
-4. FORBIDDEN UNIX KEYWORDS:
-   - SkillRack judge strictly bans UNIX keywords: NEVER use \`head\` or \`tail\` as variable, pointer, parameter, struct member, or function names.
-   - Use \`lhead\` and \`ltail\` instead (e.g., \`Node* lhead\`, \`Node* ltail\`).
+1. C: \`scanf(" %c", &ch)\` or \`scanf(" %[^\r\n]", str)\` with a leading space to skip whitespace. Never use \`gets()\`. Large arrays: declare globally or via \`malloc\`/\`calloc\`.
+2. C++: Use \`std::ios_base::sync_with_stdio(false);\` and \`std::cin.tie(nullptr);\`. Use \`cin >> ws\` before \`std::getline(cin, str)\`.
+3. Java: Class name MUST be \`Hello\`. Call \`sc.nextLine()\` after numeric reads before reading strings; use \`BufferedReader\` if needed.
+4. Python: Use \`sys.stdin.read().split()\` in one pass; set \`sys.setrecursionlimit(300000)\` for deep recursion.
 
-5. ALGORITHMIC STRATEGY SELECTION:
-   - Subarray sum: Kadane's algorithm O(N).
-   - Range sum queries: Prefix sum array O(1).
-   - Sliding window min/max: Monotonic queue O(N).
-   - Frequency counting / lookup: HashMap / Hash Table O(N).
-   - Shortest path: BFS (unweighted) or Dijkstra (weighted).
-   - Disconnected components / Cycle detection: Union-Find (Disjoint Set Union) or DFS/BFS.
+SECTION 4: FORBIDDEN UNIX KEYWORDS
 
-================================================================================
-SECTION 3: MANDATORY PRE-EMISSION CHECKLIST
-================================================================================
+- SkillRack judge strictly bans UNIX keywords: NEVER use \`head\` or \`tail\` as a variable, pointer, parameter, struct member, or function name.
+- Use \`lhead\` and \`ltail\` instead (e.g., \`Node* lhead\`, \`Node* ltail\`).
 
-Before producing the output, silently confirm:
-1. Is all code free of comments (no //, /* */, #)?
-2. Is there zero conversational text before or after the code block?
-3. Are all 64-bit integer calculations cast correctly (\`1LL * a * b\`)?
-4. Does the algorithm fit within the time complexity limits for N <= 10^5?
-5. Are UNIX forbidden keywords (\`head\`, \`tail\`) replaced with \`lhead\`, \`ltail\`?
+SECTION 5: EDGE-CASE HUNTER'S MINDSET (MANDATORY)
+- N = 0, N = 1, single-element, all-equal, all-negative, all-zero, max-constraint inputs, empty string, single-char string, whitespace-only line.
+- Reverse-sorted / sorted / nearly-sorted input.
+- Overflow on sum, product, count, fibonacci, factorial, combinations, prefix array.
+- 0-based vs 1-based indexing + off-by-one boundaries in binary search, loop end conditions, and array access.
+- Negative numbers and modulo of negatives.
+- Ties and tie-breaking order in sorting / min / max / ranking.
+- Multiple query overlapping intervals vs non-overlapping.
+- Newline consumption between numeric and string reads in every language.
+- Decimal precision and trailing-zero formatting.
+- Creating extra spaces or blank lines on output, leading/trailing zeros.
+
+SECTION 6: MANDATORY PRE-EMISSION CHECKLIST (VERIFY BEFORE EMIT)
+Before sending the final answer, silently run:
+1. Is the output ONLY the code or answer index, zero surrounding text? ✓
+2. Zero comments survived (no //, no /* */, no #, no --)? ✓
+3. Are all 64-bit multiplications/sums cast with \`1LL *\` or using \`long\` / \`long long\`? ✓
+4. Does the algorithm meet O(N) or O(N log N) for N <= 100000? ✓
+5. Are all array bounds safe, especially for N = max_constraint? ✓
+6. Is the I/O stream handling correct for all lines (mixed numeric+string)? ✓
+7. Are UNIX reserved words \`head\`/\`tail\` only as \`lhead\`/\`ltail\`? ✓
+8. Does the code compile cleanly and print EXACTLY the format the sample shows? ✓
 
 Emit ONLY the final executable solution or answer index.`;
-
-
     const generateWithGemini = async (prompt, systemInstruction = '') => {
         const apiKey = SETTINGS.geminiApiKey;
         if (!apiKey) {
@@ -8988,7 +9031,7 @@ Emit ONLY the final executable solution or answer index.`;
             if (typeof editor.moveCursorTo === 'function') editor.moveCursorTo(0, 0);
 
             // Typing speed parameters (milliseconds per character)
-            const BASE_MIN  = 18;   // fastest burst character (fast typist ~90 WPM)  
+            const BASE_MIN  = 18;   // fastest burst character (fast typist ~90 WPM)
             const BASE_MAX  = 55;   // normal character delay
             const NEWLINE_PAUSE_MIN = 60;   // pause after newline (thinking)
             const NEWLINE_PAUSE_MAX = 180;
@@ -10545,6 +10588,16 @@ Output ONLY the valid ${language} code with NO comments:`;
                 if (result === 'success') {
                     clearInjectedRetryContext();
                     updateStatus('PASSED ✓', 'success');
+
+                    // ── Auto-save correct solution to vault ──
+                    try {
+                        if (typeof WASDBridge !== 'undefined' && typeof WASDBridge.vaultAutoSave === 'function') {
+                            WASDBridge.vaultAutoSave();
+                        }
+                    } catch (e) {
+                        console.debug('[AutoSolver] vaultAutoSave error (non-fatal):', e);
+                    }
+
                     await sleep(CONFIG.delayBeforeNext);
                     checkStop();
 
@@ -14059,7 +14112,7 @@ Output ONLY the valid ${language} code with NO comments:`;
             // Auto-minimize Find Incomplete dropdown on outside click/touch (collapses into compact pill badge)
             document.addEventListener('click', (e) => {
                 if (!dropdown || dropdown.style.display === 'none' || dropdown.style.opacity === '0') return;
-                
+
                 // If click is inside dropdown or on trigger button or on HUD pill, do not minimize
                 if (dropdown.contains(e.target) || (e.composedPath && e.composedPath().includes(dropdown))) return;
                 if (e.target.id === 'find-incomplete-btn' || e.target.closest('#find-incomplete-btn')) return;
@@ -14161,7 +14214,7 @@ Output ONLY the valid ${language} code with NO comments:`;
                 if (!tag) {
                     tag = document.createElement('style');
                     tag.id = 'kc-ghost-active-style';
-                    document.head.appendChild(tag);
+                    (document.head || document.documentElement).appendChild(tag);
                 }
                 tag.textContent = `
                     #bypass-settings-panel,
@@ -14199,7 +14252,7 @@ Output ONLY the valid ${language} code with NO comments:`;
                     transition: opacity ${TRANSITION_MS}ms ease !important;
                 }
             `;
-            document.head.appendChild(style);
+            (document.head || document.documentElement).appendChild(style);
         }
 
         // ── Ghost target selectors ────────────────────────────────────────────
@@ -14420,7 +14473,436 @@ Output ONLY the valid ${language} code with NO comments:`;
         }
 
 
-        // ── Input guard ───────────────────────────────────────────────────────
+        // ── E — Solutions Vault (Save & Share correct solutions) ──────────────
+        const VAULT_STORAGE_KEY = 'killcode_solutions_vault';
+
+        function vaultLoad() {
+            try {
+                const raw = localStorage.getItem(VAULT_STORAGE_KEY);
+                return raw ? JSON.parse(raw) : [];
+            } catch (_) { return []; }
+        }
+
+        function vaultSave(entries) {
+            try {
+                localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(entries));
+            } catch (_) {}
+        }
+
+        function getCurrentCode() {
+            if (typeof getEditor === 'function') {
+                const ed = getEditor();
+                if (ed && typeof ed.getSession === 'function') return ed.getSession().getValue();
+                if (ed && 'value' in ed) return ed.value;
+            }
+            const ta = document.getElementById('txtCode');
+            if (ta) return ta.value;
+            return '';
+        }
+
+        function getCurrentProblemTitle() {
+            if (typeof getProblemDescription === 'function') {
+                try {
+                    const p = getProblemDescription();
+                    if (p && p.title) return p.title;
+                } catch (_) {}
+            }
+            // fallback: first .ui.label text that isn't a tag
+            const labels = document.querySelectorAll('.ui.label');
+            for (const l of labels) {
+                const t = l.textContent.trim();
+                if (t && !l.classList.contains('ribbon') && !l.classList.contains('circular')
+                    && !t.includes('Max Execution') && !t.includes('ProgramID')) {
+                    return t;
+                }
+            }
+            return document.title || 'Unknown Problem';
+        }
+
+        function formatVaultEntryAsText(entry) {
+            const sep = '─'.repeat(60);
+            return [
+                `📌 ${entry.title}`,
+                `🔗 ${entry.url}`,
+                `🕐 ${new Date(entry.ts).toLocaleString()}`,
+                sep,
+                entry.code,
+                sep
+            ].join('\n');
+        }
+
+        // ── Auto-save current code to vault (used on successful submission) ──
+        function vaultAutoSave() {
+            try {
+                const code = getCurrentCode().trim();
+                const title = getCurrentProblemTitle().trim();
+
+                if (!code) {
+                    console.debug('[Vault] No code in editor to auto-save');
+                    return false;
+                }
+
+                // Detect language
+                let lang = 'Unknown';
+                try { if (typeof getSelectedLanguage === 'function') lang = getSelectedLanguage(); } catch (_) {}
+
+                const entries = vaultLoad();
+
+                // Check duplicate (same title + same code)
+                const isDup = entries.some(en => en.title === title && en.code === code);
+                if (isDup) {
+                    console.debug('[Vault] Already saved (identical code + title) — skipping auto-save');
+                    return false;
+                }
+
+                const entry = {
+                    id: Date.now() + Math.random().toString(36).slice(2),
+                    title,
+                    lang,
+                    url: window.location.href,
+                    code,
+                    ts: Date.now()
+                };
+
+                entries.unshift(entry);  // newest first
+                vaultSave(entries);
+                console.log(`[Vault] ✅ Auto-saved correct solution: ${title.slice(0, 50)}`);
+                showToastPill(`💾 Correct solution saved: ${title.slice(0, 40)}`, 'success', 2500);
+                return true;
+            } catch (e) {
+                console.warn('[Vault] Auto-save error:', e);
+                return false;
+            }
+        }
+
+        function doVault() {
+            // If vault panel already open → close it
+            const existing = document.getElementById('kc-vault-panel');
+            if (existing) { existing.remove(); return; }
+
+            // Build panel
+            const panel = document.createElement('div');
+            panel.id = 'kc-vault-panel';
+            panel.style.cssText = [
+                'position:fixed', 'top:50%', 'left:50%',
+                'transform:translate(-50%,-50%)',
+                'z-index:1000020',
+                'width:min(820px,94vw)', 'max-height:88vh',
+                'display:flex', 'flex-direction:column',
+                'background:rgba(13,16,23,0.98)',
+                'backdrop-filter:blur(24px)', '-webkit-backdrop-filter:blur(24px)',
+                'border:1px solid rgba(99,179,237,0.4)',
+                'border-radius:16px',
+                'box-shadow:0 32px 80px rgba(0,0,0,0.9)',
+                "font-family:'VT323',monospace",
+                'color:#f4f4f5',
+                'overflow:hidden'
+            ].join(';');
+
+            // Prevent clicks inside from bubbling and closing
+            panel.addEventListener('click', e => e.stopPropagation());
+            panel.addEventListener('mousedown', e => e.stopPropagation());
+            panel.addEventListener('keydown', e => e.stopPropagation());
+
+            // ── Header ──
+            const header = document.createElement('div');
+            header.style.cssText = 'display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);flex-shrink:0;';
+            header.innerHTML = `
+                <span style="font-size:20px;">⚡</span>
+                <span style="font-size:18px;font-weight:700;color:#f4f4f5;letter-spacing:.4px;">Solutions Vault</span>
+                <span id="kc-vault-count" style="font-size:12px;color:#63b3ed;background:rgba(99,179,237,0.15);padding:2px 10px;border-radius:8px;margin-left:4px;">0 saved</span>
+                <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+                    <button id="kc-vault-save-btn" title="Save current code + question" style="
+                        padding:6px 14px;border:none;border-radius:8px;
+                        background:linear-gradient(135deg,#22c55e,#16a34a);
+                        color:#fff;font-weight:700;cursor:pointer;font-size:14px;
+                        font-family:'VT323',monospace;
+                        box-shadow:0 4px 14px rgba(34,197,94,0.4);
+                        transition:transform .15s,box-shadow .15s;
+                    ">💾 Save Current</button>
+                    <button id="kc-vault-export-btn" title="Export all as text" style="
+                        padding:6px 14px;border:1px solid rgba(255,255,255,0.15);border-radius:8px;
+                        background:rgba(255,255,255,0.06);color:#e4e4e7;
+                        cursor:pointer;font-size:14px;font-family:'VT323',monospace;
+                        transition:background .15s;
+                    ">📤 Export All</button>
+                    <button id="kc-vault-clear-btn" title="Delete all saved solutions" style="
+                        padding:6px 14px;border:1px solid rgba(239,68,68,0.3);border-radius:8px;
+                        background:rgba(239,68,68,0.1);color:#f87171;
+                        cursor:pointer;font-size:14px;font-family:'VT323',monospace;
+                        transition:background .15s;
+                    ">🗑 Clear All</button>
+                    <button id="kc-vault-close-btn" title="Close (E)" style="
+                        width:28px;height:28px;border:1px solid rgba(255,255,255,0.15);border-radius:6px;
+                        background:rgba(255,255,255,0.06);color:#a1a1aa;
+                        cursor:pointer;font-size:15px;font-family:'VT323',monospace;
+                        transition:background .15s;
+                    ">✕</button>
+                </div>
+            `;
+            panel.appendChild(header);
+
+            // ── Search bar ──
+            const searchBar = document.createElement('div');
+            searchBar.style.cssText = 'padding:10px 18px;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0;background:rgba(0,0,0,0.2);';
+            searchBar.innerHTML = `
+                <input id="kc-vault-search" type="text" placeholder="🔍  Search by title…" style="
+                    width:100%;padding:8px 12px;box-sizing:border-box;
+                    background:#16181d;border:1px solid rgba(255,255,255,0.12);
+                    border-radius:8px;color:#e4e4e7;font-size:15px;outline:none;
+                    font-family:'VT323',monospace;
+                ">`;
+            panel.appendChild(searchBar);
+
+            // ── Body: split list + detail ──
+            const body = document.createElement('div');
+            body.style.cssText = 'display:flex;flex:1;overflow:hidden;min-height:0;';
+
+            // left list
+            const listPane = document.createElement('div');
+            listPane.id = 'kc-vault-list';
+            listPane.style.cssText = 'width:270px;flex-shrink:0;overflow-y:auto;border-right:1px solid rgba(255,255,255,0.07);padding:8px 6px;';
+
+            // right detail
+            const detailPane = document.createElement('div');
+            detailPane.id = 'kc-vault-detail';
+            detailPane.style.cssText = 'flex:1;overflow:hidden;display:flex;flex-direction:column;padding:16px 18px;min-width:0;';
+            detailPane.innerHTML = `<div style="color:#555;font-size:15px;margin:auto;text-align:center;">← Select an entry to view &amp; copy</div>`;
+
+            body.appendChild(listPane);
+            body.appendChild(detailPane);
+            panel.appendChild(body);
+
+            document.body.appendChild(panel);
+
+            // ── State ──
+            let entries = vaultLoad();
+            let selectedIdx = -1;
+
+            // ── Render helpers ──
+            const renderCount = () => {
+                const badge = document.getElementById('kc-vault-count');
+                if (badge) badge.textContent = `${entries.length} saved`;
+            };
+
+            const renderList = (filter = '') => {
+                const fl = filter.toLowerCase().trim();
+                listPane.innerHTML = '';
+                const filtered = entries
+                    .map((e, i) => ({ ...e, _origIdx: i }))
+                    .filter(e => !fl || e.title.toLowerCase().includes(fl));
+
+                if (filtered.length === 0) {
+                    listPane.innerHTML = `<div style="color:#555;font-size:14px;padding:20px 10px;text-align:center;">${fl ? 'No matches' : 'Nothing saved yet.<br><br>Press <b style="color:#63b3ed">💾 Save Current</b> to store the solution for this problem.'}</div>`;
+                    return;
+                }
+
+                filtered.forEach(({ title, ts, lang, _origIdx }) => {
+                    const item = document.createElement('div');
+                    item.dataset.origIdx = _origIdx;
+                    item.style.cssText = [
+                        'padding:9px 10px', 'border-radius:8px', 'cursor:pointer',
+                        'margin-bottom:4px',
+                        'background:' + (_origIdx === selectedIdx ? 'rgba(99,179,237,0.15)' : 'rgba(255,255,255,0.03)'),
+                        'border:1px solid ' + (_origIdx === selectedIdx ? 'rgba(99,179,237,0.4)' : 'rgba(255,255,255,0.06)'),
+                        'transition:background .12s,border-color .12s'
+                    ].join(';');
+
+                    const shortTitle = title.length > 34 ? title.slice(0, 34) + '…' : title;
+                    const date = new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric' });
+                    item.innerHTML = `
+                        <div style="font-size:14px;font-weight:600;color:#f4f4f5;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${title.replace(/"/g,'&quot;')}">${shortTitle}</div>
+                        <div style="font-size:11px;color:#71717a;margin-top:3px;display:flex;gap:8px;">
+                            <span>${lang || '?'}</span>
+                            <span>${date}</span>
+                        </div>`;
+
+                    item.addEventListener('mouseenter', () => {
+                        if (_origIdx !== selectedIdx) item.style.background = 'rgba(99,179,237,0.08)';
+                    });
+                    item.addEventListener('mouseleave', () => {
+                        if (_origIdx !== selectedIdx) item.style.background = 'rgba(255,255,255,0.03)';
+                    });
+                    item.addEventListener('click', () => {
+                        selectedIdx = _origIdx;
+                        renderList(document.getElementById('kc-vault-search')?.value || '');
+                        renderDetail(_origIdx);
+                    });
+                    listPane.appendChild(item);
+                });
+            };
+
+            const renderDetail = (idx) => {
+                const e = entries[idx];
+                if (!e) { detailPane.innerHTML = `<div style="color:#555;font-size:15px;margin:auto;">Entry not found</div>`; return; }
+
+                detailPane.innerHTML = `
+                    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;flex-shrink:0;">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:17px;font-weight:700;color:#f4f4f5;line-height:1.3;word-break:break-word;">${e.title}</div>
+                            <div style="font-size:12px;color:#71717a;margin-top:4px;">
+                                <a href="${e.url}" target="_blank" style="color:#63b3ed;text-decoration:none;">🔗 Open problem</a>
+                                &nbsp;·&nbsp; ${e.lang || 'Unknown lang'}
+                                &nbsp;·&nbsp; ${new Date(e.ts).toLocaleString()}
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:6px;flex-shrink:0;">
+                            <button id="kc-vault-copy-btn" style="
+                                padding:5px 12px;border:1px solid rgba(99,179,237,0.4);border-radius:7px;
+                                background:rgba(99,179,237,0.15);color:#63b3ed;
+                                cursor:pointer;font-size:13px;font-family:'VT323',monospace;
+                                transition:background .15s;
+                            ">📋 Copy Code</button>
+                            <button id="kc-vault-share-btn" style="
+                                padding:5px 12px;border:1px solid rgba(34,197,94,0.4);border-radius:7px;
+                                background:rgba(34,197,94,0.12);color:#4ade80;
+                                cursor:pointer;font-size:13px;font-family:'VT323',monospace;
+                                transition:background .15s;
+                            ">🔗 Copy Share Text</button>
+                            <button id="kc-vault-del-btn" style="
+                                padding:5px 10px;border:1px solid rgba(239,68,68,0.3);border-radius:7px;
+                                background:rgba(239,68,68,0.1);color:#f87171;
+                                cursor:pointer;font-size:13px;font-family:'VT323',monospace;
+                                transition:background .15s;
+                            ">🗑</button>
+                        </div>
+                    </div>
+                    <div style="flex:1;overflow:auto;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:#0d1117;">
+                        <pre id="kc-vault-code-pre" style="
+                            margin:0;padding:16px;font-size:13px;line-height:1.6;
+                            color:#e4e4e7;white-space:pre;overflow:auto;
+                            font-family:'Courier New',Courier,monospace;
+                        ">${e.code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+                    </div>`;
+
+                // copy code
+                document.getElementById('kc-vault-copy-btn').onclick = () => {
+                    navigator.clipboard.writeText(e.code).then(() => {
+                        const b = document.getElementById('kc-vault-copy-btn');
+                        if (b) { b.textContent = '✅ Copied!'; setTimeout(() => { b.textContent = '📋 Copy Code'; }, 2000); }
+                    }).catch(() => {
+                        const ta = document.createElement('textarea');
+                        ta.value = e.code; ta.style.position = 'fixed'; ta.style.top = '-9999px';
+                        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+                        const b = document.getElementById('kc-vault-copy-btn');
+                        if (b) { b.textContent = '✅ Copied!'; setTimeout(() => { b.textContent = '📋 Copy Code'; }, 2000); }
+                    });
+                };
+
+                // share text
+                document.getElementById('kc-vault-share-btn').onclick = () => {
+                    const shareText = formatVaultEntryAsText(e);
+                    navigator.clipboard.writeText(shareText).catch(() => {
+                        const ta = document.createElement('textarea');
+                        ta.value = shareText; ta.style.position = 'fixed'; ta.style.top = '-9999px';
+                        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+                    });
+                    const b = document.getElementById('kc-vault-share-btn');
+                    if (b) { b.textContent = '✅ Copied!'; setTimeout(() => { b.textContent = '🔗 Copy Share Text'; }, 2000); }
+                };
+
+                // delete entry
+                document.getElementById('kc-vault-del-btn').onclick = () => {
+                    entries.splice(idx, 1);
+                    vaultSave(entries);
+                    selectedIdx = -1;
+                    renderCount();
+                    renderList(document.getElementById('kc-vault-search')?.value || '');
+                    detailPane.innerHTML = `<div style="color:#555;font-size:15px;margin:auto;text-align:center;">Entry deleted</div>`;
+                };
+            };
+
+            // ── Save current solution ──
+            const handleSave = () => {
+                const code = getCurrentCode().trim();
+                const title = getCurrentProblemTitle().trim();
+
+                if (!code) {
+                    showToastPill('No code in editor to save', 'error', 2500);
+                    return;
+                }
+
+                // Detect language
+                let lang = 'Unknown';
+                try { if (typeof getSelectedLanguage === 'function') lang = getSelectedLanguage(); } catch (_) {}
+
+                // Check duplicate (same title + same code)
+                const isDup = entries.some(en => en.title === title && en.code === code);
+                if (isDup) {
+                    showToastPill('Already saved (identical code + title)', 'info', 2500);
+                    return;
+                }
+
+                const entry = {
+                    id: Date.now() + Math.random().toString(36).slice(2),
+                    title,
+                    lang,
+                    url: window.location.href,
+                    code,
+                    ts: Date.now()
+                };
+
+                entries.unshift(entry);  // newest first
+                vaultSave(entries);
+                selectedIdx = 0;
+                renderCount();
+                renderList(document.getElementById('kc-vault-search')?.value || '');
+                renderDetail(0);
+                showToastPill(`💾 Saved: ${title.slice(0, 40)}`, 'success', 2500);
+            };
+
+            document.getElementById('kc-vault-save-btn').onclick = handleSave;
+
+            // Export all as plain text
+            document.getElementById('kc-vault-export-btn').onclick = () => {
+                if (entries.length === 0) { showToastPill('Nothing to export', 'info', 2500); return; }
+                const text = entries.map(formatVaultEntryAsText).join('\n\n');
+                const blob = new Blob([text], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `killcode_solutions_${new Date().toISOString().slice(0,10)}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+                showToastPill(`Exported ${entries.length} solution(s)`, 'success', 2500);
+            };
+
+            // Clear all
+            document.getElementById('kc-vault-clear-btn').onclick = () => {
+                if (!entries.length) { showToastPill('Nothing to clear', 'info', 2000); return; }
+                if (confirm(`Delete all ${entries.length} saved solution(s)? This cannot be undone.`)) {
+                    entries = [];
+                    vaultSave(entries);
+                    selectedIdx = -1;
+                    renderCount();
+                    renderList();
+                    detailPane.innerHTML = `<div style="color:#555;font-size:15px;margin:auto;text-align:center;">Cleared</div>`;
+                    showToastPill('Vault cleared', 'info', 2000);
+                }
+            };
+
+            // Close
+            document.getElementById('kc-vault-close-btn').onclick = () => panel.remove();
+
+            // Search
+            document.getElementById('kc-vault-search').addEventListener('input', (e) => {
+                renderList(e.target.value);
+            });
+
+            // Escape key to close panel (captured inside panel)
+            document.getElementById('kc-vault-search').addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') { e.stopPropagation(); panel.remove(); }
+            });
+
+            // Initial render
+            renderCount();
+            renderList();
+
+            // Auto-focus search
+            setTimeout(() => document.getElementById('kc-vault-search')?.focus(), 60);
+        }
+
+        // ── Input guard ────────────────────────────────────────────────────────
         function isTypingTarget(el) {
             if (!el) return false;
             const tag = (el.tagName || '').toUpperCase();
@@ -14443,14 +14925,27 @@ Output ONLY the valid ${language} code with NO comments:`;
 
         // ── Global keydown listener ───────────────────────────────────────────
         function onKeyDown(e) {
-            if (isTypingTarget(document.activeElement)) return;
+            const key = e.key.toLowerCase();
+            const activeElement = document.activeElement;
+            // 'e' always toggles the Solutions Vault even when focus is inside the vault panel
+            // (e.g. the search box), so pressing 'e' again reliably closes the panel.
+            const inVaultPanel = activeElement && activeElement.closest && activeElement.closest('#kc-vault-panel');
+            if (key === 'e' && inVaultPanel) {
+                e.preventDefault();
+                doVault();
+                return;
+            }
+            const aceTarget = activeElement?.closest?.('.ace_editor') ||
+                activeElement?.classList?.contains('ace_text-input');
+            if (isTypingTarget(activeElement) && !(aceTarget && (key === 'w' || key === 's'))) return;
             if (e.ctrlKey || e.altKey || e.metaKey) return;
 
-            switch (e.key.toLowerCase()) {
+            switch (key) {
                 case 'w': e.preventDefault(); doGhostToggle();  break;
                 case 'a': e.preventDefault(); doFindIncomplete(); break;
                 case 's': e.preventDefault(); doStop();          break;
                 case 'd': e.preventDefault(); doAISolve();       break;
+                case 'e': e.preventDefault(); doVault();         break;
             }
         }
 
@@ -14496,6 +14991,70 @@ Output ONLY the valid ${language} code with NO comments:`;
             observer.observe(document.body, { childList: true, subtree: true });
         }
 
+        // ── Auto-save on manual successful submission ─────────────────────────
+        // Watches for #successmsg "passed" text or growl success messages
+        // and saves the current code to the vault automatically.
+        function setupAutoSaveObserver() {
+            let lastSavedKey = '';
+
+            const checkForSuccess = () => {
+                try {
+                    // Check error panel FIRST to avoid "9 Passed 3 Failed" matching "passed"
+                    const errText = ((document.getElementById('errormsg')?.innerText || '') + ' ' + (document.getElementById('errormsg_content')?.innerText || '')).toLowerCase();
+                    if (errText.includes('private') || errText.includes('hidden') ||
+                        errText.includes('did not pass') || errText.includes('failed') ||
+                        errText.includes('wrong') || errText.includes('compilation') ||
+                        (errText.includes('passed') && errText.includes('failed'))) {
+                        return; // Not a genuine success — do not save
+                    }
+
+                    // Check success message panel
+                    const successEl = document.getElementById('successmsg');
+                    if (successEl) {
+                        const text = (successEl.innerText || '').toLowerCase();
+                        if ((text.includes('passed') || text.includes('success') || text.includes('correct')) &&
+                            !text.includes('fail') && !text.includes('wrong') && !text.includes('error')) {
+                            const code = getCurrentCode().trim();
+                            const title = getCurrentProblemTitle().trim();
+                            const key = title + '|' + code;
+                            if (key !== lastSavedKey && code) {
+                                lastSavedKey = key;
+                                vaultAutoSave();
+                            }
+                        }
+                    }
+
+                    // Check growl messages as fallback
+                    const growlItems = document.querySelectorAll('.ui-growl-item-container, .ui-growl-item');
+                    for (const g of growlItems) {
+                        const gt = (g.innerText || '').toLowerCase();
+                        if ((gt.includes('pass') || gt.includes('success') || gt.includes('correct')) &&
+                            !gt.includes('fail') && !gt.includes('error') && !gt.includes('wrong')) {
+                            const code = getCurrentCode().trim();
+                            const title = getCurrentProblemTitle().trim();
+                            const key = title + '|' + code;
+                            if (key !== lastSavedKey && code) {
+                                lastSavedKey = key;
+                                vaultAutoSave();
+                            }
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    console.debug('[Vault] Auto-save observer error (non-fatal):', e);
+                }
+            };
+
+            // Observe DOM changes for success messages
+            const observer = new MutationObserver(() => {
+                checkForSuccess();
+            });
+            observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+            // Also check periodically as a fallback
+            setInterval(checkForSuccess, 3000);
+        }
+
         // ── Init ──────────────────────────────────────────────────────────────
         function init() {
             loadSavedState();
@@ -14508,6 +15067,7 @@ Output ONLY the valid ${language} code with NO comments:`;
             const attach = () => {
                 captureUIRefs();
                 setupSPAGuard();
+                setupAutoSaveObserver();
                 if (state.ghosted) {
                     getGhostTargets().forEach(el => el.classList.add('kc-ghost-target'));
                 }
@@ -14522,7 +15082,7 @@ Output ONLY the valid ${language} code with NO comments:`;
             console.log(`[WASD] Hotkey layer ready — Mode: ${state.ghosted ? 'INVISIBLE' : 'VISIBLE'} | State: ${state.running ? 'RUNNING' : 'STOPPED'}`);
         }
 
-        return { init, state, doGhostToggle, doFindIncomplete, doStop, doAISolve };
+        return { init, state, doGhostToggle, doFindIncomplete, doStop, doAISolve, doVault, vaultAutoSave };
     })();
 
     // Initialize WASDBridge when script is enabled and DOM is ready
@@ -14550,4 +15110,3 @@ Output ONLY the valid ${language} code with NO comments:`;
     });
 
 }
-
