@@ -26,9 +26,23 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+# Ensure standard output streams support UTF-8 on Windows terminals
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+# pyrefly: ignore [missing-import]
 import typer
+# pyrefly: ignore [missing-import]
 from rich.console import Console
+# pyrefly: ignore [missing-import]
 from rich.progress import Progress, SpinnerColumn, TextColumn
+# pyrefly: ignore [missing-import]
 from rich.table import Table
 
 from .api import app as fastapi_app
@@ -37,7 +51,7 @@ from .session import SkillRackSession
 from .models import ScrapeResult, Question
 from .config import PACKS, CODETRACK_LEVELS, LANGUAGE_MAP
 
-console = Console()
+console = Console(force_terminal=True, highlight=False)
 cli = typer.Typer(help="SkillRack Scraper - Find incomplete/unsolved questions")
 
 
@@ -59,12 +73,15 @@ def scrape(
     levels: Optional[List[int]] = typer.Option(
         None, "--level", "-l", help="CODETRACK levels to scrape. Default: all."
     ),
-    cookie_file: Optional[str] = typer.Option(
-        None, "--cookie", "-c", help="Path to cookie.txt file"
+    cookie: Optional[str] = typer.Option(
+        None, "--cookie", "-c", help="Path to cookie.txt file or raw cookie string"
     ),
     delay: float = typer.Option(0.15, "--delay", "-d", help="Delay between requests (seconds)"),
     output: Optional[str] = typer.Option(
         None, "--output", "-o", help="Output JSON file path"
+    ),
+    html_report: Optional[str] = typer.Option(
+        None, "--html", help="Output interactive HTML report file path"
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging"),
 ):
@@ -93,18 +110,37 @@ def scrape(
     if levels:
         console.print(f"Levels: {levels}")
 
+    # Determine whether cookie is a raw string or file path
+    cookie_str = None
+    cookie_file_path = None
+    if cookie:
+        if "=" in cookie or ";" in cookie:
+            cookie_str = cookie
+        else:
+            cookie_file_path = cookie
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
+        transient=True,
     ) as progress:
-        task = progress.add_task("Scraping...", total=None)
+        task = progress.add_task("Scraping SkillRack...", total=None)
+
+        def _on_progress(pct: int, task_desc: str, count: int):
+            progress.update(task, description=f"[{pct}%] {task_desc} ({count} found)")
 
         async def _run():
-            return await run_scrape(packs=packs, levels=levels, cookie_file=cookie_file, delay=delay)
+            return await run_scrape(
+                packs=packs,
+                levels=levels,
+                cookie=cookie_str,
+                cookie_file=cookie_file_path,
+                delay=delay,
+                on_progress=_on_progress,
+            )
 
         result: ScrapeResult = asyncio.run(_run())
-
         progress.update(task, description="Done")
 
     # Print summary
@@ -113,11 +149,32 @@ def scrape(
     # Output JSON
     if output:
         output_path = Path(output)
-        output_path.write_text(result.model_dump_json(indent=2))
+        output_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
         console.print(f"[green]Results written to {output_path}[/green]")
     else:
         # Print to stdout
         console.print(result.model_dump_json(indent=2))
+
+    # Output HTML report if requested
+    if html_report:
+        import html as html_lib
+        questions = result.questions
+        rows_html = "".join(f"""<tr>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;color:#8b949e;">{idx+1}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;"><span style="background:#238636;color:white;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:600;">{html_lib.escape(q.level)}</span></td>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;"><span style="background:#1f6feb;color:white;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:600;">{html_lib.escape(q.language)}</span></td>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;color:#c9d1d9;">{html_lib.escape(q.section)}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;color:#f0f6fc;font-weight:600;">{html_lib.escape(q.question)}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;"><a href="{html_lib.escape(q.link)}" target="_blank" style="display:inline-block;padding:4px 12px;background:#8957e5;color:white;text-decoration:none;border-radius:6px;font-size:12px;font-weight:600;">Solve →</a></td>
+        </tr>""" for idx, q in enumerate(questions))
+        html_doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>SkillRack Incomplete Questions ({len(questions)})</title>
+        <style>body{{font-family:system-ui,sans-serif;background:#0d1117;color:#c9d1d9;padding:24px;max-width:1200px;margin:auto;}}table{{width:100%;border-collapse:collapse;background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;}}th{{padding:10px 12px;background:#21262d;text-align:left;color:#8b949e;font-size:12px;text-transform:uppercase;}}</style>
+        </head><body><h1 style="color:#f0f6fc;">⚡ SkillRack Incomplete Questions ({len(questions)})</h1>
+        <table><thead><tr><th>#</th><th>Level</th><th>Language</th><th>Section</th><th>Question</th><th>Action</th></tr></thead><tbody>{rows_html}</tbody></table>
+        </body></html>"""
+        html_path = Path(html_report)
+        html_path.write_text(html_doc, encoding="utf-8")
+        console.print(f"[green]HTML Report written to {html_path}[/green]")
 
 
 @cli.command()
@@ -137,6 +194,7 @@ def serve(
     console.print("  GET  /scrape/{job_id}")
     console.print("  GET  /stats")
 
+    # pyrefly: ignore [missing-import]
     import uvicorn
     uvicorn.run(
         "skillrack_scraper.api:app",
@@ -172,22 +230,38 @@ def export(
     output_path = Path(output_file)
 
     if format == "json":
-        output_path.write_text(json.dumps(questions, indent=2))
+        output_path.write_text(json.dumps(questions, indent=2), encoding="utf-8")
     elif format == "jsonl":
-        with output_path.open("w") as f:
+        with output_path.open("w", encoding="utf-8") as f:
             for q in questions:
                 f.write(json.dumps(q) + "\n")
     elif format == "csv":
         if questions:
             fieldnames = list(questions[0].keys())
-            with output_path.open("w", newline="") as f:
+            with output_path.open("w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(questions)
         else:
-            output_path.write_text("")
+            output_path.write_text("", encoding="utf-8")
+    elif format == "html":
+        import html as html_lib
+        rows_html = "".join(f"""<tr>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;color:#8b949e;">{idx+1}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;"><span style="background:#238636;color:white;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:600;">{html_lib.escape(q.get('level',''))}</span></td>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;"><span style="background:#1f6feb;color:white;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:600;">{html_lib.escape(q.get('language',''))}</span></td>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;color:#c9d1d9;">{html_lib.escape(q.get('section',''))}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;color:#f0f6fc;font-weight:600;">{html_lib.escape(q.get('question',''))}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #30363d;"><a href="{html_lib.escape(q.get('link',''))}" target="_blank" style="display:inline-block;padding:4px 12px;background:#8957e5;color:white;text-decoration:none;border-radius:6px;font-size:12px;font-weight:600;">Solve →</a></td>
+        </tr>""" for idx, q in enumerate(questions))
+        html_doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>SkillRack Incomplete Questions ({len(questions)})</title>
+        <style>body{{font-family:system-ui,sans-serif;background:#0d1117;color:#c9d1d9;padding:24px;max-width:1200px;margin:auto;}}table{{width:100%;border-collapse:collapse;background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;}}th{{padding:10px 12px;background:#21262d;text-align:left;color:#8b949e;font-size:12px;text-transform:uppercase;}}</style>
+        </head><body><h1 style="color:#f0f6fc;">⚡ SkillRack Incomplete Questions ({len(questions)})</h1>
+        <table><thead><tr><th>#</th><th>Level</th><th>Language</th><th>Section</th><th>Question</th><th>Action</th></tr></thead><tbody>{rows_html}</tbody></table>
+        </body></html>"""
+        output_path.write_text(html_doc, encoding="utf-8")
     else:
-        console.print(f"[red]Unknown format: {format}[/red]")
+        console.print(f"[red]Unknown format: {format}. Choose from: json, jsonl, csv, html[/red]")
         raise typer.Exit(1)
 
     console.print(f"[green]Exported {len(questions)} questions to {output_path}[/green]")

@@ -1,5 +1,6 @@
 """Unit tests for HTML parser functions."""
 
+# pyrefly: ignore [missing-import]
 import pytest
 from skillrack_scraper.parser import (
     extract_viewstate,
@@ -76,6 +77,36 @@ class TestExtractPartCards:
         assert result[1]["row"] == 1
         assert "PART002" in result[1]["name"]
 
+    def test_extract_part_cards_completed(self):
+        # HTML with completed parts having <span class="ui label green tag tag-pill">Completed</span>
+        html = '''
+        <div id="cttbl:0:j_id_4s" class="ui-card">
+            <div class="ui-card-content">
+                <b>C - STARTER - PART001</b>
+                <span class="ui label green tag tag-pill">Completed</span>
+            </div>
+        </div>
+        <div id="cttbl:1:j_id_4s" class="ui-card">
+            <div class="ui-card-content">
+                <b>C - STARTER - PART002</b>
+            </div>
+        </div>
+        <div id="cttbl:2:j_id_4s" class="ui-card">
+            <div class="ui-card-content">
+                <b>C - STARTER - PART003</b>
+                <span class="ui label green tag tag-pill">Completed</span>
+            </div>
+        </div>
+        '''
+        result = extract_part_cards(html)
+        assert len(result) == 3
+        assert result[0]["row"] == 0
+        assert result[0]["completed"] is True
+        assert result[1]["row"] == 1
+        assert result[1]["completed"] is False
+        assert result[2]["row"] == 2
+        assert result[2]["completed"] is True
+
     def test_extract_part_cards_empty(self):
         assert extract_part_cards("") == []
 
@@ -112,8 +143,23 @@ class TestExtractProblems:
         # Card without name/ID pattern
         html = '<div id="pctbl:0:j_id_5p" class="ui-card"><div class="ui-card-content"><b>Problem (Id-999)</b></div></div>'
         result = extract_problems(html)
-        assert len(result) == 1  # This should actually work now
+        assert len(result) == 1
         assert result[0]["id"] == "999"
+
+    def test_extract_problems_legacy_tools_format(self):
+        # Legacy tools/ format with <button id="pctbl:0:j_id_5w">
+        html = '''
+        <button id="pctbl:0:j_id_5w" class="ui-button">Solve</button>
+        <div><b>Reverse Words (Id-4567)</b></div>
+        <button id="pctbl:1:j_id_5w" class="ui-button">Solve</button>
+        <div><b>Count Primes (Id-4568)</b></div>
+        '''
+        result = extract_problems(html)
+        assert len(result) == 2
+        assert result[0]["id"] == "4567"
+        assert result[0]["name"] == "Reverse Words"
+        assert result[1]["id"] == "4568"
+        assert result[1]["name"] == "Count Primes"
 
 
 class TestExtractQuestionMetadata:

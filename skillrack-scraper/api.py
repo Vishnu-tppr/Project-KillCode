@@ -40,9 +40,12 @@ from .models import (
     ScrapeJobStatus,
     HealthCheck,
     ScrapeRequest,
+    CookieUpdate,
     QuestionsFilter,
 )
 from .scraper import run_scrape, SkillRackScraper
+import os
+from pathlib import Path
 from .session import SkillRackSession
 from .config import LANGUAGE_MAP
 
@@ -52,6 +55,58 @@ logger = logging.getLogger(__name__)
 _job_store: Dict[str, ScrapeJobStatus] = {}
 _latest_result: Optional[ScrapeResult] = None
 _scrape_lock = asyncio.Lock()
+
+
+def _merge_cookies(existing_cookie: str, new_cookie: str) -> str:
+    """Merge cookies preserving existing JSESSIONID if new cookie lacks it."""
+    cookie_dict = {}
+    for part in (existing_cookie or "").split(";"):
+        if "=" in part:
+            k, v = part.strip().split("=", 1)
+            if k.strip():
+                cookie_dict[k.strip()] = v.strip()
+    for part in (new_cookie or "").split(";"):
+        if "=" in part:
+            k, v = part.strip().split("=", 1)
+            if k.strip():
+                cookie_dict[k.strip()] = v.strip()
+    return "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+
+
+def _save_and_set_cookie(cookie_str: str) -> None:
+    """Save session cookie to tools/cookie.txt, root cookie.txt, and env var."""
+    clean = cookie_str.strip() if cookie_str else ""
+    if not clean:
+        return
+
+    # Read existing cookie if present
+    tools_cookie = Path(__file__).parent.parent / "tools" / "cookie.txt"
+    root_cookie = Path(__file__).parent.parent / "cookie.txt"
+    existing = os.environ.get("SKILLRACK_COOKIE", "")
+    if not existing and tools_cookie.exists():
+        try:
+            existing = tools_cookie.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    elif not existing and root_cookie.exists():
+        try:
+            existing = root_cookie.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+
+    merged = _merge_cookies(existing, clean)
+    os.environ["SKILLRACK_COOKIE"] = merged
+
+    try:
+        tools_cookie.parent.mkdir(parents=True, exist_ok=True)
+        tools_cookie.write_text(merged, encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Could not write to tools/cookie.txt: {e}")
+    try:
+        root_cookie.write_text(merged, encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Could not write to cookie.txt: {e}")
+    logger.info("Session cookie successfully updated and merged")
 
 
 @asynccontextmanager
@@ -70,10 +125,12 @@ app = FastAPI(
 )
 
 # CORS for local file:// access (Tampermonkey runs in browser context)
+# allow_credentials=False because we don't use cookies for API auth
+# (cookie is for SkillRack session, not API authentication)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -109,14 +166,30 @@ async def run_scrape_job(job_id: str, request: ScrapeRequest):
     job = _job_store[job_id]
     job.status = "running"
     job.started_at = datetime.utcnow()
+    job.progress_percent = 5
+    job.current_task = "Initializing scraper..."
+    job.questions_found = 0
+
+    if request.cookie:
+        _save_and_set_cookie(request.cookie)
+
+    def on_progress(pct: int, task: str, count: int):
+        job.progress_percent = max(job.progress_percent, pct)
+        job.current_task = task
+        job.questions_found = count
 
     try:
         result = await run_scrape(
             packs=request.packs,
             levels=request.levels,
+            cookie=request.cookie,
+            on_progress=on_progress,
         )
         _latest_result = result
         job.status = "completed"
+        job.progress_percent = 100
+        job.current_task = "Crawl complete"
+        job.questions_found = result.total_found
         job.result = result
         job.completed_at = datetime.utcnow()
         logger.info(f"Scrape job {job_id} completed: {result.total_found} questions")
@@ -128,6 +201,44 @@ async def run_scrape_job(job_id: str, request: ScrapeRequest):
 
 
 # ─── Endpoints ───────────────────────────────────────────────────────
+
+@app.post("/cookie")
+async def update_cookie(payload: CookieUpdate):
+    """Update active session cookie automatically from browser/Tampermonkey."""
+    if not payload.cookie or not payload.cookie.strip():
+        raise HTTPException(400, "Empty cookie provided")
+    _save_and_set_cookie(payload.cookie)
+    return {"status": "ok", "message": "Cookie updated successfully"}
+
+
+@app.get("/cookie/status")
+async def cookie_status():
+    """Check if cookie.txt exists and has content (compatible with bridge_server.py)."""
+    from pathlib import Path
+    tools_cookie = Path(__file__).parent.parent / "tools" / "cookie.txt"
+    root_cookie = Path(__file__).parent.parent / "cookie.txt"
+
+    has_cookie = False
+    preview = ""
+
+    # Check tools/cookie.txt first
+    if tools_cookie.exists():
+        cookie = tools_cookie.read_text(encoding="utf-8").strip()
+        if cookie:
+            has_cookie = True
+            preview = cookie[:50] + "..." if len(cookie) > 50 else cookie
+    # Fallback to root cookie.txt
+    elif root_cookie.exists():
+        cookie = root_cookie.read_text(encoding="utf-8").strip()
+        if cookie:
+            has_cookie = True
+            preview = cookie[:50] + "..." if len(cookie) > 50 else cookie
+
+    return {
+        "has_cookie": has_cookie,
+        "cookie_preview": preview,
+    }
+
 
 @app.get("/health", response_model=HealthCheck)
 async def health_check():
@@ -228,11 +339,18 @@ async def scrape_sync(request: ScrapeRequest):
     """
     global _latest_result
 
+    if request.cookie:
+        _save_and_set_cookie(request.cookie)
+
     async with _scrape_lock:
         if request.force_refresh:
             _latest_result = None
 
-        result = await run_scrape(packs=request.packs, levels=request.levels)
+        result = await run_scrape(
+            packs=request.packs,
+            levels=request.levels,
+            cookie=request.cookie,
+        )
         _latest_result = result
         return result
 

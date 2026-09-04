@@ -1,26 +1,45 @@
-# Ignore the bundled openai-oauth subpackage — tracked separately upstream
-openai-oauth/
+# ==============================================================================
+# KillCode Whitelist .gitignore
+# Only allow explicitly permitted files and directories to be tracked
+# ==============================================================================
 
-# Dev & helper scripts / data files
-icon_b64.txt
-icon_small_b64.txt
-bump_font_size.py
-swap_font.py
-transform_ui.py
-verify_ui.py
-implementation_plan.md
-skillrack_context.md
-level1_context.md
-userscript.user.js
+# Ignore all files and directories at root by default
+/*
 
-# ── CREDENTIALS — NEVER COMMIT ──────────────────────────────────────────────
-# Cookie files contain live session tokens for SkillRack
-cookie.txt
-tools/cookie.txt
-tools/.scratch/
+# ------------------------------------------------------------------------------
+# Whitelisted Root Files
+# ------------------------------------------------------------------------------
+!.gitignore
+!PRIVACY.md
+!Project-KillCode.js
+!README.md
+!SECURITY.md
+!cookie.examples.txt
+!kill.txt
+!skill.md
+!skillrack-solver-skill.md
+
+# ------------------------------------------------------------------------------
+# Whitelisted Directories
+# ------------------------------------------------------------------------------
+!assets/
+!chrome-extension/
+!skillrack-scraper/
+!tools/
+
+# ------------------------------------------------------------------------------
+# Universal Ignores (Applies inside whitelisted directories)
+# ------------------------------------------------------------------------------
+# Sensitive data & credentials - NEVER COMMIT
+*cookie.txt
 *.cookie
+tools/.scratch/
+*.env
+*.env.*
+*.pem
+*.key
 
-# ── Python build artifacts ───────────────────────────────────────────────────
+# Python artifacts & virtual environments
 __pycache__/
 *.py[cod]
 *$py.class
@@ -29,29 +48,30 @@ dist/
 build/
 .eggs/
 *.egg
+.venv/
+env/
+venv/
 
-# ── Scraper data output ──────────────────────────────────────────────────────
+# Caches, test outputs & scraper data
 data/
 *.db
+*.sqlite3
 skillrack_questions.db
 tmp/
-
-# ── Test & tool caches ───────────────────────────────────────────────────────
 .pytest_cache/
 .ruff_cache/
 .coverage
 htmlcov/
 
-# ── OS noise ─────────────────────────────────────────────────────────────────
+# Editor & OS artifacts
 .DS_Store
 Thumbs.db
-
-# ── Editor folders ───────────────────────────────────────────────────────────
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# ── Claude/AI working files ──────────────────────────────────────────────────
-claude.md
-cline.md
-deep-knitting-hippo.md
+# AI assistant temporary logs & notes
 .claude/
+*.md.tmp
+

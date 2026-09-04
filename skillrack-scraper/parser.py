@@ -15,7 +15,7 @@ def extract_viewstate(html_content: str, form_id: Optional[str] = None) -> Optio
 
     In PrimeFaces/JSF, each form has its own ViewState. The form-scoped ViewState
     appears AFTER the form's opening tag, not before. So we need to find the form
-    and search forward from there.
+    and search forward from there. This matches tools/enum.py's vs_in_form() logic.
     """
     if not html_content:
         return None
@@ -24,9 +24,9 @@ def extract_viewstate(html_content: str, form_id: Optional[str] = None) -> Optio
     if form_id:
         pos = html_content.find(f'id="{form_id}"')
         if pos != -1:
-            # Search from form start, but the ViewState is usually near the END of the form
-            # So search in a window after the form start
-            src = html_content[pos:pos + 50000]  # Large enough window to cover the form
+            # Search from form start to end of body (ViewState is typically near the END of the form)
+            # No window limit - matches enum.py's vs_in_form() behavior
+            src = html_content[pos:]
 
     pattern = PATTERNS["viewstate"]
     match = re.search(pattern, src)
@@ -53,19 +53,23 @@ def extract_sub_challenges(html_content: str) -> List[Dict[str, Any]]:
 def extract_part_cards(html_content: str) -> List[Dict[str, Any]]:
     """Extract part cards from sub-challenge page. Returns list of {row, name, completed}.
 
-    The HTML structure uses outputpanel cards (cttbl:N:j_id_4s) not buttons.
+    Supports outputpanel cards (cttbl:N:j_id_4s) and legacy buttons (cttbl:N:j_id_4u).
     Each card contains the part name in a <b> tag.
     Completed parts have a <span class="ui label green tag tag-pill">Completed</span> tag.
     """
     results = []
     pattern = PATTERNS["part_card"]
     name_pattern = PATTERNS["part_name"]
-    completed_pattern = r'<span class="ui label green tag tag-pill">Completed</span>'
 
-    for match in re.finditer(pattern, html_content):
-        row = int(match.group(1))
+    matches = list(re.finditer(pattern, html_content))
+    for i, match in enumerate(matches):
+        row_str = match.group(1) or (match.group(2) if len(match.groups()) > 1 else None)
+        if not row_str:
+            continue
+        row = int(row_str)
         seg_start = match.start()
-        seg_end = min(len(html_content), match.start() + 1800)
+        # End segment at next card or end of content (avoid bleeding into next card)
+        seg_end = matches[i + 1].start() if i + 1 < len(matches) else len(html_content)
         segment = html_content[seg_start:seg_end]
         name_matches = re.findall(name_pattern, segment)
         name = name_matches[0].strip() if name_matches else "?"
@@ -79,8 +83,7 @@ def extract_part_cards(html_content: str) -> List[Dict[str, Any]]:
 def extract_problems(html_content: str) -> List[Dict[str, Any]]:
     """Extract incomplete problems from part page. Returns list of {row, id, name, link}.
 
-    The problem list page uses cards with id="pctbl:N:j_id_5p".
-    Each card has a <b> tag with the problem name as "Name (Id-1234)".
+    Matches problem cards (pctbl:N:j_id_5p/5w) and falls back to <b>Name (Id-NNN)</b> scanning.
     """
     results = []
     card_pattern = PATTERNS["problem_card"]
@@ -105,6 +108,20 @@ def extract_problems(html_content: str) -> List[Dict[str, Any]]:
             "name": html.unescape(name),
             "link": f"https://skillrack.com/faces/candidate/codeprogram.xhtml?id={qid}",
         })
+
+    # Fallback to direct name (Id-NNN) scanning if card IDs drifted (from tools/find_incomplete.py)
+    if not results:
+        for m in re.finditer(r'<b>([^<]*?)\s*\(Id-(\d+)\)', html_content):
+            nm, pid = m.group(1).strip(), m.group(2)
+            seg = html_content[max(0, m.start() - 600):min(len(html_content), m.start() + 1200)]
+            rowm = re.search(r'id="pctbl:(\d+):', seg)
+            row_val = int(rowm.group(1)) if rowm else len(results)
+            results.append({
+                "row": row_val,
+                "id": pid,
+                "name": html.unescape(nm),
+                "link": f"https://skillrack.com/faces/candidate/codeprogram.xhtml?id={pid}",
+            })
 
     return sorted(results, key=lambda x: x["row"])
 

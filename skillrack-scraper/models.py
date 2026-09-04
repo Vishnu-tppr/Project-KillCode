@@ -53,6 +53,9 @@ class ScrapeJobStatus(BaseModel):
     """Status of an async scrape job."""
     job_id: str
     status: str  # "pending", "running", "completed", "failed"
+    progress_percent: int = 0
+    current_task: Optional[str] = None
+    questions_found: int = 0
     result: Optional[ScrapeResult] = None
     error: Optional[str] = None
     started_at: datetime = Field(default_factory=_utcnow)
@@ -72,6 +75,12 @@ class ScrapeRequest(BaseModel):
     packs: Optional[List[int]] = Field(None, description="Pack indices to scrape (0-6), None for all")
     levels: Optional[List[int]] = Field(None, description="CODETRACK levels to scrape, None for all")
     force_refresh: bool = Field(False, description="Ignore cache and force fresh scrape")
+    cookie: Optional[str] = Field(None, description="Optional raw session cookie string from userscript")
+
+
+class CookieUpdate(BaseModel):
+    """Payload to update session cookie from browser."""
+    cookie: str = Field(..., description="Session cookie string (e.g. JSESSIONID=...; AWSALB=...)")
 
 
 class QuestionsFilter(BaseModel):

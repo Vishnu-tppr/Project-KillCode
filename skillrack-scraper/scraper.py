@@ -67,11 +67,13 @@ class SkillRackScraper:
         packs: Optional[List[int]] = None,
         levels: Optional[List[int]] = None,
         delay: float = 0.15,
+        on_progress: Optional[Any] = None,
     ):
         self.session = session
         self.packs = packs if packs is not None else list(PACKS.keys())
         self.levels = levels if levels is not None else CODETRACK_LEVELS
         self.delay = delay
+        self.on_progress = on_progress
         self.progress = ScrapeProgress()
         self._seen_questions: Set[str] = set()
 
@@ -83,6 +85,9 @@ class SkillRackScraper:
         packs_scanned: List[str] = []
         levels_scanned: List[int] = []
 
+        total_steps = max(1, len(self.packs) + len(self.levels))
+        step = 0
+
         # Crawl CODETUTOR packs (pack index 0-6)
         for pack_idx in self.packs:
             if pack_idx not in PACKS:
@@ -90,6 +95,14 @@ class SkillRackScraper:
                 continue
 
             pack_name = PACKS[pack_idx]
+            step += 1
+            pct = int((step / total_steps) * 95)
+            if self.on_progress:
+                try:
+                    self.on_progress(pct, f"Scanning {pack_name} track...", len(all_questions_raw))
+                except Exception:
+                    pass
+
             try:
                 questions = await self._crawl_pack(pack_idx, pack_name, None)
                 all_questions_raw.extend(questions)
@@ -102,6 +115,14 @@ class SkillRackScraper:
 
         # Crawl CODETRACK levels
         for level in self.levels:
+            step += 1
+            pct = int((step / total_steps) * 95)
+            if self.on_progress:
+                try:
+                    self.on_progress(pct, f"Scanning Level {level}...", len(all_questions_raw))
+                except Exception:
+                    pass
+
             try:
                 questions = await self._crawl_level(level)
                 all_questions_raw.extend(questions)
@@ -230,31 +251,25 @@ class SkillRackScraper:
 
         return questions
 
-    async def _crawl_level(self, level: int) -> List[Question]:
+    async def _crawl_level(self, level: int) -> List[QuestionRaw]:
         """Crawl a CODETRACK level (level 2-6 or 100 for Prime).
 
         CODETRACK uses a different URL (codeprogramgroup.xhtml?gt=CODETRACK&lev=N).
-        Each level page lists its own sub-challenges — we iterate packs 0-6 at
-        that level URL so we pick up all languages available at that difficulty tier.
+        Unlike CodeTutor which has 7 language pack buttons, CodeTrack level pages
+        have container row 0 which directly opens the sub-challenges for that tier.
         """
         level_name = "Prime" if level == 100 else f"Level {level}"
         logger.info(f"Crawling CODETRACK {level_name}")
 
-        all_questions: List[Question] = []
-        base_url = CODETRACK_BASE_TEMPLATE.format(level=level)
-
-        for pack_idx in list(PACKS.keys()):
-            pack_name = PACKS[pack_idx]
-            try:
-                questions = await self._crawl_pack(pack_idx, pack_name, level)
-                all_questions.extend(questions)
-                logger.info(f"  CODETRACK {level_name} pack {pack_name}: {len(questions)} questions")
-            except Exception as e:
-                error_msg = f"CODETRACK {level_name} pack {pack_name}: {e}"
-                logger.warning(error_msg)
-                self.progress.errors.append(error_msg)
-            # Brief pause between packs at same level
-            await asyncio.sleep(self.delay)
+        all_questions: List[QuestionRaw] = []
+        try:
+            questions = await self._crawl_pack(0, level_name, level)
+            all_questions.extend(questions)
+            logger.info(f"  CODETRACK {level_name}: {len(questions)} questions found")
+        except Exception as e:
+            error_msg = f"CODETRACK {level_name}: {e}"
+            logger.warning(error_msg)
+            self.progress.errors.append(error_msg)
 
         return all_questions
 
@@ -444,9 +459,15 @@ class SkillRackScraper:
                 language, section, part_name, prob_name, qid
             )
 
-            # Extract level from part page metadata
+            # Extract level from part page metadata or CodeTrack tier
             part_metadata = extract_question_metadata(part_html)
-            prob_level = part_metadata.get("level", "UNKNOWN")
+            meta_level = part_metadata.get("level", "UNKNOWN")
+            if level is not None:
+                prob_level = "CodeTrack - Prime" if level == 100 else f"CodeTrack - Level {level}"
+            elif meta_level != "UNKNOWN":
+                prob_level = meta_level
+            else:
+                prob_level = "CodeTutor"
 
             question = QuestionRaw(
                 level=prob_level,
@@ -468,10 +489,12 @@ class SkillRackScraper:
 async def run_scrape(
     packs: Optional[List[int]] = None,
     levels: Optional[List[int]] = None,
+    cookie: Optional[str] = None,
     cookie_file: Optional[str] = None,
     delay: float = 0.15,
+    on_progress: Optional[Any] = None,
 ) -> ScrapeResult:
     """Convenience function to run a full scrape."""
-    async with SkillRackSession(cookie_file=cookie_file) as session:
-        scraper = SkillRackScraper(session, packs=packs, levels=levels, delay=delay)
+    async with SkillRackSession(cookie=cookie, cookie_file=cookie_file) as session:
+        scraper = SkillRackScraper(session, packs=packs, levels=levels, delay=delay, on_progress=on_progress)
         return await scraper.crawl_all()

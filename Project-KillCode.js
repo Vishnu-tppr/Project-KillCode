@@ -3,12 +3,17 @@
 // @namespace    http://tampermonkey.net/
 // @version      5.1a
 // @description  Bypass tab switching, copy/paste restrictions, full-screen enforcement, auto-solve captcha, and AI-powered solution generator
-// @author       ToonTamilIndia (Captcha solver by adithyagenie)
+// @author       ToonTamilIndia & Vishnu-tppr (Captcha solver by adithyagenie)
 // @match        https://*.skillrack.com/*
 // @match        https://skillrack.com/*
 // @require      https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js
 // @require      https://js.puter.com/v2/
 // @grant        GM_xmlhttpRequest
+// @grant        GM_cookie
+// @grant        GM.cookie
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
 // @grant        unsafeWindow
 // @connect      integrate.api.nvidia.com
 // @connect      127.0.0.1
@@ -30,15 +35,155 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
         if (typeof puter !== 'undefined') unsafeWindow.puter = puter;
     }
 
+    // Helper to fetch cookies from all GM cookie APIs
+    async function collectGmCookies() {
+        const cookieMap = new Map();
+
+        const addCookies = (arr) => {
+            if (Array.isArray(arr)) {
+                for (const c of arr) {
+                    if (c && c.name && c.value) {
+                        cookieMap.set(c.name, c.value);
+                    }
+                }
+            }
+        };
+
+        // 1. GM_cookie.list callback API
+        if (typeof GM_cookie !== 'undefined' && typeof GM_cookie.list === 'function') {
+            const queryGmCookie = (details) => new Promise((res) => {
+                try {
+                    GM_cookie.list(details, (list, err) => {
+                        if (!err && list) res(list);
+                        else res([]);
+                    });
+                } catch (e) {
+                    res([]);
+                }
+            });
+
+            // Query with multiple domain/path combos to catch HttpOnly JSESSIONID
+            // SkillRack cookies are on www.skillrack.com with path=/
+            const queries = [
+                { url: window.location.href },
+                { url: window.location.origin },
+                { domain: 'skillrack.com' },
+                { domain: '.skillrack.com' },
+                { domain: 'www.skillrack.com' },
+                { url: 'https://www.skillrack.com' },
+                { url: 'https://skillrack.com' },
+                {}, // Empty catches all
+            ];
+
+            const results = await Promise.all(queries.map(q => queryGmCookie(q)));
+            for (const r of results) addCookies(r);
+        }
+
+        // 2. GM.cookie.list Promise API (GM4 / Violentmonkey / Tampermonkey v5)
+        if (typeof GM !== 'undefined' && GM && GM.cookie && typeof GM.cookie.list === 'function') {
+            try {
+                const gmQueries = [
+                    { url: window.location.href },
+                    { url: window.location.origin },
+                    { domain: 'skillrack.com' },
+                    { domain: '.skillrack.com' },
+                    { domain: 'www.skillrack.com' },
+                    { url: 'https://www.skillrack.com' },
+                    { url: 'https://skillrack.com' },
+                    {},
+                ];
+                const results = await Promise.all(gmQueries.map(q => GM.cookie.list(q).catch(() => [])));
+                for (const r of results) addCookies(r);
+            } catch (e) { }
+        }
+
+        // 3. Fallback: Parse document.cookie (non-HttpOnly cookies only)
+        if (typeof document !== 'undefined' && document.cookie) {
+            for (const part of document.cookie.split(';')) {
+                const eqIdx = part.indexOf('=');
+                if (eqIdx > 0) {
+                    const k = part.slice(0, eqIdx).trim();
+                    const v = part.slice(eqIdx + 1).trim();
+                    if (k && !cookieMap.has(k)) {
+                        cookieMap.set(k, v);
+                    }
+                }
+            }
+        }
+
+        // 4. CRITICAL: Extract HttpOnly JSESSIONID via live request
+        // GM_cookie.list often doesn't return HttpOnly cookies. Make a real request
+        // via GM_xmlhttpRequest and capture the Cookie request header that the browser sends.
+        if (!cookieMap.has('JSESSIONID') && typeof GM_xmlhttpRequest !== 'undefined') {
+            try {
+                const req = await new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: 'https://www.skillrack.com/faces/candidate/codetutor.xhtml',
+                        // Don't set Cookie header - let browser attach it automatically
+                        anonymous: false, // Use browser's cookie jar
+                        onload: function (response) {
+                            // The browser's actual cookie header was sent with the request
+                            // Check if response has Set-Cookie for session refresh
+                            resolve(response);
+                        },
+                        onerror: function (err) {
+                            reject(err);
+                        }
+                    });
+                });
+                // If request succeeded, the browser sent its cookies automatically
+                // Check response for Set-Cookie (session refresh)
+                if (req && req.responseHeadersRaw) {
+                    const setCookieMatches = req.responseHeadersRaw.match(/^set-cookie:\s*(JSESSIONID=[^;\r\n]+)/gim) || [];
+                    if (setCookieMatches.length) {
+                        const sid = setCookieMatches[setCookieMatches.length - 1].replace(/^set-cookie:\s*/i, '').trim();
+                        cookieMap.set('JSESSIONID', sid.split(';')[0].split('=')[1]);
+                        console.debug('[KillCode:GM_cookie] Extracted JSESSIONID from Set-Cookie:', sid.substring(0, 30) + '...');
+                    }
+                }
+            } catch (e) {
+                console.debug('[KillCode:GM_cookie] Live request fallback failed:', e);
+            }
+        }
+
+        // 5. DOM fallback: JSESSIONID sometimes appears in form action URLs
+        if (!cookieMap.has('JSESSIONID')) {
+            try {
+                const els = document.querySelectorAll('form[action*="jsessionid="], a[href*="jsessionid="], link[href*="jsessionid="]');
+                for (const el of els) {
+                    const attr = el.getAttribute('action') || el.getAttribute('href') || '';
+                    const match = attr.match(/jsessionid=([A-Za-z0-9.\-_]{16,})/i);
+                    if (match && match[1]) {
+                        cookieMap.set('JSESSIONID', match[1]);
+                        console.debug('[KillCode:GM_cookie] Extracted JSESSIONID from DOM:', match[1].substring(0, 30) + '...');
+                        break;
+                    }
+                }
+            } catch (e) { }
+        }
+
+        if (cookieMap.size === 0) return '';
+        return Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
+    }
+
     // Listen for requests from the webpage context
-    window.addEventListener('message', (event) => {
+    // SECURITY: Only accept messages from same-origin pages to prevent malicious scripts from triggering privileged requests
+    window.addEventListener('message', async (event) => {
+        // Validate origin to prevent CSRF-like attacks
+        if (event.origin !== window.location.origin) {
+            console.warn('[KillCode] Blocked postMessage from unauthorized origin:', event.origin);
+            return;
+        }
         if (event.data && event.data.type === 'GM_XHR_REQUEST') {
             const { id, options } = event.data;
+            const reqTimeout = options.timeout || 180000;
             GM_xmlhttpRequest({
                 method: options.method || 'GET',
                 url: options.url,
                 headers: options.headers,
                 data: options.data,
+                timeout: reqTimeout,
                 onload: function (response) {
                     window.postMessage({
                         type: 'GM_XHR_RESPONSE',
@@ -55,17 +200,42 @@ if (typeof GM_xmlhttpRequest !== 'undefined') {
                         id: id,
                         error: err.error || 'Network error'
                     }, '*');
+                },
+                ontimeout: function () {
+                    window.postMessage({
+                        type: 'GM_XHR_RESPONSE',
+                        id: id,
+                        error: `Request timed out (${Math.round(reqTimeout / 1000)}s) on ${options.url}`
+                    }, '*');
                 }
             });
+        } else if (event.data && event.data.type === 'GM_GET_COOKIES_REQUEST') {
+            const { id } = event.data;
+            try {
+                const cookieStr = await collectGmCookies();
+                console.debug('[KillCode:GM_cookie] Collected cookies (keys: ' + (cookieStr.split(';').length) + ', length: ' + cookieStr.length + ')');
+                window.postMessage({
+                    type: 'GM_GET_COOKIES_RESPONSE',
+                    id: id,
+                    cookies: cookieStr
+                }, '*');
+            } catch (e) {
+                console.warn('[KillCode:GM_cookie] Error collecting cookies:', e);
+                window.postMessage({
+                    type: 'GM_GET_COOKIES_RESPONSE',
+                    id: id,
+                    cookies: document.cookie || ''
+                }, '*');
+            }
         }
     });
 
-    // Inject the main code into the webpage context
-    const script = document.createElement('script');
-    script.textContent = `(${mainCode.toString()})();`;
-    (document.head || document.documentElement).appendChild(script);
-    script.remove();
 }
+
+const script = document.createElement('script');
+script.textContent = `(${mainCode.toString()})();`;
+(document.head || document.documentElement).appendChild(script);
+script.remove();
 
 function mainCode() {
     'use strict';
@@ -74,9 +244,17 @@ function mainCode() {
     const gmFetch = (url, options = {}) => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substr(2, 9);
+            const timeoutMs = options.timeout || 180000; // 180s default timeout for AI models
+            const timeoutId = setTimeout(() => {
+                window.removeEventListener('message', handleMessage);
+                reject(new Error(`gmFetch timeout (${Math.round(timeoutMs / 1000)}s) on ${url}`));
+            }, timeoutMs + 1000);
 
             const handleMessage = (event) => {
+                // Validate origin to prevent spoofed responses
+                if (event.origin !== window.location.origin) return;
                 if (event.data && event.data.type === 'GM_XHR_RESPONSE' && event.data.id === requestId) {
+                    clearTimeout(timeoutId);
                     window.removeEventListener('message', handleMessage);
                     if (event.data.error) {
                         reject(new Error(event.data.error));
@@ -85,6 +263,9 @@ function mainCode() {
                             ok: event.data.status >= 200 && event.data.status < 300,
                             status: event.data.status,
                             statusText: event.data.statusText,
+                            responseText: event.data.responseText,
+                            responseHeaders: event.data.responseHeaders || '',
+                            responseHeadersRaw: event.data.responseHeaders || '',
                             headers: {
                                 get: (name) => {
                                     const headersText = event.data.responseHeaders || '';
@@ -105,11 +286,103 @@ function mainCode() {
                 type: 'GM_XHR_REQUEST',
                 id: requestId,
                 options: {
-                    method: options.method,
+                    method: options.method || 'GET',
                     url: url,
-                    headers: options.headers,
-                    data: options.body
+                    headers: options.headers || {},
+                    data: options.body || options.data,
+                    timeout: timeoutMs
                 }
+            }, '*');
+        });
+    };
+
+    // Helper to extract jsessionid from DOM links or form attributes
+    function extractJSessionIdFromDOM() {
+        try {
+            const els = document.querySelectorAll('form[action*="jsessionid="], a[href*="jsessionid="], link[href*="jsessionid="], script[src*="jsessionid="]');
+            for (const el of els) {
+                const attr = el.getAttribute('action') || el.getAttribute('href') || el.getAttribute('src') || '';
+                const match = attr.match(/jsessionid=([A-Za-z0-9.\-_]+)/i);
+                if (match && match[1]) return match[1];
+            }
+            const match = (document.documentElement.innerHTML || '').match(/[;?&]jsessionid=([A-Za-z0-9.\-_]{16,})/i);
+            if (match && match[1]) return match[1];
+        } catch (e) { }
+        return '';
+    }
+
+    // ── Storage Wrapper (defined early: used by gmGetCookies below) ─────────
+    const storage = {
+        getValue(key, def) {
+            try {
+                if (typeof GM_getValue !== 'undefined') {
+                    return GM_getValue(key, def);
+                }
+            } catch (_) { }
+            const val = localStorage.getItem(key);
+            return val !== null ? val : def;
+        },
+        setValue(key, value) {
+            try {
+                if (typeof GM_setValue !== 'undefined') {
+                    GM_setValue(key, value);
+                    return;
+                }
+            } catch (_) { }
+            localStorage.setItem(key, value);
+        },
+        deleteValue(key) {
+            try {
+                if (typeof GM_deleteValue !== 'undefined') {
+                    GM_deleteValue(key);
+                    return;
+                }
+            } catch (_) { }
+            localStorage.removeItem(key);
+        }
+    };
+
+    // A wrapper to extract full SkillRack cookies (including httpOnly) via GM_cookie bridge
+    const gmGetCookies = () => {
+        return new Promise((resolve) => {
+            const requestId = Math.random().toString(36).substr(2, 9);
+            const timer = setTimeout(() => {
+                window.removeEventListener('message', handleMessage);
+                let fallback = document.cookie || '';
+                const domJ = extractJSessionIdFromDOM();
+                if (domJ && !fallback.includes('JSESSIONID')) {
+                    fallback = `JSESSIONID=${domJ}; ` + fallback;
+                }
+                const saved = storage.getValue('skillrack_custom_cookie', '');
+                if (saved && !fallback.includes('JSESSIONID')) {
+                    fallback = saved + '; ' + fallback;
+                }
+                resolve(fallback);
+            }, 1500);
+
+            const handleMessage = (event) => {
+                // Validate origin to prevent spoofed responses
+                if (event.origin !== window.location.origin) return;
+                if (event.data && event.data.type === 'GM_GET_COOKIES_RESPONSE' && event.data.id === requestId) {
+                    clearTimeout(timer);
+                    window.removeEventListener('message', handleMessage);
+                    let resCookies = event.data.cookies || document.cookie || '';
+                    const domJ = extractJSessionIdFromDOM();
+                    if (domJ && !resCookies.includes('JSESSIONID')) {
+                        resCookies = `JSESSIONID=${domJ}; ` + resCookies;
+                    }
+                    const saved = storage.getValue('skillrack_custom_cookie', '');
+                    if (saved && !resCookies.includes('JSESSIONID')) {
+                        resCookies = saved + '; ' + resCookies;
+                    }
+                    resolve(resCookies);
+                }
+            };
+
+            window.addEventListener('message', handleMessage);
+            window.postMessage({
+                type: 'GM_GET_COOKIES_REQUEST',
+                id: requestId
             }, '*');
         });
     };
@@ -117,9 +390,9 @@ function mainCode() {
     // ============================================
     // SCRIPT VERSION & REMOTE URLS
     // ============================================
-    const SCRIPT_VERSION = '5.0';
-    const REMOTE_SCRIPT_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/skillrack-script/refs/heads/main/Anti-Cheat%20Bypass%205.0.user.js';
-    const KILL_SWITCH_URL = 'https://raw.githubusercontent.com/Aron-2005/solid-octo-doodle/refs/heads/main/kill.txt';
+    const SCRIPT_VERSION = '5.1';
+    const REMOTE_SCRIPT_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/Project-KillCode.js';
+    const KILL_SWITCH_URL = 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/refs/heads/main/kill.txt';
     const DISCLAIMER_ACCEPTED_KEY = 'skillrack_bypass_disclaimer_accepted';
     const SCRIPT_DISABLED_KEY = 'skillrack_bypass_disabled_by_killswitch';
 
@@ -140,51 +413,71 @@ function mainCode() {
     };
 
     // ============================================
-    // KILL SWITCH CHECK
+    // KILL SWITCH CHECK (Live Background Check)
     // ============================================
     const checkKillSwitch = async () => {
+        const cachedDisabled = localStorage.getItem(SCRIPT_DISABLED_KEY);
+        if (cachedDisabled === 'true') return false;
+
         try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000);
             const response = await fetch(KILL_SWITCH_URL + '?t=' + Date.now(), {
-                cache: 'no-store'
+                cache: 'no-store',
+                signal: controller.signal
             });
+            clearTimeout(timeoutId);
             if (!response.ok) {
-                console.log('[SkillRack Bypass] Kill switch check failed, allowing script to run');
-                return true; // Allow if can't fetch
+                console.warn('[KillCode] Kill-switch check failed (HTTP', response.status, ') - respecting cached state');
+                // FAIL-SAFE: Respect the cached disabled state; if no cache, assume enabled
+                return cachedDisabled !== 'true';
             }
             const text = (await response.text()).trim().toLowerCase();
-            if (text === 'false') {
-                console.log('[SkillRack Bypass] Kill switch activated - script disabled');
+            if (text === 'false' || text === 'disabled' || text === 'kill' || text === '0') {
                 localStorage.setItem(SCRIPT_DISABLED_KEY, 'true');
+                console.log('[KillCode] Kill-switch activated - script disabled');
                 return false;
             }
             localStorage.removeItem(SCRIPT_DISABLED_KEY);
             return true;
         } catch (e) {
-            console.log('[SkillRack Bypass] Kill switch check error:', e);
-            return true; // Allow if error
+            console.warn('[KillCode] Kill-switch check error:', e.message, '- respecting cached state');
+            // FAIL-SAFE: Network errors should not override cached disabled state
+            // If previously marked disabled, stay disabled; otherwise assume enabled
+            return cachedDisabled !== 'true';
         }
     };
 
     // ============================================
-    // VERSION CHECK
+    // VERSION CHECK (Cached - 6h TTL)
     // ============================================
     const checkForUpdate = async () => {
+        const lastCheck = parseInt(localStorage.getItem('killcode_last_update_check') || '0', 10);
+        const cachedVersion = localStorage.getItem('killcode_cached_remote_version');
+
+        if (Date.now() - lastCheck < 6 * 60 * 60 * 1000 && cachedVersion) {
+            return cachedVersion;
+        }
+
         try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
             const response = await fetch(REMOTE_SCRIPT_URL + '?t=' + Date.now(), {
-                cache: 'no-store'
+                cache: 'no-store',
+                signal: controller.signal
             });
-            if (!response.ok) return null;
+            clearTimeout(timeoutId);
+            if (!response.ok) return cachedVersion || null;
 
             const scriptText = await response.text();
-            // Extract version from @version line
             const versionMatch = scriptText.match(/@version\s+(\d+\.\d+(?:\.\d+)?)/);
             if (versionMatch) {
+                localStorage.setItem('killcode_last_update_check', String(Date.now()));
+                localStorage.setItem('killcode_cached_remote_version', versionMatch[1]);
                 return versionMatch[1];
             }
-        } catch (e) {
-            console.log('[SkillRack Bypass] Version check error:', e);
-        }
-        return null;
+        } catch (e) { }
+        return cachedVersion || null;
     };
 
     // ============================================
@@ -512,26 +805,24 @@ function mainCode() {
         return true;
     };
 
-    // Run initialization and only continue if all checks pass
-    let scriptEnabled = false;
+    // Run initialization immediately without blocking page load
+    let scriptEnabled = (localStorage.getItem(SCRIPT_DISABLED_KEY) !== 'true');
     let initCallbacks = [];
 
     // Register a callback to run when script is enabled
     const onScriptEnabled = (callback) => {
         if (scriptEnabled) {
-            callback();
+            try { callback(); } catch (e) { console.error('[SkillRack Bypass] Callback error:', e); }
         } else {
             initCallbacks.push(callback);
         }
     };
 
-    // We need to run async initialization but continue with the rest of the script
-    // For features that run at document-start, we'll check scriptEnabled flag
+    // Run verification non-blockingly in background
     (async () => {
-        scriptEnabled = await initializeScript();
-        if (scriptEnabled) {
-            console.log('[SkillRack Bypass] All checks passed - script enabled');
-            // Run all registered callbacks
+        const ok = await initializeScript();
+        if (ok && !scriptEnabled) {
+            scriptEnabled = true;
             initCallbacks.forEach(cb => {
                 try { cb(); } catch (e) { console.error('[SkillRack Bypass] Callback error:', e); }
             });
@@ -554,6 +845,7 @@ function mainCode() {
         enableContextMenu: true,
         enableFullScreenCopyMode: false,
         enablePopupMode: false,
+        humanTypingMode: false,   // Type AI solution char-by-char at human speed (toggle via 'q' key)
 
         // Captcha solver (credit: adithyagenie)
         enableCaptchaSolver: true,
@@ -658,22 +950,68 @@ function mainCode() {
         return { ...DEFAULT_SETTINGS };
     };
 
-    const saveSettings = (settings) => {
+    const saveSettings = (settings = SETTINGS) => {
         try {
+            if (!settings || typeof settings !== 'object') {
+                console.warn('[Settings] Invalid settings object provided, using current SETTINGS');
+                settings = SETTINGS;
+            }
             localStorage.setItem('skillrack_bypass_settings', JSON.stringify(settings));
+            console.debug('[Settings] Saved successfully');
         } catch (e) {
-            console.log('Failed to save settings:', e);
+            console.error('[Settings] Failed to save settings:', e.message);
+            // Attempt to store in memory fallback if localStorage is full
+            if (e.name === 'QuotaExceededError') {
+                console.warn('[Settings] localStorage quota exceeded - settings saved in current session only');
+            }
         }
     };
 
     let SETTINGS = loadSettings();
 
-    const notifyPopup = (message) => {
-        if (!SETTINGS.enablePopupMode) {
-            console.warn('[Popup disabled]', message);
-            return;
+    // ========== NON-BLOCKING TOAST NOTIFICATION SYSTEM ==========
+    const showToastPill = (message, type = 'info', duration = 2500) => {
+        try {
+            let container = document.getElementById('pkc-toast-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'pkc-toast-container';
+                container.style.cssText = 'position:fixed;top:16px;right:16px;z-index:9999999;display:flex;flex-direction:column;gap:8px;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+                (document.body || document.documentElement).appendChild(container);
+            }
+
+            const toast = document.createElement('div');
+            toast.style.cssText = 'background:rgba(20,20,26,0.94);color:#ffffff;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:500;box-shadow:0 6px 20px rgba(0,0,0,0.4);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.12);transition:all 0.25s ease-out;opacity:0;transform:translateY(-8px);pointer-events:auto;display:flex;align-items:center;gap:8px;';
+
+            const isError = type === 'error' || message.toLowerCase().includes('error') || message.toLowerCase().includes('failed');
+            const icon = isError ? '✕' : type === 'success' ? '✓' : 'ℹ';
+            const iconColor = isError ? '#FF5252' : type === 'success' ? '#4CAF50' : '#64B5F6';
+
+            toast.innerHTML = `<span style="color:${iconColor};font-weight:bold;font-size:14px;">${icon}</span><span style="color:#f0f0f0;">${message}</span>`;
+            container.appendChild(toast);
+
+            requestAnimationFrame(() => {
+                toast.style.opacity = '1';
+                toast.style.transform = 'translateY(0)';
+            });
+
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(-8px)';
+                setTimeout(() => toast.remove(), 250);
+            }, duration);
+        } catch (e) {
+            console.log('[Toast]', message);
         }
-        alert(message);
+    };
+
+    const notifyPopup = (message, duration = 3000) => {
+        console.log('[Notification]', message);
+        if (SETTINGS.enablePopupMode) {
+            alert(message);
+        } else {
+            showToastPill(message, 'info', duration);
+        }
     };
 
     const FULLSCREEN_COPY_PROMPT = '\n\nReturn a structured answer with: Summary, Inputs, Outputs, Constraints, Approach, Complexity, and Final Solution.';
@@ -3269,6 +3607,7 @@ function mainCode() {
         try {
             response = await gmFetch(OmniRouteProvider.CONFIG.CHAT_URL(), {
                 method: 'POST',
+                timeout: 180000,
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${apiKey}`
@@ -3283,6 +3622,9 @@ function mainCode() {
                 })
             });
         } catch (networkErr) {
+            if (networkErr.message.includes('timeout')) {
+                throw new Error(`OmniRoute: Request timed out. The local LLM backend at ${OmniRouteProvider.CONFIG.BASE_URL()} took longer than 180s to respond. Check if OmniRoute/local model server is responsive or select a faster model.`);
+            }
             if (networkErr.message.includes('ECONNREFUSED') || networkErr.message.includes('Failed to fetch') || networkErr.message.includes('NetworkError')) {
                 throw new Error('OmniRoute: Cannot connect to gateway at ' + OmniRouteProvider.CONFIG.BASE_URL() + '. Is OmniRoute running on port 20128?');
             }
@@ -5877,33 +6219,129 @@ function mainCode() {
         }
     }, true);
 
-    // 1. BLOCK TAB SWITCH DETECTION (Page Visibility API)
+    // 1. ISOLATED TAB SANDBOX & ANTI-PROCTORING FIREWALL
     if (SETTINGS.bypassTabDetection) {
-        Object.defineProperty(document, 'visibilityState', {
-            get: function () {
-                return 'visible'; // Always report as visible
-            },
-            configurable: true
+        console.log('[KillCode Sandbox] Activating Isolated Tab Sandbox Firewall...');
+
+        // ── 1a. Trap Page Visibility API (Always VISIBLE) ──────────────────────
+        try {
+            Object.defineProperty(document, 'visibilityState', {
+                get: () => 'visible',
+                configurable: true
+            });
+            Object.defineProperty(document, 'hidden', {
+                get: () => false,
+                configurable: true
+            });
+            Object.defineProperty(document, 'webkitVisibilityState', {
+                get: () => 'visible',
+                configurable: true
+            });
+            Object.defineProperty(document, 'webkitHidden', {
+                get: () => false,
+                configurable: true
+            });
+        } catch (e) { }
+
+        // ── 1b. Trap Window Focus API (Always FOCUSED) ─────────────────────────
+        try {
+            Object.defineProperty(document, 'hasFocus', {
+                value: () => true,
+                writable: true,
+                configurable: true
+            });
+            Object.defineProperty(window, 'hasFocus', {
+                value: () => true,
+                writable: true,
+                configurable: true
+            });
+        } catch (e) { }
+
+        // ── 1c. Block window/document level event handlers ──────────────────────
+        const nullifyProperties = ['onblur', 'onfocus', 'onmouseleave', 'onmouseout', 'onvisibilitychange', 'onpagehide'];
+        nullifyProperties.forEach(prop => {
+            try {
+                window[prop] = null;
+                document[prop] = null;
+                Object.defineProperty(window, prop, {
+                    get: () => null,
+                    set: (fn) => console.log(`[KillCode Sandbox] Blocked ${prop} assignment`),
+                    configurable: true
+                });
+                Object.defineProperty(document, prop, {
+                    get: () => null,
+                    set: (fn) => console.log(`[KillCode Sandbox] Blocked document.${prop} assignment`),
+                    configurable: true
+                });
+            } catch (e) { }
         });
 
-        Object.defineProperty(document, 'hidden', {
-            get: function () {
-                return false; // Always report as not hidden
-            },
-            configurable: true
-        });
+        // ── 1d. Block Proctoring Event Listeners (Tab Switch, Blur, Mouse Leave) ──
+        const ISOLATED_BLOCKED_EVENTS = new Set([
+            'visibilitychange', 'webkitvisibilitychange', 'mozvisibilitychange',
+            'blur', 'focus', 'focusout', 'pagehide', 'freeze',
+            'mouseleave', 'mouseout', 'pointerleave', 'dragleave', 'mousewheel'
+        ]);
 
-        // Override addEventListener to block visibilitychange events
-        // But allow other events to pass through normally
         EventTarget.prototype.addEventListener = function (type, listener, options) {
-            if (type === 'visibilitychange' || type === 'webkitvisibilitychange') {
-                console.log('Blocked visibilitychange event listener');
-                return; // Don't add the listener
+            const typeLower = String(type).toLowerCase();
+            if (ISOLATED_BLOCKED_EVENTS.has(typeLower)) {
+                if (this === window || this === document || this === document.body || this === document.documentElement) {
+                    console.log(`[KillCode Sandbox] Blocked isolated ${type} listener on ${this.constructor.name}`);
+                    return;
+                }
             }
             return originalAddEventListener.call(this, type, listener, options);
         };
+
+        // ── 1e. Block beforeunload / unload logout popups ──────────────────────
+        window.addEventListener('beforeunload', (e) => {
+            e.stopImmediatePropagation();
+        }, true);
+
+        // ── 1f. Suppress native alert/confirm popups during tests & assessments ──
+        const isTestOrAssessment = location.href.includes('dailytest') ||
+            location.href.includes('dailychallenge') ||
+            location.href.includes('mcq') ||
+            location.href.includes('assessment') ||
+            location.href.includes('test');
+        if (isTestOrAssessment || !SETTINGS.enablePopupMode) {
+            window.alert = function (msg) {
+                console.log('[Native Alert Suppressed]', msg);
+                showToastPill(String(msg), 'info', 2500);
+            };
+            if (typeof unsafeWindow !== 'undefined') {
+                unsafeWindow.alert = function (msg) {
+                    console.log('[Unsafe Alert Suppressed]', msg);
+                    showToastPill(String(msg), 'info', 2500);
+                };
+            }
+        }
     }
 
+    // ========== KEYBOARD SHORTCUT: Press 'Q' to toggle Human Typing Speed Mode ==========
+    window.addEventListener('keydown', (e) => {
+        if (e.key && e.key.toLowerCase() === 'q') {
+            const active = document.activeElement;
+            const tag = (active?.tagName || '').toUpperCase();
+            const isEditable = active?.isContentEditable ||
+                tag === 'INPUT' ||
+                tag === 'TEXTAREA' ||
+                active?.classList?.contains('ace_text-input');
+
+            // If user is NOT actively typing in an input field, toggle Human Typing Speed Mode
+            if (!isEditable && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                e.preventDefault();
+                SETTINGS.humanTypingMode = !SETTINGS.humanTypingMode;
+                saveSettings();
+                showToastPill(
+                    `Human Typing Speed: ${SETTINGS.humanTypingMode ? 'ON (Natural Typing)' : 'OFF (Instant Insert)'}`,
+                    SETTINGS.humanTypingMode ? 'success' : 'info',
+                    2500
+                );
+            }
+        }
+    }, true);
     // 2. ENABLE COPY/PASTE FUNCTIONALITY
     if (SETTINGS.bypassCopyPaste) {
         // Block ALL clipboard event prevention by stopping propagation
@@ -6361,28 +6799,45 @@ function mainCode() {
     const originalFetch = window.fetch;
 
     if (SETTINGS.blockTelemetry) {
-        // Override XMLHttpRequest and fetch to monitor requests
+        // Block sendBeacon completely for telemetry & proctoring endpoints
+        if (navigator.sendBeacon) {
+            const _origBeacon = navigator.sendBeacon.bind(navigator);
+            navigator.sendBeacon = function (url, data) {
+                const u = String(url).toLowerCase();
+                if (u.includes('logout') || u.includes('tab-switch') || u.includes('tab') ||
+                    u.includes('blur') || u.includes('focus') || u.includes('proctoring') ||
+                    u.includes('heartbeat') || u.includes('telemetry') || u.includes('activity') ||
+                    u.includes('log') || u.includes('event') || u.includes('monitor')) {
+                    console.log(`[KillCode Firewall] Blocked sendBeacon telemetry ping to: ${url}`);
+                    return true; // Fake successful transmission
+                }
+                return _origBeacon(url, data);
+            };
+        }
+
+        // Override XMLHttpRequest and fetch to monitor and drop tracking pings
         XMLHttpRequest.prototype.open = function (method, url) {
-            this._url = url;
+            this._url = String(url || '');
             return originalXHROpen.apply(this, arguments);
         };
 
         XMLHttpRequest.prototype.send = function (body) {
-            // Check if this is a heartbeat/telemetry request
-            // Be more specific to avoid blocking legitimate requests
-            if (this._url && (
-                this._url.includes('/heartbeat') ||
-                this._url.includes('/telemetry') ||
-                this._url.includes('/proctoring') ||
-                this._url.includes('/activity-monitor') ||
-                this._url.includes('/tab-switch')
-            )) {
-                console.log('Blocked telemetry request to:', this._url);
-                // Simulate successful response
+            const u = (this._url || '').toLowerCase();
+            if (u.includes('/heartbeat') ||
+                u.includes('/telemetry') ||
+                u.includes('/proctoring') ||
+                u.includes('/activity') ||
+                u.includes('/tab-switch') ||
+                u.includes('/tab') ||
+                u.includes('/blur') ||
+                u.includes('/focus') ||
+                u.includes('/eventlog') ||
+                u.includes('/logactivity')) {
+                console.log('[KillCode Firewall] Blocked XHR telemetry to:', this._url);
                 this.readyState = 4;
                 this.status = 200;
                 this.statusText = 'OK';
-                if (this.onreadystatechange) {
+                if (typeof this.onreadystatechange === 'function') {
                     this.onreadystatechange();
                 }
                 return;
@@ -6391,19 +6846,19 @@ function mainCode() {
         };
 
         window.fetch = function (resource, init) {
-            const url = resource.url || resource;
-            // Check if this is a heartbeat/telemetry request
-            // Be more specific to avoid blocking legitimate requests
-            if (url && (
-                url.includes('/heartbeat') ||
-                url.includes('/telemetry') ||
-                url.includes('/proctoring') ||
-                url.includes('/activity-monitor') ||
-                url.includes('/tab-switch')
-            )) {
-                console.log('Blocked telemetry fetch to:', url);
-                // Return a fake successful response
-                return Promise.resolve(new Response(JSON.stringify({ success: true }), {
+            const urlStr = String(resource?.url || resource || '').toLowerCase();
+            if (urlStr.includes('/heartbeat') ||
+                urlStr.includes('/telemetry') ||
+                urlStr.includes('/proctoring') ||
+                urlStr.includes('/activity') ||
+                urlStr.includes('/tab-switch') ||
+                urlStr.includes('/tab') ||
+                urlStr.includes('/blur') ||
+                urlStr.includes('/focus') ||
+                urlStr.includes('/eventlog') ||
+                urlStr.includes('/logactivity')) {
+                console.log('[KillCode Firewall] Blocked fetch telemetry to:', urlStr);
+                return Promise.resolve(new Response(JSON.stringify({ success: true, status: 'ok' }), {
                     status: 200,
                     statusText: 'OK',
                     headers: { 'Content-Type': 'application/json' }
@@ -6413,25 +6868,53 @@ function mainCode() {
         };
     } // End of SETTINGS.blockTelemetry
 
-    // 6. RESTORE NORMAL FUNCTIONALITY FOR USER INTERACTION
-    // Allow normal event handling after a short delay
-    setTimeout(() => {
-        // Restore addEventListener for non-monitoring events
-        EventTarget.prototype.addEventListener = originalAddEventListener;
-        document.addEventListener = originalDocumentAddEventListener;
-
-        // But keep blocking specific anti-cheat events only if enabled
-        if (SETTINGS.bypassTabDetection) {
-            const blockEvents = ['visibilitychange', 'webkitvisibilitychange'];
-
-            const newAddEventListener = EventTarget.prototype.addEventListener;
-            EventTarget.prototype.addEventListener = function (type, listener, options) {
-                if (blockEvents.includes(type)) {
-                    console.log(`Blocked ${type} event listener`);
-                    return;
+    // 6. SILENT SESSION KEEP-ALIVE (PREVENT SESSION EXPIRATION)
+    // Sends a background HEAD request every 2.5 minutes to refresh session cookies.
+    // Prevents backend session timeout while leaving proctoring system blind.
+    const startSessionKeepAlive = () => {
+        setInterval(() => {
+            try {
+                if (typeof GM_xmlhttpRequest !== 'undefined') {
+                    GM_xmlhttpRequest({
+                        method: 'HEAD',
+                        url: location.href,
+                        onload: () => console.log('[KillCode Sandbox] Session refreshed silently.'),
+                        onerror: () => { }
+                    });
+                } else if (originalFetch) {
+                    originalFetch(location.href, { method: 'HEAD', cache: 'no-store' })
+                        .then(() => console.log('[KillCode Sandbox] Session refreshed silently.'))
+                        .catch(() => { });
                 }
-                return newAddEventListener.call(this, type, listener, options);
+            } catch (e) { }
+        }, 150000); // 2.5 minutes
+    };
+    startSessionKeepAlive();
+
+    // 7. ENSURE PERMANENT PROCTORING ISOLATION
+    setTimeout(() => {
+        if (SETTINGS.bypassTabDetection) {
+            const ISOLATED_BLOCKED_EVENTS_PERMANENT = new Set([
+                'visibilitychange', 'webkitvisibilitychange', 'mozvisibilitychange',
+                'blur', 'focus', 'focusout', 'pagehide', 'freeze',
+                'mouseleave', 'mouseout', 'pointerleave', 'dragleave', 'mousewheel'
+            ]);
+
+            EventTarget.prototype.addEventListener = function (type, listener, options) {
+                const typeLower = String(type).toLowerCase();
+                if (ISOLATED_BLOCKED_EVENTS_PERMANENT.has(typeLower)) {
+                    if (this === window || this === document || this === document.body || this === document.documentElement) {
+                        console.log(`[KillCode Sandbox] Blocked isolated ${type} listener (post-init)`);
+                        return;
+                    }
+                }
+                return originalAddEventListener.call(this, type, listener, options);
             };
+
+            window.onblur = null;
+            window.onfocus = null;
+            document.onblur = null;
+            document.onfocus = null;
         }
     }, 1000);
 
@@ -6532,60 +7015,91 @@ function mainCode() {
         maxRetries: 12,
         observerTimeout: 8000
     };
+    let captchaRunInProgress = false;
+    let captchaPageObserver = null;
 
-    // Find captcha image dynamically
-    function findCaptchaImage() {
-        const allImages = document.querySelectorAll('img');
-        const idPattern = /^j_id_[a-zA-Z0-9]+$/;
-
-        for (const img of allImages) {
-            if (img.id && idPattern.test(img.id)) {
-                if (img.src && img.src.length > 100) {
-                    console.log(`[Captcha] Found image with matching ID pattern: ${img.id}`);
-                    return img;
-                }
-            }
-        }
-
-        const knownIds = ['j_id_5s', 'j_id_76', 'j_id_75', 'j_id_74', 'j_id_5r', 'j_id_5t'];
-        for (const id of knownIds) {
-            const img = document.getElementById(id);
-            if (img && img.tagName === 'IMG' && img.src && img.src.length > 100) {
-                console.log(`[Captcha] Found image with known ID: ${id}`);
-                return img;
-            }
-        }
-
-        const base64Images = document.querySelectorAll('img[src^="data:image"]');
-        for (const img of base64Images) {
-            const width = img.width || img.naturalWidth;
-            const height = img.height || img.naturalHeight;
-
-            if (width > 50 && width < 400 && height > 20 && height < 100) {
-                console.log(`[Captcha] Found base64 image: ${width}x${height}`);
-                return img;
-            }
-        }
-
-        const codeEditorPanel = document.getElementById('codeeditorpanel');
-        if (codeEditorPanel) {
-            const img = codeEditorPanel.querySelector('img[src^="data:image"]');
-            if (img && img.src && img.src.length > 100) {
-                console.log('[Captcha] Found image in code editor panel');
-                return img;
-            }
-        }
+    // Find proceed / submit button for captcha dynamically
+    function findCaptchaProceedButton() {
+        let btn = document.getElementById(PROCEED_BTN_ID);
+        if (btn) return btn;
 
         const captchaInput = document.getElementById(CAPTCHA_INPUT_ID);
         if (captchaInput) {
             let container = captchaInput.parentElement;
             for (let i = 0; i < 5 && container; i++) {
-                const img = container.querySelector('img[src^="data:image"]');
-                if (img && img.src && img.src.length > 100) {
-                    console.log(`[Captcha] Found image near input (depth: ${i})`);
-                    return img;
+                btn = container.querySelector('button, input[type="submit"], input[type="button"], .ui-button');
+                if (btn) return btn;
+                container = container.parentElement;
+            }
+        }
+
+        const allButtons = document.querySelectorAll('button, input[type="submit"], .ui-button');
+        for (const b of allButtons) {
+            const txt = (b.textContent || b.value || '').toLowerCase();
+            if (txt.includes('proceed') || txt.includes('submit') || txt.includes('continue') || txt.includes('solve')) {
+                return b;
+            }
+        }
+        return null;
+    }
+
+    // Find captcha image dynamically
+    function findCaptchaImage() {
+        const captchaInput = document.getElementById(CAPTCHA_INPUT_ID);
+
+        // 1. Priority 1: Image near captcha input box
+        if (captchaInput) {
+            let container = captchaInput.parentElement;
+            for (let i = 0; i < 5 && container; i++) {
+                const imgs = container.querySelectorAll('img');
+                for (const img of imgs) {
+                    if (img.src && (img.src.startsWith('data:image') || img.src.toLowerCase().includes('captcha') || img.src.length > 50)) {
+                        console.log(`[Captcha] Found image near input (depth: ${i})`);
+                        return img;
+                    }
                 }
                 container = container.parentElement;
+            }
+        }
+
+        // 2. Priority 2: Code editor / challenge panel captcha container
+        const codeEditorPanel = document.getElementById('codeeditorpanel');
+        if (codeEditorPanel) {
+            const img = codeEditorPanel.querySelector('img[src^="data:image"], img[src*="captcha" i]');
+            if (img && img.src && img.src.length > 50) {
+                console.log('[Captcha] Found image in code editor panel');
+                return img;
+            }
+        }
+
+        // 3. Priority 3: Base64 images sized like captchas
+        const base64Images = document.querySelectorAll('img[src^="data:image"]');
+        for (const img of base64Images) {
+            const width = img.width || img.naturalWidth;
+            const height = img.height || img.naturalHeight;
+
+            if (width > 50 && width < 400 && height > 15 && height < 120) {
+                console.log(`[Captcha] Found base64 image: ${width}x${height}`);
+                return img;
+            }
+        }
+
+        // 4. Priority 4: Images with captcha keyword in ID or alt/src
+        const captchaKeywordImgs = document.querySelectorAll('img[src*="captcha" i], img[alt*="captcha" i], img[id*="captcha" i]');
+        for (const img of captchaKeywordImgs) {
+            if (img.src && img.src.length > 20) {
+                console.log(`[Captcha] Found image with captcha keyword: ${img.id || 'img'}`);
+                return img;
+            }
+        }
+
+        // 5. Fallback: Known JSF image IDs
+        const knownIds = ['j_id_5s', 'j_id_76', 'j_id_75', 'j_id_74', 'j_id_5r', 'j_id_5t'];
+        for (const id of knownIds) {
+            const img = document.getElementById(id);
+            if (img && img.tagName === 'IMG' && img.src && img.src.length > 50) {
+                console.log(`[Captcha] Found image with known ID: ${id}`);
+                return img;
             }
         }
 
@@ -6854,8 +7368,8 @@ function mainCode() {
             return result;
         }
 
-        // ===== METHOD 4: Numbers with + as 4 or t or similar OCR errors =====
-        match = cleanedText.match(/(\d{1,2})\s*[4tT\+xX\*]\s*(\d{1,2})/);
+        // ===== METHOD 4: Numbers with + as 4, t, = or similar OCR errors =====
+        match = cleanedText.match(/(\d{1,2})\s*[4tT\+xX\*=]\s*(\d{1,2})/);
         if (match) {
             const result = parseInt(match[1], 10) + parseInt(match[2], 10);
             console.log(`[Captcha] Pattern 4 (OCR fix): ${match[1]} + ${match[2]} = ${result}`);
@@ -6935,7 +7449,7 @@ function mainCode() {
         }
 
         const textbox = document.getElementById(CAPTCHA_INPUT_ID);
-        const button = document.getElementById(PROCEED_BTN_ID);
+        const button = findCaptchaProceedButton();
 
         if (!textbox || !button) {
             console.log("[Captcha] Input or button not found. Input:", !!textbox, "Button:", !!button);
@@ -6970,7 +7484,7 @@ function mainCode() {
             const processedImg = method.fn();
 
             const { data: { text } } = await Tesseract.recognize(processedImg, "eng", {
-                tessedit_char_whitelist: "0123456789+= ",
+                tessedit_char_whitelist: "0123456789+=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@._- ",
                 tessedit_pageseg_mode: "7", // Single line
             });
 
@@ -6978,8 +7492,8 @@ function mainCode() {
             const result = solveCaptcha(text);
 
             if (result !== null) {
-                // Validate result is reasonable (1-198 for sum of two 1-99 numbers)
-                if (result < 1 || result > 198) {
+                // Validate result is reasonable (0-1998 for sum of numbers up to 999)
+                if (result < 0 || result > 1998) {
                     console.log(`[Captcha] ⚠️ Result ${result} seems invalid`);
                     handleIncorrectCaptcha();
                     return;
@@ -7005,6 +7519,16 @@ function mainCode() {
         handleIncorrectCaptcha();
     }
 
+    async function runCaptchaSolver() {
+        if (captchaRunInProgress) return;
+        captchaRunInProgress = true;
+        try {
+            await handleCaptcha();
+        } finally {
+            captchaRunInProgress = false;
+        }
+    }
+
 
     function handleIncorrectCaptcha() {
         if (!SETTINGS.enableCaptchaSolver) return;
@@ -7023,7 +7547,7 @@ function mainCode() {
         }
 
         const textbox = document.getElementById(CAPTCHA_INPUT_ID);
-        const button = document.getElementById(PROCEED_BTN_ID);
+        const button = findCaptchaProceedButton();
 
         if (textbox && button) {
             // Reset retry count on manual input (user is solving it now)
@@ -7152,15 +7676,28 @@ function mainCode() {
             return;
         }
 
-        handleCaptcha();
+        runCaptchaSolver();
     }
 
     // Initialize captcha solver only if script is enabled
     onScriptEnabled(() => {
+        const startCaptchaSolver = () => {
+            initCaptchaSolver();
+
+            if (captchaPageObserver || !document.body) return;
+            captchaPageObserver = new MutationObserver(() => {
+                const textbox = document.getElementById(CAPTCHA_INPUT_ID);
+                if (hasCaptchaElements() && textbox && !textbox.value) {
+                    runCaptchaSolver();
+                }
+            });
+            captchaPageObserver.observe(document.body, { childList: true, subtree: true });
+        };
+
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initCaptchaSolver);
+            document.addEventListener('DOMContentLoaded', startCaptchaSolver, { once: true });
         } else {
-            setTimeout(initCaptchaSolver, 100);
+            setTimeout(startCaptchaSolver, 100);
         }
 
         window.addEventListener("load", function () {
@@ -7184,7 +7721,7 @@ function mainCode() {
                 const textbox = document.getElementById(CAPTCHA_INPUT_ID);
                 if (img && textbox && !textbox.value) {
                     console.log('[Captcha] Backup initialization triggered');
-                    handleCaptcha();
+                    runCaptchaSolver();
                 }
             }, 500);
         });
@@ -7199,35 +7736,94 @@ function mainCode() {
     // Powered by Grandmaster Competitive Programming Prompts for SkillRack
     // ============================================
 
-    const getSelectedLanguage = () => {
-        const langSelect = document.getElementById('langs_input');
-        if (langSelect && langSelect.selectedIndex >= 0) {
-            const selectedOption = langSelect.options[langSelect.selectedIndex];
-            if (selectedOption) {
-                const text = (selectedOption.text || selectedOption.textContent || selectedOption.value || '').trim();
-                const textUpper = text.toUpperCase();
-                if (textUpper.includes('SQL') || textUpper.includes('MYSQL') || textUpper.includes('ORACLE') || textUpper.includes('POSTGRES')) return 'SQL';
-                if (textUpper.includes('JAVA') && !textUpper.includes('SCRIPT')) return 'Java';
-                if (textUpper.includes('PYTHON') || textUpper.includes('PY3') || textUpper.includes('PY')) return 'Python';
-                if (textUpper.includes('CPP23') || textUpper.includes('C++23')) return 'C++23';
-                if (textUpper.includes('CPP') || textUpper.includes('C++')) return 'C++';
-                if (textUpper.includes('C#') || textUpper.includes('CSHARP')) return 'C#';
-                if (textUpper.includes('JAVASCRIPT') || textUpper.includes('JS') || textUpper.includes('NODE')) return 'JavaScript';
-                if (textUpper.includes('GOLANG') || textUpper.includes('GO')) return 'Go';
-                if (textUpper.includes('RUST')) return 'Rust';
-                if (textUpper.includes('PHP')) return 'PHP';
-                if (textUpper === 'C' || textUpper.startsWith('C ')) return 'C';
+    const parseLanguageString = (rawText) => {
+        if (!rawText || typeof rawText !== 'string') return null;
+        const s = rawText.trim();
+        const upper = s.toUpperCase();
+
+        if (upper.includes('SQL') || upper.includes('MYSQL') || upper.includes('ORACLE') || upper.includes('POSTGRES')) return 'SQL';
+        if (upper.includes('JAVA') && !upper.includes('SCRIPT')) return 'Java';
+        if (upper.includes('PYTHON') || upper.includes('PY3') || /\bPY\b/i.test(s) || upper.includes('CPYTHON')) return 'Python';
+        if (upper.includes('C++') || upper.includes('CPP') || upper.includes('G++') || upper.includes('CLANG++')) {
+            if (upper.includes('23')) return 'C++23';
+            if (upper.includes('20')) return 'C++20';
+            if (upper.includes('17')) return 'C++17';
+            return 'C++';
+        }
+        if (upper.includes('C#') || upper.includes('CSHARP')) return 'C#';
+        if (upper.includes('JAVASCRIPT') || upper.includes('NODE') || /\bJS\b/i.test(s)) return 'JavaScript';
+        if (upper.includes('GOLANG') || /\bGO\b/i.test(s)) return 'Go';
+        if (upper.includes('RUST')) return 'Rust';
+        if (upper.includes('PHP')) return 'PHP';
+        if (upper.includes('KOTLIN')) return 'Kotlin';
+        if (upper.includes('SWIFT')) return 'Swift';
+        if (/^C\b/i.test(s) || upper.includes('GCC') || upper.includes('CLANG') || upper.includes('ANSI C') || upper === 'C' || upper.startsWith('C(') || upper.startsWith('C ')) return 'C';
+        return null;
+    };
+
+    const isLanguageMismatch = (code, language) => {
+        if (!code) return false;
+        const langLower = String(language || '').toLowerCase().trim();
+        const trimmed = code.trim();
+
+        // Target is C / C++ / Java / SQL, but code is clearly Python
+        if (langLower === 'c' || langLower === 'c++' || langLower === 'cpp' || langLower === 'java' || langLower === 'sql') {
+            if (/^\s*(import\s+sys|import\s+os|from\s+collections|tokens\s*=\s*sys\.stdin|def\s+[a-zA-Z0-9_]+\s*\(|print\s*\()/m.test(trimmed) &&
+                !/^\s*(#include|import\s+java|public\s+class|SELECT)/m.test(trimmed)) {
+                return true;
             }
         }
+        // Target is Python, but code is clearly C/C++
+        if (langLower === 'python' || langLower === 'python3' || langLower === 'py') {
+            if (/^\s*(#include\s*<|using\s+namespace\s+std|int\s+main\s*\(|void\s+main\s*\()/m.test(trimmed)) {
+                return true;
+            }
+        }
+        return false;
+    };
 
-        // Fallback: Check Ace Editor syntax mode if available
+    const getSelectedLanguage = () => {
+        // 1. Compiler error output indicator (Ground truth when judge has failed)
+        const errorPanel = document.getElementById('errormsg_content') || document.getElementById('errormsg') || document.querySelector('.ui-messages-error');
+        if (errorPanel) {
+            const errText = errorPanel.textContent || '';
+            if (/Hello\.c:\d+/i.test(errText) || /gcc/i.test(errText)) return 'C';
+            if (/Hello\.cpp:\d+/i.test(errText) || /g\+\+/i.test(errText)) return 'C++';
+            if (/Hello\.java:\d+/i.test(errText) || /javac/i.test(errText)) return 'Java';
+            if (/Hello\.py:\d+/i.test(errText) || /Traceback/i.test(errText) || /File "[^"]+\.py"/i.test(errText)) return 'Python';
+            if (/Hello\.cs:\d+/i.test(errText) || /csc/i.test(errText)) return 'C#';
+        }
+
+        // 2. PrimeFaces visible dropdown label (#langs_label)
+        const labelEl = document.getElementById('langs_label') || document.querySelector('.ui-selectonemenu-label');
+        if (labelEl) {
+            const parsed = parseLanguageString(labelEl.textContent || labelEl.innerText);
+            if (parsed) return parsed;
+        }
+
+        // 3. Hidden <select id="langs_input"> element
+        const langSelect = document.getElementById('langs_input') || document.querySelector('select[id*="lang"]');
+        if (langSelect && langSelect.selectedIndex >= 0) {
+            const opt = langSelect.options[langSelect.selectedIndex];
+            const parsed = parseLanguageString(opt?.text || opt?.textContent || opt?.value);
+            if (parsed) return parsed;
+        }
+
+        // 4. Any dropdown on page with language attributes
+        const anySelect = document.querySelectorAll('select, .ui-selectonemenu');
+        for (const el of anySelect) {
+            const parsed = parseLanguageString(el.textContent || el.value);
+            if (parsed) return parsed;
+        }
+
+        // 5. Ace Editor syntax mode
         try {
             if (window.txtCode && typeof window.txtCode.getSession === 'function') {
                 const modeId = (window.txtCode.getSession().getMode()?.['$id'] || '').toLowerCase();
                 if (modeId.includes('sql')) return 'SQL';
                 if (modeId.includes('java') && !modeId.includes('javascript')) return 'Java';
                 if (modeId.includes('python')) return 'Python';
-                if (modeId.includes('c_cpp')) return 'C++';
+                if (modeId.includes('c_cpp')) return 'C';
                 if (modeId.includes('csharp')) return 'C#';
                 if (modeId.includes('javascript')) return 'JavaScript';
                 if (modeId.includes('golang') || modeId.includes('go')) return 'Go';
@@ -7235,7 +7831,7 @@ function mainCode() {
             }
         } catch (_) { }
 
-        // Fallback: Check page keywords
+        // 6. Pre-code & Page heuristics
         const pageText = (document.body?.innerText || '').toLowerCase();
         if (pageText.includes('select ') && pageText.includes('from ') && (pageText.includes('table') || pageText.includes('database'))) {
             return 'SQL';
@@ -7693,43 +8289,77 @@ function mainCode() {
     // ==============================================================
     // GRANDMASTER COMPETITIVE PROGRAMMING SYSTEM PROMPTS
     // ==============================================================
-    const GRANDMASTER_SYSTEM_PROMPT = `You are a Grandmaster Competitive Programmer solving a coding challenge on SkillRack.
-Your response will be automatically parsed, compiled, and evaluated against both public test cases and strict private hidden test cases with large boundary constraints.
-Accuracy is mandatory. Follow these rules strictly:
+    const GRANDMASTER_SYSTEM_PROMPT = `You are an Elite Principal Software Engineer, a Top-Tier Competitive Programmer, and a Technical Architect with deep pathological hidden-test-case intuition. You write flawless, bulletproof, production-grade code that passes EVERY hidden test case on the SkillRack automated judge on the FIRST submission. You think like a compiler, an adversary, and a mathematician all at once.
 
-[CRITICAL COMPETITIVE PROGRAMMING RULES]
-1. PREVENT 64-BIT INTEGER OVERFLOW (MOST COMMON HIDDEN TEST CASE FAILURE):
-   - In C/C++: Use 'long long' for all counters, sums, products, coordinates, array accumulators, or any value that can exceed 2*10^9 or reach 10^18.
-   - When multiplying two integers, cast to 64-bit first: (1LL * a * b) to prevent overflow before assignment!
-   - In Java: Use 'long' for all accumulators and large values; use BigInteger if numbers exceed 10^18.
-   - For floating point: use double or long double.
+Your code is directly fed into an automated judge system. Zero preambles, zero concluding explanations, zero comments, zero scaffolding text. Only the exact, complete, runnable program. Maximum correctness and optimal asymptotic performance are non-negotiable.
 
-2. PREVENT TIME LIMIT EXCEEDED (TLE) ON HIDDEN TEST CASES:
-   - Max constraint analysis: If N <= 10^5, time complexity MUST be O(N) or O(N log N). Never use O(N^2) nested loops for N > 1000.
-   - In C++: Always enable Fast I/O at the start of main():
-     std::ios_base::sync_with_stdio(false);
-     std::cin.tie(NULL);
-   - In Python: Use sys.stdin.read().split() to read all tokens in one pass efficiently into a list. Avoid string += inside loops (use ''.join()).
-   - In Java: Use fast I/O or Scanner properly.
+SECTION 1: OUTPUT FORMAT PROTOCOLS (STRICT NON-NEGOTIABLE)
 
-3. SKILLRACK I/O STREAM & NEWLINE QUIRKS:
-   - In C: When reading a string/char with fgets() or scanf("%[^\n]") after reading an integer, unconsumed newlines '\\n' in stdin cause immediate empty reads. Always consume whitespace using scanf(" %c", &ch) or scanf(" %[^\n]", str).
-   - In C++: Use cin >> ws before std::getline(cin, str) to clear leading whitespace and newlines.
-   - In Python: sys.stdin.read().split() seamlessly handles both newline-separated and space-separated tokens without input buffer issues.
-   - In Java: Call sc.nextLine() after sc.nextInt() before reading next string line. Class name MUST be 'Hello'.
+1. FULL CODE / FUNCTION PROBLEMS (C, C++, Java, Python, etc.):
+   - Output ONLY the clean, executable source code inside a SINGLE markdown code block (\`\`\`c, \`\`\`cpp, \`\`\`java, \`\`\`python).
+   - ABSOLUTELY ZERO COMMENTS (no //, no /* */, no #, no --).
+   - ZERO conversational preamble, explanation, reasoning, or postscript.
 
-4. HIDDEN TEST CASE CORNER CASES:
-   - Mentally verify handling for: N = 0, N = 1, negative numbers, 0, all elements identical, sorted vs reverse-sorted, empty strings, single character, upper/lower case sensitivity, maximum boundary constraints.
+2. MULTIPLE CHOICE QUESTIONS (MCQ):
+   - Output ONLY the 0-based index number of the single correct answer.
+   - Example: Output \`1\` if Option 1 is correct. No fences, no explanations.
 
-5. EXACT OUTPUT FORMATTING:
-   - Output ONLY what is requested. Never print input prompts like "Enter n:" or descriptive labels like "Answer:".
-   - Follow exact spacing and newline rules shown in sample outputs.
-   - For rounded floating point numbers, format to the exact decimal places specified (e.g. printf("%.2f\\n", ans) in C, std::fixed << std::setprecision(2) in C++, "{:.2f}".format() in Python).
+3. FILL-IN-THE-BLANKS (MFIB):
+   - Output ONLY the exact missing tokens for [BLANK_0], [BLANK_1], etc., one per line in order.
+   - Do NOT wrap in markdown fences or include explanations.
 
-6. SQL SPECIFICATIONS:
-   - Emit the entire SQL solution as a SINGLE LINE query with spaces between clauses. No newlines, no markdown fences.
-   - Do NOT use CREATE TABLE or INSERT unless explicitly asked. Use exact column and table names from problem schema.`;
+4. SQL PROBLEMS:
+   - Output the complete query as a SINGLE CONTINUOUS LINE without newlines.
+   - Do NOT wrap in markdown code fences.
 
+SECTION 2: PROFESSIONAL ENGINEERING & PERFORMANCE PROTOCOLS
+
+1. 64-BIT INTEGER OVERFLOW IMMUNITY:
+   - Default to 64-bit integers (\`long long\` in C/C++, \`long\` in Java) for all counters, sums, products, array indices, prefix sums, and coordinate arithmetic.
+   - For products: ALWAYS use \`(1LL * a * b)\` or \`((long long)a * b)\` to prevent 32-bit truncation before assignment.
+   - Modulo arithmetic: Always use \`((a % M) + M) % M\` to handle negative remainders cleanly.
+
+2. ASYMPTOTIC COMPLEXITY & TIME LIMIT IMMUNITY:
+   - If N <= 10^5: Complexity MUST be O(N) or O(N log N). Never use O(N^2) loops for N > 2000.
+   - Select the exactly right algorithm: prefix sums / sliding window / two pointers / monotonic deque / hash map / binary search / DSU / BST / Dijkstra / BFS / DFS / topological sort / DP with memoization or tabulation etc.
+   - Do not allocate trailing unused space: arrays sized precisely to N, or N+1 if 1-based.
+
+SECTION 3: I/O STREAM & BUFFER HYGIENE
+
+1. C: \`scanf(" %c", &ch)\` or \`scanf(" %[^\r\n]", str)\` with a leading space to skip whitespace. Never use \`gets()\`. Large arrays: declare globally or via \`malloc\`/\`calloc\`.
+2. C++: Use \`std::ios_base::sync_with_stdio(false);\` and \`std::cin.tie(nullptr);\`. Use \`cin >> ws\` before \`std::getline(cin, str)\`.
+3. Java: Class name MUST be \`Hello\`. Call \`sc.nextLine()\` after numeric reads before reading strings; use \`BufferedReader\` if needed.
+4. Python: Use \`sys.stdin.read().split()\` in one pass; set \`sys.setrecursionlimit(300000)\` for deep recursion.
+
+SECTION 4: FORBIDDEN UNIX KEYWORDS
+
+- SkillRack judge strictly bans UNIX keywords: NEVER use \`head\` or \`tail\` as a variable, pointer, parameter, struct member, or function name.
+- Use \`lhead\` and \`ltail\` instead (e.g., \`Node* lhead\`, \`Node* ltail\`).
+
+SECTION 5: EDGE-CASE HUNTER'S MINDSET (MANDATORY)
+- N = 0, N = 1, single-element, all-equal, all-negative, all-zero, max-constraint inputs, empty string, single-char string, whitespace-only line.
+- Reverse-sorted / sorted / nearly-sorted input.
+- Overflow on sum, product, count, fibonacci, factorial, combinations, prefix array.
+- 0-based vs 1-based indexing + off-by-one boundaries in binary search, loop end conditions, and array access.
+- Negative numbers and modulo of negatives.
+- Ties and tie-breaking order in sorting / min / max / ranking.
+- Multiple query overlapping intervals vs non-overlapping.
+- Newline consumption between numeric and string reads in every language.
+- Decimal precision and trailing-zero formatting.
+- Creating extra spaces or blank lines on output, leading/trailing zeros.
+
+SECTION 6: MANDATORY PRE-EMISSION CHECKLIST (VERIFY BEFORE EMIT)
+Before sending the final answer, silently run:
+1. Is the output ONLY the code or answer index, zero surrounding text? ✓
+2. Zero comments survived (no //, no /* */, no #, no --)? ✓
+3. Are all 64-bit multiplications/sums cast with \`1LL *\` or using \`long\` / \`long long\`? ✓
+4. Does the algorithm meet O(N) or O(N log N) for N <= 100000? ✓
+5. Are all array bounds safe, especially for N = max_constraint? ✓
+6. Is the I/O stream handling correct for all lines (mixed numeric+string)? ✓
+7. Are UNIX reserved words \`head\`/\`tail\` only as \`lhead\`/\`ltail\`? ✓
+8. Does the code compile cleanly and print EXACTLY the format the sample shows? ✓
+
+Emit ONLY the final executable solution or answer index.`;
     const generateWithGemini = async (prompt, systemInstruction = '') => {
         const apiKey = SETTINGS.geminiApiKey;
         if (!apiKey) {
@@ -8054,12 +8684,203 @@ Accuracy is mandatory. Follow these rules strictly:
         return JSON.stringify(response || '', null, 2);
     };
 
+    const stripCodeComments = (code, language) => {
+        if (!code || typeof code !== 'string') return '';
+        const langLower = String(language || '').toLowerCase().trim();
+
+        const isEscaped = (str, index) => {
+            let count = 0;
+            let p = index - 1;
+            while (p >= 0 && str[p] === '\\') {
+                count++;
+                p--;
+            }
+            return (count % 2) === 1;
+        };
+
+        let result = '';
+        let i = 0;
+        const len = code.length;
+
+        // Python style (# comments and docstrings)
+        if (langLower === 'python' || langLower === 'python3' || langLower === 'py') {
+            let inSingleQuote = false;
+            let inDoubleQuote = false;
+            let inTripleSingle = false;
+            let inTripleDouble = false;
+
+            while (i < len) {
+                if (!inSingleQuote && !inDoubleQuote) {
+                    if (code.startsWith('"""', i) && !isEscaped(code, i)) {
+                        inTripleDouble = !inTripleDouble;
+                        result += '"""';
+                        i += 3;
+                        continue;
+                    }
+                    if (code.startsWith("'''", i) && !isEscaped(code, i)) {
+                        inTripleSingle = !inTripleSingle;
+                        result += "'''";
+                        i += 3;
+                        continue;
+                    }
+                }
+
+                if (!inTripleSingle && !inTripleDouble) {
+                    const char = code[i];
+
+                    if (char === '"' && !isEscaped(code, i) && !inSingleQuote) {
+                        inDoubleQuote = !inDoubleQuote;
+                    } else if (char === "'" && !isEscaped(code, i) && !inDoubleQuote) {
+                        inSingleQuote = !inSingleQuote;
+                    } else if (char === '#' && !inSingleQuote && !inDoubleQuote) {
+                        while (i < len && code[i] !== '\n') i++;
+                        continue;
+                    }
+                }
+
+                result += code[i];
+                i++;
+            }
+        }
+        // SQL style (-- comments and /* */ comments)
+        else if (langLower === 'sql') {
+            let inString = false;
+            while (i < len) {
+                const char = code[i];
+
+                if (char === "'" && !isEscaped(code, i)) {
+                    inString = !inString;
+                    result += char;
+                    i++;
+                } else if (!inString && char === '-' && i + 1 < len && code[i + 1] === '-') {
+                    while (i < len && code[i] !== '\n') i++;
+                } else if (!inString && char === '/' && i + 1 < len && code[i + 1] === '*') {
+                    i += 2;
+                    while (i + 1 < len && !(code[i] === '*' && code[i + 1] === '/')) i++;
+                    i = Math.min(len, i + 2);
+                } else {
+                    result += char;
+                    i++;
+                }
+            }
+        }
+        // C / C++ / Java / JS / Go / Rust style (// comments and /* */ comments)
+        else {
+            let inString = false;
+            let inChar = false;
+            let stringDelimiter = '';
+
+            while (i < len) {
+                const char = code[i];
+
+                if (!inString && !inChar) {
+                    if (char === '"' && !isEscaped(code, i)) {
+                        inString = true;
+                        stringDelimiter = '"';
+                        result += char;
+                        i++;
+                    } else if (char === "'" && !isEscaped(code, i)) {
+                        inChar = true;
+                        stringDelimiter = "'";
+                        result += char;
+                        i++;
+                    } else if (char === '/' && i + 1 < len && code[i + 1] === '/') {
+                        while (i < len && code[i] !== '\n') i++;
+                    } else if (char === '/' && i + 1 < len && code[i + 1] === '*') {
+                        i += 2;
+                        while (i + 1 < len && !(code[i] === '*' && code[i + 1] === '/')) i++;
+                        i = Math.min(len, i + 2);
+                    } else {
+                        result += char;
+                        i++;
+                    }
+                } else {
+                    if (char === stringDelimiter && !isEscaped(code, i)) {
+                        inString = false;
+                        inChar = false;
+                    }
+                    result += char;
+                    i++;
+                }
+            }
+        }
+
+        return result
+            .split('\n')
+            .filter((line, idx, arr) => {
+                const trimmed = line.trim();
+                // Avoid multiple consecutive blank lines
+                if (trimmed === '' && idx > 0 && arr[idx - 1].trim() === '') return false;
+                return true;
+            })
+            .join('\n')
+            .trim();
+    };
+
+    // SkillRack forbids UNIX keywords ('head', 'tail') as variable/parameter/pointer names
+    const sanitizeSkillRackReservedWords = (code, language) => {
+        if (!code) return '';
+        const langLower = String(language || '').toLowerCase().trim();
+        if (langLower === 'sql') return code;
+
+        let result = '';
+        let i = 0;
+        const len = code.length;
+
+        while (i < len) {
+            const char = code[i];
+
+            // String literals ("..." or '...') - preserve untouched
+            if (char === '"' || char === "'") {
+                const quote = char;
+                result += quote;
+                i++;
+                while (i < len) {
+                    if (code[i] === '\\' && i + 1 < len) {
+                        result += code[i] + code[i + 1];
+                        i += 2;
+                    } else if (code[i] === quote) {
+                        result += code[i];
+                        i++;
+                        break;
+                    } else {
+                        result += code[i];
+                        i++;
+                    }
+                }
+                continue;
+            }
+
+            // Word token: identifier / keyword
+            if (/[a-zA-Z_]/.test(char)) {
+                const start = i;
+                while (i < len && /[a-zA-Z0-9_]/.test(code[i])) {
+                    i++;
+                }
+                const word = code.substring(start, i);
+                if (word === 'head') {
+                    result += 'lhead';
+                } else if (word === 'tail') {
+                    result += 'ltail';
+                } else {
+                    result += word;
+                }
+                continue;
+            }
+
+            result += char;
+            i++;
+        }
+
+        return result;
+    };
+
     const extractCode = (response, language) => {
         let normalizedResponse = typeof response === 'string' ? response : String(response || '');
 
-        // Handle JSON responses (strip JSON wrapper if present)
+        // 1. Handle JSON responses (strip JSON wrapper if present)
         try {
-            if (normalizedResponse.trim().startsWith('{') && normalizedResponse.includes('"content"')) {
+            if (normalizedResponse.trim().startsWith('{') && (normalizedResponse.includes('"content"') || normalizedResponse.includes('"text"') || normalizedResponse.includes('"choices"'))) {
                 const jsonData = JSON.parse(normalizedResponse);
                 if (jsonData.choices && jsonData.choices[0]?.message?.content) {
                     normalizedResponse = jsonData.choices[0].message.content;
@@ -8071,56 +8892,125 @@ Accuracy is mandatory. Follow these rules strictly:
             }
         } catch (_) { }
 
-        let code = '';
+        // 2. Strip <think>...</think> reasoning tags (from DeepSeek R1, Qwen QwQ, etc.)
+        normalizedResponse = normalizedResponse.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
-        // Match code blocks with language specifiers (c++, cpp, c, python, java, sql, etc.)
-        const codeBlockRegex = /```(?:[a-zA-Z0-9_+-]*)?\n?([\s\S]*?)```/g;
+        const langLower = String(language || '').toLowerCase().trim();
+
+        // 3. Extract code blocks with triple backticks ```
+        const codeBlockRegex = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g;
         const matches = [...normalizedResponse.matchAll(codeBlockRegex)];
 
+        let extractedFromFence = '';
         if (matches.length > 0) {
-            let bestMatch = matches[0][1].trim();
-            for (const match of matches) {
-                const trimmed = match[1].trim();
-                if (trimmed.length > bestMatch.length) {
-                    bestMatch = trimmed;
-                }
-            }
-            code = bestMatch;
-        } else {
-            // Fallback: look for unclosed code block
-            const openBlockRegex = /```(?:[a-zA-Z0-9_+-]*)?\n?([\s\S]+?)(?=```|$)/;
-            const openMatch = normalizedResponse.match(openBlockRegex);
-            if (openMatch) {
-                code = openMatch[1].trim();
+            // Find code blocks matching our target language or longest meaningful block
+            let candidates = matches.map(m => ({
+                langTag: (m[1] || '').toLowerCase().trim(),
+                body: m[2].trim()
+            })).filter(c => c.body.length > 0);
+
+            // Ignore 1-line non-code snippets (e.g. single sample input/output strings)
+            const meaningfulCandidates = candidates.filter(c => c.body.includes('\n') || c.body.length > 25);
+            if (meaningfulCandidates.length > 0) candidates = meaningfulCandidates;
+
+            // Check if any block matches the target language tag
+            const exactLangMatch = candidates.find(c => {
+                if (langLower === 'c' || langLower.startsWith('ds-c')) return c.langTag === 'c' || c.langTag === 'cpp';
+                if (langLower.includes('c++') || langLower.includes('cpp')) return c.langTag.includes('c++') || c.langTag.includes('cpp') || c.langTag === 'c';
+                if (langLower === 'java') return c.langTag === 'java';
+                if (langLower === 'python' || langLower === 'python3') return c.langTag === 'python' || c.langTag === 'py';
+                if (langLower === 'sql') return c.langTag === 'sql' || c.langTag === 'mysql' || c.langTag === 'pgsql';
+                return c.langTag === langLower;
+            });
+
+            if (exactLangMatch) {
+                extractedFromFence = exactLangMatch.body;
             } else {
-                code = normalizedResponse.trim();
-                const prefixes = ['Here is', "Here's", 'The fixed code', 'The solution', 'Fixed code:', 'Solution:', "Here's the code:", 'Here is the code:'];
-                for (const prefix of prefixes) {
-                    if (code.toLowerCase().startsWith(prefix.toLowerCase())) {
-                        code = code.substring(prefix.length).trim();
-                        break;
-                    }
+                // Otherwise pick the longest code block
+                let longest = candidates[0].body;
+                for (const c of candidates) {
+                    if (c.body.length > longest.length) longest = c.body;
                 }
+                extractedFromFence = longest;
             }
         }
 
-        // Clean standalone language tags
-        const languageTagRegex = /^(?:c|c\+\+|cpp|cpp11|cpp14|cpp17|cpp20|cpp23|\+\+|\+\+11|\+\+14|\+\+17|\+\+20|\+\+23|python|py|java|sql|mysql|postgresql|oracle|javascript|js|typescript|ts|go|rust|ruby|php|kotlin|swift)$/i;
+        let code = extractedFromFence;
+
+        // 4. Fallback if no full code block: check for unclosed code block (e.g. ```c\n...)
+        if (!code) {
+            const openBlockRegex = /```(?:[a-zA-Z0-9_+-]*)?\n?([\s\S]+?)(?=```|$)/;
+            const openMatch = normalizedResponse.match(openBlockRegex);
+            if (openMatch && openMatch[1].trim().length > 15) {
+                code = openMatch[1].trim();
+            }
+        }
+
+        // 5. Fallback: If no code blocks or if the extracted code still has English explanation before code
+        if (!code) {
+            code = normalizedResponse.trim();
+        }
+
+        // 6. Language-Aware Strip of Leading Conversational/Reasoning Prose:
+        // When LLMs output commentary before the actual code (e.g. "Looking at the problem...", "The actual bug:...", "So the fix:...")
+        if (langLower === 'c' || langLower === 'c++' || langLower === 'cpp' || langLower.startsWith('ds-c')) {
+            const cStartMatch = code.match(/(?:^|\n)\s*(#\s*include|#\s*define|using\s+namespace|int\s+main|void\s+main|typedef\s+|struct\s+|class\s+|template\s*<|(?:void|int|char|long|bool|double|float|size_t|auto)\s*\*?\s+[A-Za-z0-9_]+\s*\([^)]*\)\s*\{?)/m);
+            if (cStartMatch && cStartMatch.index !== undefined) {
+                const startIdx = cStartMatch.index === 0 ? 0 : cStartMatch.index + (cStartMatch[0].startsWith('\n') ? 1 : 0);
+                code = code.substring(startIdx).trim();
+            }
+        } else if (langLower === 'java') {
+            const javaStartMatch = code.match(/(?:^|\n)\s*(import\s+[a-zA-Z0-9_.]+|package\s+[a-zA-Z0-9_.]+|public\s+class\s+|class\s+|public\s+interface\s+)/m);
+            if (javaStartMatch && javaStartMatch.index !== undefined) {
+                const startIdx = javaStartMatch.index === 0 ? 0 : javaStartMatch.index + (javaStartMatch[0].startsWith('\n') ? 1 : 0);
+                code = code.substring(startIdx).trim();
+            }
+        } else if (langLower === 'python' || langLower === 'python3') {
+            const pyStartMatch = code.match(/(?:^|\n)\s*(import\s+[a-zA-Z0-9_]+|from\s+[a-zA-Z0-9_.]+\s+import|def\s+[a-zA-Z0-9_]+\s*\(|class\s+[a-zA-Z0-9_]+|if\s+__name__\s*==|sys\.set_int_max_str_digits)/m);
+            if (pyStartMatch && pyStartMatch.index !== undefined) {
+                const startIdx = pyStartMatch.index === 0 ? 0 : pyStartMatch.index + (pyStartMatch[0].startsWith('\n') ? 1 : 0);
+                code = code.substring(startIdx).trim();
+            }
+        } else if (langLower === 'sql') {
+            const sqlStartMatch = code.match(/(?:^|\n)\s*(SELECT|WITH|INSERT|UPDATE|DELETE|CREATE)\b/im);
+            if (sqlStartMatch && sqlStartMatch.index !== undefined) {
+                const startIdx = sqlStartMatch.index === 0 ? 0 : sqlStartMatch.index + (sqlStartMatch[0].startsWith('\n') ? 1 : 0);
+                code = code.substring(startIdx).trim();
+            }
+        }
+
+        // 7. Strip trailing explanations / markdown sections
+        const trailingExplanations = [
+            /\n+(?:Explanation|How it works|Complexity|Time Complexity|Note|Notes|Key Changes|Bug Fix):[\s\S]*$/i,
+            /\n+Here is (?:an explanation|how the code works)[\s\S]*$/i,
+            /\n+Hope this helps[\s\S]*$/i
+        ];
+        for (const pattern of trailingExplanations) {
+            code = code.replace(pattern, '').trim();
+        }
+
+        // 8. Clean standalone language tags and leftover backticks
+        const languageTagRegex = /^(?:c|c\+\+|cpp|cpp11|cpp14|cpp17|cpp20|cpp23|\+\+|\+\+11|\+\+14|\+\+17|\+\+20|\+\+23|python|python3|py|java|sql|mysql|postgresql|oracle|javascript|js|typescript|ts|go|rust|ruby|php|kotlin|swift)$/i;
         const lines = code.split('\n');
         code = lines.filter(line => {
             const trimmed = line.trim();
             return !languageTagRegex.test(trimmed);
         }).join('\n');
 
-        // Remove leftover backticks
         code = code.replace(/^```[a-zA-Z0-9+]*\s*/gm, '');
         code = code.replace(/\s*```$/gm, '');
         code = code.trim();
 
-        // For SQL: collapse into single line with spaces if multi-line
-        if (language === 'SQL') {
-            code = code.replace(/\s+/g, ' ').trim();
+        // 9. For SQL: collapse into single line with spaces if multi-line
+        if (langLower === 'sql') {
+            code = code.replace(/\s+/g, ' ').replace(/;+$/, '').trim();
         }
+
+        // 10. Strip all comments to prevent AI detection
+        code = stripCodeComments(code, language);
+
+        // 11. SkillRack UNIX keyword sanitizer (replace forbidden identifiers: head -> lhead, tail -> ltail)
+        code = sanitizeSkillRackReservedWords(code, language);
 
         return code;
     };
@@ -8153,6 +9043,265 @@ Accuracy is mandatory. Follow these rules strictly:
         }
 
         return matches / Math.max(norm1.length, norm2.length);
+    };
+
+    // ========== ACE & DOM EDITOR RESOLVER ==========
+    const getEditor = () => {
+        // 1. Direct window / unsafeWindow txtCode reference
+        if (window.txtCode && (typeof window.txtCode.getSession === 'function' || 'value' in window.txtCode)) {
+            return window.txtCode;
+        }
+        if (typeof unsafeWindow !== 'undefined' && unsafeWindow.txtCode && (typeof unsafeWindow.txtCode.getSession === 'function' || 'value' in unsafeWindow.txtCode)) {
+            return unsafeWindow.txtCode;
+        }
+
+        // 2. Global window.ace / unsafeWindow.ace object edit handle
+        const aceObj = window.ace || (typeof unsafeWindow !== 'undefined' ? unsafeWindow.ace : null);
+        if (aceObj && typeof aceObj.edit === 'function') {
+            const el = document.getElementById('txtCode') || document.querySelector('.ace_editor');
+            if (el) {
+                try {
+                    const ed = aceObj.edit(el);
+                    if (ed && typeof ed.getSession === 'function') return ed;
+                } catch (e) { }
+            }
+        }
+
+        // 3. Check for .ace_editor DOM element env property
+        const aceEl = document.getElementById('txtCode') || document.querySelector('.ace_editor');
+        if (aceEl && aceEl.env && aceEl.env.editor) {
+            return aceEl.env.editor;
+        }
+
+        // 4. Return textarea element if present
+        const ta = document.getElementById('txtCode') || document.querySelector('textarea.ace_text-input') || document.querySelector('textarea');
+        if (ta) return ta;
+
+        return null;
+    };
+
+    // ========== HUMAN-LIKE TYPING SIMULATOR ==========
+    const typeCodeNaturally = async (code) => {
+        const editor = getEditor();
+        if (!editor) return false;
+
+        const $ = window.jQuery || (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null);
+
+        if (typeof editor.getSession === 'function') {
+            const session = editor.getSession();
+
+            // Clear editor first
+            session.setValue('');
+            if (typeof editor.moveCursorTo === 'function') editor.moveCursorTo(0, 0);
+
+            // Typing speed parameters (milliseconds per character)
+            const BASE_MIN = 18;   // fastest burst character (fast typist ~90 WPM)
+            const BASE_MAX = 55;   // normal character delay
+            const NEWLINE_PAUSE_MIN = 60;   // pause after newline (thinking)
+            const NEWLINE_PAUSE_MAX = 180;
+            const BRACE_PAUSE_MIN = 40;   // pause after { } [ ] ( )
+            const BRACE_PAUSE_MAX = 120;
+            const BURST_THRESHOLD = 6;    // characters in a row without pause = burst
+            const BURST_ACCELERATE = 0.6;  // burst multiplier (speed up)
+
+            let burstCount = 0;
+            const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+            const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+            for (let i = 0; i < code.length; i++) {
+                const ch = code[i];
+
+                const pos = typeof editor.getCursorPosition === 'function' ? editor.getCursorPosition() : { row: 0, column: session.getValue().length };
+                session.insert(pos, ch);
+
+                const aceTextarea = editor.container?.querySelector('textarea.ace_text-input') || document.querySelector('textarea.ace_text-input');
+                if (aceTextarea) {
+                    aceTextarea.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true, cancelable: true }));
+                    aceTextarea.dispatchEvent(new InputEvent('input', { data: ch, inputType: 'insertText', bubbles: true }));
+                    aceTextarea.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true, cancelable: true }));
+                }
+
+                if (i % 80 === 0 && $ && $('#txtCode').length) {
+                    $('#txtCode').val(session.getValue());
+                }
+
+                let delay;
+                if (ch === '\n') {
+                    burstCount = 0;
+                    delay = rand(NEWLINE_PAUSE_MIN, NEWLINE_PAUSE_MAX);
+                } else if ('{}[]()'.includes(ch)) {
+                    burstCount = 0;
+                    delay = rand(BRACE_PAUSE_MIN, BRACE_PAUSE_MAX);
+                } else {
+                    burstCount++;
+                    const accel = burstCount > BURST_THRESHOLD ? BURST_ACCELERATE : 1;
+                    delay = Math.floor(rand(BASE_MIN, BASE_MAX) * accel);
+                }
+
+                await sleep(delay);
+            }
+
+            if ($ && $('#txtCode').length) {
+                $('#txtCode').val(session.getValue());
+            }
+            return true;
+        } else if ('value' in editor) {
+            editor.value = '';
+            const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+            const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+            for (let i = 0; i < code.length; i++) {
+                const ch = code[i];
+                editor.value += ch;
+                editor.dispatchEvent(new Event('input', { bubbles: true }));
+                await sleep(rand(18, 55));
+            }
+            editor.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }
+
+        return false;
+    };
+
+    const insertCodeIntoEditor = async (code) => {
+        if (!code) return false;
+        const editor = getEditor();
+
+        let inserted = false;
+
+        if (SETTINGS.humanTypingMode && editor) {
+            try {
+                inserted = await typeCodeNaturally(code);
+            } catch (e) {
+                console.warn('[AI] typeCodeNaturally failed, falling back to instant set:', e);
+            }
+        }
+
+        if (!inserted) {
+            if (editor) {
+                if (typeof editor.setValue === 'function') {
+                    editor.setValue(code, 1);
+                    inserted = true;
+                } else if (typeof editor.getSession === 'function') {
+                    editor.getSession().setValue(code);
+                    inserted = true;
+                } else if ('value' in editor) {
+                    editor.value = code;
+                    editor.dispatchEvent(new Event('input', { bubbles: true }));
+                    editor.dispatchEvent(new Event('change', { bubbles: true }));
+                    inserted = true;
+                }
+            }
+
+            // Sync hidden textarea #txtCode
+            const $ = window.jQuery || (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null);
+            const txtElem = document.getElementById('txtCode');
+            if (txtElem) {
+                txtElem.value = code;
+                txtElem.dispatchEvent(new Event('input', { bubbles: true }));
+                txtElem.dispatchEvent(new Event('change', { bubbles: true }));
+                inserted = true;
+            }
+            if ($ && $('#txtCode').length) {
+                $('#txtCode').val(code);
+                inserted = true;
+            }
+        }
+
+        return inserted;
+    };
+
+    // ========== PRE-SOLVED SOLUTION DATABASE FETCHER ==========
+    // Extracts ProgramID from page context and attempts fetching pre-solved solution
+    // first from local node server (localhost:3000), falling back to raw GitHub repo.
+    const extractProgramId = () => {
+        // Method 1: Check .ui.label elements for "ProgramID : 1234"
+        const labels = document.querySelectorAll('.ui.label');
+        for (const label of labels) {
+            const m = label.textContent.match(/ProgramID\s*:\s*(\d+)/i);
+            if (m) return m[1];
+        }
+        // Method 2: Check full body text
+        const bodyText = document.body?.innerText || '';
+        const m = bodyText.match(/ProgramID\s*:\s*(\d+)/i);
+        if (m) return m[1];
+
+        // Method 3: Check URL query parameter (e.g. ?id=1234 or ?p=1234)
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('id')) return urlParams.get('id');
+        if (urlParams.has('p')) return urlParams.get('p');
+
+        return null;
+    };
+
+    const generateWithLocalServer = async () => {
+        const programId = extractProgramId();
+        if (!programId) {
+            throw new Error('ProgramID not found on page');
+        }
+
+        const localUrl = `http://localhost:3000/solutions/${programId}.md`;
+        const githubUrl = `${SETTINGS.localServerUrl || 'https://raw.githubusercontent.com/Vishnu-tppr/Project-KillCode/main'}/solutions/${programId}.md`;
+
+        let markdownText = null;
+
+        // 1. Try local node solutions-server (localhost:3000)
+        try {
+            markdownText = await new Promise((resolve, reject) => {
+                if (typeof GM_xmlhttpRequest !== 'undefined') {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: localUrl,
+                        timeout: SETTINGS.localServerTimeout || 2500,
+                        onload: (res) => {
+                            if (res.status === 200 && res.responseText.trim()) resolve(res.responseText);
+                            else reject(new Error(`Local server HTTP ${res.status}`));
+                        },
+                        onerror: reject,
+                        ontimeout: reject
+                    });
+                } else {
+                    fetch(localUrl)
+                        .then(res => res.ok ? res.text() : Promise.reject(`HTTP ${res.status}`))
+                        .then(resolve)
+                        .catch(reject);
+                }
+            });
+            console.log(`[Solutions] Fetched solution for ProgramID ${programId} from local server.`);
+        } catch (e) {
+            console.log(`[Solutions] Local server unavailable (${e.message || e}), trying GitHub repository...`);
+        }
+
+        // 2. Fallback to GitHub raw repo
+        if (!markdownText) {
+            markdownText = await new Promise((resolve, reject) => {
+                if (typeof GM_xmlhttpRequest !== 'undefined') {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: githubUrl,
+                        timeout: 8000,
+                        onload: (res) => {
+                            if (res.status === 200 && res.responseText.trim()) resolve(res.responseText);
+                            else reject(new Error(`GitHub HTTP ${res.status}`));
+                        },
+                        onerror: reject,
+                        ontimeout: reject
+                    });
+                } else {
+                    fetch(githubUrl)
+                        .then(res => res.ok ? res.text() : Promise.reject(`GitHub HTTP ${res.status}`))
+                        .then(resolve)
+                        .catch(reject);
+                }
+            });
+            console.log(`[Solutions] Fetched solution for ProgramID ${programId} from GitHub repo.`);
+        }
+
+        if (!markdownText) {
+            throw new Error(`No solution file found for ProgramID ${programId}`);
+        }
+
+        return markdownText;
     };
 
     // ========== generateAISolution FUNCTION ==========
@@ -8223,41 +9372,37 @@ No explanations. No markdown fences. Just the raw JSON array.`;
             const effectiveCode = wrapWithPrePost(errorInfo.currentCode);
             const stats = (errorInfo.passedCount || errorInfo.failedCount)
                 ? `Test Status: ${errorInfo.passedCount} Passed, ${errorInfo.failedCount} Failed.`
-                : 'Test Status: Sample test cases passed, but Private Hidden Test Cases FAILED.';
+                : 'Test Status: Public sample test cases passed, but Private Hidden Test Cases FAILED.';
 
-            prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer fixing code for a SkillRack problem.
+            prompt = customSystemPrompt + `You are an IOI / ICPC World Finalist Competitive Programmer diagnosing and repairing a failed solution on SkillRack.
 ${stats}
 
-The current code passes public sample test cases, but FAILS private hidden test cases!
-Your job is to identify the hidden flaw (integer overflow, TLE complexity, missing edge case, unconsumed newline, or rounding/format error) and output the completely corrected ${language} code.
+CRITICAL ISSUE:
+The code passes public sample tests but FAILS private hidden evaluation test cases.
+Private hidden test cases strictly test for:
+1. Integer Overflow: Missing 64-bit integer casting (1LL * a * b) or using 32-bit int for large sums/products.
+2. TLE (Time Limit Exceeded): Using O(N^2) or unoptimized loops for N up to 10^5 instead of O(N) or O(N log N) with HashMaps, Prefix Sums, Binary Search, or Two Pointers.
+3. Hidden Edge Cases: N = 0, N = 1, single-element, all elements equal, negative numbers, 0, reverse-sorted inputs, empty strings, tie-breaking criteria.
+4. Input Stream Format Differences: Single line vs multi-line inputs with variable whitespace, blank lines, or trailing spaces.
+5. Large Array Stack Overflow: Allocating large arrays on stack rather than statically or dynamically on heap.
 
 PROBLEM: ${problem.title}
 ${problem.description}
 
-CURRENT CODE:
+FAILED CODE (NEEDS DEEP ALGORITHMIC RECONSTRUCTION):
 \`\`\`${language.toLowerCase()}
 ${effectiveCode}
 \`\`\`
 
-DIAGNOSTIC & FIXING CHECKLIST (Apply All):
-1. 64-BIT INTEGER OVERFLOW (MOST COMMON BUG):
-   - ${language === 'Java' ? 'Use long instead of int for all counters, sums, and accumulator variables. If values exceed 10^18, use BigInteger.' : 'Use long long instead of int for all accumulators, sums, products, combination counts, and array elements. Use (1LL * a * b) when multiplying.'}
-   - Check if any intermediate calculation overflows before being stored in a 64-bit variable.
-2. TIME COMPLEXITY & FAST I/O:
-   - Ensure the algorithm is O(N) or O(N log N) for N up to 10^5. Replace O(N^2) loops with frequency maps, prefix sums, binary search, or two pointers.
-   ${language === 'C++' || language === 'C++23' ? '- Add fast I/O: ios_base::sync_with_stdio(false); cin.tie(NULL);' : ''}
-   ${language === 'Python' ? '- Use sys.stdin.read().split() to parse all tokens at once. Avoid string concatenation in loops.' : ''}
-3. INPUT STREAM BUFFER HYGIENE:
-   ${language === 'C' ? '- In C, reading a string/char after reading an integer will fail due to leftover newline. Use scanf(" %c", &c) or scanf(" %[^\n]", s).' : ''}
-   ${language === 'C++' || language === 'C++23' ? '- In C++, use cin >> ws before getline(cin, s) to consume unread newlines.' : ''}
-   ${language === 'Java' ? '- In Java, call sc.nextLine() after sc.nextInt() before reading next string line. Class must be Hello.' : ''}
-4. CORNER & BOUNDARY CASES:
-   - Check N = 0, N = 1, single element arrays, empty strings, all elements duplicate, negative numbers, 0, sorted ascending vs descending.
-5. OUTPUT FORMATTING:
-   - Format floating point decimals to exact precision (e.g. %.2f) if specified.
-   - Do NOT print extra prompts or labels.
+ROOT CAUSE ANALYSIS & MANDATORY RECONSTRUCTION:
+Do NOT make minor superficial tweaks if the underlying logic is flawed. Re-architect the core algorithm to ensure 100% mathematical and asymptotic correctness across ALL possible hidden test permutations.
 
-Output ONLY the corrected, complete ${language} code:
+${language === 'C' ? '- In C: Use long long for all numerical state. Use scanf(" %c", &c) or scanf(" %[^\r\n]", s) for string hygiene. Allocate buffers globally/dynamically.' : ''}
+${language === 'C++' || language === 'C++23' ? '- In C++: Add fast I/O (cin.tie(NULL); ios_base::sync_with_stdio(false)). Use long long for state variables. Use unordered_map or vector.' : ''}
+${language === 'Python' || language === 'Python3' ? '- In Python: Use sys.stdin.read().split() to parse tokens in O(1) time. Use collections.defaultdict/Counter.' : ''}
+${language === 'Java' ? '- In Java: Class must be named Hello. Use long for all accumulators. Handle Scanner buffer newlines.' : ''}
+
+Output ONLY the completely rewritten, robust ${language} code with NO comments:
 
 \`\`\`${language.toLowerCase()}`;
         }
@@ -8285,6 +9430,8 @@ FIXING RULES:
 3. Keep input/output behavior 100% compliant with problem requirements.
 ${language.toLowerCase() === 'python' ? '4. If a function is defined, ensure it is CALLED at the bottom of the script.' : ''}
 
+Output ONLY the fixed ${language} code with NO comments:
+
 \`\`\`${language.toLowerCase()}`;
         }
         // ========== Error fix mode: Runtime Error ==========
@@ -8311,7 +9458,7 @@ FIXING STEPS:
 1. Trace potential causes: array out-of-bounds, division by zero, null pointer, recursion depth overflow, or stack overflow.
 2. Ensure array sizes handle maximum boundary constraints (e.g., N = 10^5).
 3. Use 64-bit data types (${language === 'Java' ? 'long' : 'long long'}).
-4. Return the complete, robust program.
+4. Return the complete, robust program with NO comments.
 
 \`\`\`${language.toLowerCase()}`;
         }
@@ -8343,6 +9490,7 @@ DEBUGGING STRATEGY:
 3. Check for off-by-one errors (0-based vs 1-based indexing, <= vs <).
 4. Check input token ordering and string newline consumption.
 5. Check decimal place rounding and spacing formatting.
+6. Provide a clean, robust solution with NO comments.
 
 \`\`\`${language.toLowerCase()}`;
         }
@@ -8425,8 +9573,14 @@ RULES:
                             'Class name must be Hello. Consume newline with sc.nextLine() after sc.nextInt().' : '';
 
             prompt = customSystemPrompt + `You are a Grandmaster Competitive Programmer solving a SkillRack challenge.
+TARGET PROGRAMMING LANGUAGE: ${language.toUpperCase()}
+
+CRITICAL LANGUAGE REQUIREMENT:
+You MUST write the solution ONLY in ${language.toUpperCase()}.
+Do NOT write Python. Do NOT write any other programming language. The server compiler is strictly expecting ${language.toUpperCase()}.
+
 Write a complete, optimal, and robust ${language} program that passes ALL public sample cases and ALL private hidden test cases.
-Output ONLY the code, no explanations or comments.
+Output ONLY the ${language} code, no explanations or comments.
 ${language === 'Java' ? 'Class name must be: Hello\n' : ''}
 
 PROBLEM: ${problem.title}
@@ -8536,9 +9690,16 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                 }
 
                 if (existingCode && calculateCodeSimilarity(code, existingCode) > 0.99) {
-                    console.warn('Generated code is too similar to existing code, retrying with distinct prompt');
+                    const lenientRetryPrompt = `${prompt}
 
-                    const lenientRetryPrompt = `${prompt}\n\nRETRY INSTRUCTION:\nThe previous answer was identical to the existing buggy code. Provide an ALTERNATIVE corrected implementation fixing integer overflow (using 64-bit long long/long) and edge cases.`;
+[CRITICAL RETRY DIRECTIVE - PREVIOUS CODE FAILED]
+The previous answer was identical or failed private hidden test cases.
+You MUST provide a fundamentally DIFFERENT and ROBUST implementation:
+1. Re-examine the mathematical problem logic: are you checking boundaries in the wrong order?
+2. 64-bit integer overflow: Ensure 'long long' / 'long' is used everywhere.
+3. Edge cases: Test N=1, N=0, all elements equal, negative numbers, reverse sorted arrays, zeros.
+4. Input stream: Ensure all whitespace and multi-line/single-line token differences are handled.
+5. Provide a completely working solution with NO comments.`;
 
                     response = await requestFromProvider(lenientRetryPrompt);
                     code = extractCode(response, language);
@@ -8549,23 +9710,35 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                     }
                 }
 
-                if (code && window.txtCode) {
-                    if (typeof window.txtCode.getSession === 'function') {
-                        window.txtCode.getSession().setValue(code);
-                    } else if ('value' in window.txtCode) {
-                        window.txtCode.value = code;
-                        window.txtCode.dispatchEvent(new Event('input', { bubbles: true }));
-                        window.txtCode.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
+                // Check if generated code is in the wrong language
+                if (isLanguageMismatch(code, language)) {
+                    console.warn(`[AI] Detected language mismatch for ${language}. Re-prompting...`);
+                    const langRetryPrompt = `${prompt}
 
-                    const $ = window.jQuery || window.$;
-                    if ($ && $("#txtCode").length) {
-                        $("#txtCode").val(code);
-                    }
+[CRITICAL ERROR - WRONG LANGUAGE GENERATED]
+The previous answer was generated in the WRONG programming language (e.g. Python instead of ${language}).
+The compiler on this problem strictly evaluates ${language}.
+You MUST rewrite the entire solution ONLY in valid ${language}.
+${language === 'C' ? 'Include <stdio.h>, <stdlib.h>, and int main(). Do NOT use Python.' : ''}
+${language === 'C++' || language === 'C++23' ? 'Include <iostream>, <vector>, and int main(). Do NOT use Python.' : ''}
+${language === 'Java' ? 'Use public class Hello with public static void main. Do NOT use Python.' : ''}
+Output ONLY the valid ${language} code with NO comments:`;
 
-                    console.log(errorInfo.hasError ? 'AI fix applied successfully' : 'AI solution inserted successfully');
+                    response = await requestFromProvider(langRetryPrompt);
+                    code = extractCode(response, language);
+                }
+
+                if (code) {
+                    const inserted = await insertCodeIntoEditor(code);
+                    if (inserted) {
+                        console.log(errorInfo.hasError ? 'AI fix applied successfully' : 'AI solution inserted successfully');
+                        showToastPill(errorInfo.hasError ? 'AI Fix Applied!' : 'AI Solution Inserted!', 'success', 2500);
+                    } else {
+                        console.warn('[AI] Could not find suitable editor element to insert code.');
+                        showToastPill('Failed to insert code into editor. Please check editor.', 'error', 3000);
+                    }
                 } else {
-                    notifyPopup('Failed to insert code into editor. Please try again.');
+                    showToastPill('Failed to extract valid code from AI response.', 'error', 3000);
                 }
             }
         } catch (error) {
@@ -9479,6 +10652,16 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                 if (result === 'success') {
                     clearInjectedRetryContext();
                     updateStatus('PASSED ✓', 'success');
+
+                    // ── Auto-save correct solution to vault ──
+                    try {
+                        if (typeof WASDBridge !== 'undefined' && typeof WASDBridge.vaultAutoSave === 'function') {
+                            WASDBridge.vaultAutoSave();
+                        }
+                    } catch (e) {
+                        console.debug('[AutoSolver] vaultAutoSave error (non-fatal):', e);
+                    }
+
                     await sleep(CONFIG.delayBeforeNext);
                     checkStop();
 
@@ -9702,7 +10885,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
         let currentScanMode = SCAN_MODE.TRACKS;
 
         // ── Bridge API Config ────────────────────────────────────────────────
-        const BRIDGE_API_URL = 'http://localhost:8765';
+        const BRIDGE_API_URL = 'http://localhost:8000';
         const PACK_NAMES = ['C', 'Java', 'Python', 'C++', 'SQL', 'DS-C', 'DS-Java'];
 
         // ── Auto Solver State ────────────────────────────────────────────────
@@ -9890,80 +11073,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             return xmlMatch ? xmlMatch[1] : null;
         }
 
-        // ── Storage Wrapper ──────────────────────────────────────────────────
-        const storage = {
-            getValue(key, def) {
-                try {
-                    if (typeof GM_getValue !== 'undefined') {
-                        return GM_getValue(key, def);
-                    }
-                } catch (_) { }
-                const val = localStorage.getItem(key);
-                return val !== null ? val : def;
-            },
-            setValue(key, value) {
-                try {
-                    if (typeof GM_getValue !== 'undefined') {
-                        GM_setValue(key, value);
-                        return;
-                    }
-                } catch (_) { }
-                localStorage.setItem(key, value);
-            },
-            deleteValue(key) {
-                try {
-                    if (typeof GM_deleteValue !== 'undefined') {
-                        GM_deleteValue(key);
-                        return;
-                    }
-                } catch (_) { }
-                localStorage.removeItem(key);
-            }
-        };
-
-        // ── Language Pack Scanning Logic (from incomplete-questions-module.js) ──
-        // GM_xmlhttpRequest wrapper for httpOnly cookie support
-        function gmFetch(url, options = {}) {
-            return new Promise((resolve, reject) => {
-                const requestId = Math.random().toString(36).substr(2, 9);
-
-                const handleMessage = (event) => {
-                    if (event.data && event.data.type === 'GM_XHR_RESPONSE' && event.data.id === requestId) {
-                        window.removeEventListener('message', handleMessage);
-                        if (event.data.error) {
-                            reject(new Error(event.data.error));
-                        } else {
-                            resolve({
-                                ok: event.data.status >= 200 && event.data.status < 300,
-                                status: event.data.status,
-                                statusText: event.data.statusText,
-                                responseText: event.data.responseText,
-                                responseHeaders: event.data.responseHeaders
-                            });
-                        }
-                    }
-                };
-
-                window.addEventListener('message', handleMessage);
-
-                window.postMessage({
-                    type: 'GM_XHR_REQUEST',
-                    id: requestId,
-                    options: {
-                        method: options.method || 'GET',
-                        url: url,
-                        headers: options.headers || {},
-                        data: options.body || options.data
-                    }
-                }, '*');
-
-                // Timeout
-                setTimeout(() => {
-                    window.removeEventListener('message', handleMessage);
-                    reject(new Error('Request timeout'));
-                }, 30000);
-            });
-        }
+        // ── Language Pack Scanning Logic (uses top-level gmFetch) ──
 
         function extractViewStateLangPack(html, formId = null) {
             if (!html) return null;
@@ -11216,6 +12326,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                 queue: autoSolverQueue,
                 currentIndex: autoSolverCurrentIndex,
                 enabled: autoSolverEnabled,
+                paused: autoSolverPaused,
                 timestamp: Date.now()
             };
             storage.setValue(AUTO_SOLVER_STORAGE_KEY, JSON.stringify(data));
@@ -11231,6 +12342,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                         autoSolverQueue = data.queue || [];
                         autoSolverCurrentIndex = data.currentIndex || 0;
                         autoSolverEnabled = data.enabled || false;
+                        autoSolverPaused = Boolean(data.paused);
                         return true;
                     }
                 }
@@ -11245,6 +12357,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             autoSolverQueue = [];
             autoSolverCurrentIndex = 0;
             autoSolverEnabled = false;
+            autoSolverPaused = false;
             // Restore original settings
             if (originalAutoSolverSetting !== undefined) SETTINGS.enableAutoSolver = originalAutoSolverSetting;
             if (originalAISolverSetting !== undefined) SETTINGS.enableAISolver = originalAISolverSetting;
@@ -11291,6 +12404,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             }
 
             autoSolverCurrentIndex = 0;
+            autoSolverPaused = false;
 
             // Save to storage for persistence across page loads
             saveAutoSolverQueue();
@@ -11327,34 +12441,34 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                 return;
             }
 
+            if (autoSolverPaused) {
+                showStatus(`Auto Solver: Paused at ${autoSolverQueue[autoSolverCurrentIndex].problemName} (${autoSolverCurrentIndex + 1}/${autoSolverQueue.length})`, '⏸');
+                updateAutoSolverProgress();
+                return;
+            }
+
             // We're on a problem page, wait for AutoSolver to complete
-            // The AutoSolver module will run automatically if SETTINGS.enableAutoSolver is true
-            // We need to detect when it's done and then navigate to next
             showStatus(`Auto Solver: Processing ${autoSolverQueue[autoSolverCurrentIndex].problemName} (${autoSolverCurrentIndex + 1}/${autoSolverQueue.length})`, '🤖');
             updateAutoSolverProgress();
-
-            // The AutoSolver runs on page load. We'll check periodically if it's done
-            // by looking for navigation away from the problem page or completion signals
-            // For now, we'll just wait and the next navigation will be triggered by the user
-            // or we can set up a MutationObserver to detect when the problem is solved
         }
 
         async function navigateToNextProblem() {
-            if (!autoSolverEnabled || autoSolverCurrentIndex >= autoSolverQueue.length) {
+            if (!autoSolverEnabled || autoSolverPaused || autoSolverCurrentIndex >= autoSolverQueue.length) {
                 return;
             }
 
             const item = autoSolverQueue[autoSolverCurrentIndex];
-            const problemUrl = `${CODENV_URL}?id=${item.problemId}`;
+            let problemUrl = item.link || '';
+            if (!problemUrl || !problemUrl.startsWith('http')) {
+                problemUrl = `${CODENV_URL}?id=${item.problemId}`;
+            }
 
             // Save current state before navigation
             saveAutoSolverQueue();
 
-            showStatus(`Auto Solver: Navigating to ${item.problemName}...`, '🚀');
+            showStatus(`Auto Solver: Navigating to ${item.problemName || ('Problem ' + item.problemId)}...`, '🚀');
 
             // Navigate to the problem page
-            // The script will reload on the new page, and AutoSolver will run
-            // We need to detect when AutoSolver is done and then continue
             window.location.href = problemUrl;
         }
 
@@ -11377,26 +12491,26 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
         function checkPendingAutoSolverQueue() {
             const hasQueue = loadAutoSolverQueue();
             if (hasQueue && autoSolverEnabled && autoSolverQueue.length > 0) {
+                if (autoSolverPaused) {
+                    updateAutoSolverProgress();
+                    showStatus(`Auto Solver: Paused (${autoSolverCurrentIndex + 1}/${autoSolverQueue.length})`, '⏸');
+                    return;
+                }
+
                 // Enable AutoSolver settings for the pending queue
                 enableAutoSolverSettings();
 
                 // We have a pending queue, check if we're on a problem page
                 const isProblemPage = window.location.href.includes('codeprogram.xhtml');
                 if (isProblemPage) {
-                    // On problem page - AutoSolver should run automatically
-                    // We'll update progress and wait for navigation
                     updateAutoSolverProgress();
                     showStatus(`Auto Solver: Ready to solve ${autoSolverQueue[autoSolverCurrentIndex].problemName} (${autoSolverCurrentIndex + 1}/${autoSolverQueue.length})`, '🤖');
 
-                    // Set up a listener to detect when AutoSolver completes
-                    // The AutoSolver navigates away when done, so we can listen for beforeunload
                     window.addEventListener('beforeunload', () => {
-                        // Page is unloading - increment index and save
                         autoSolverCurrentIndex++;
                         saveAutoSolverQueue();
                     }, { once: true });
                 } else {
-                    // Not on problem page - navigate to next problem
                     navigateToNextProblem();
                 }
             }
@@ -11581,53 +12695,141 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                     from { transform: rotate(0deg); }
                     to { transform: rotate(360deg); }
                 }
+                @keyframes pulseGlow {
+                    0%, 100% { box-shadow: 0 0 10px rgba(99, 179, 237, 0.2); }
+                    50% { box-shadow: 0 0 18px rgba(99, 179, 237, 0.45); }
+                }
+                @keyframes pulse {
+                    0%, 100% { opacity: 1; transform: scale(1); }
+                    50% { opacity: 0.7; transform: scale(1.02); }
+                }
+                @keyframes shimmer {
+                    0% { transform: translateX(-100%); }
+                    100% { transform: translateX(200%); }
+                }
                 .find-inc-item {
                     display: flex;
                     flex-direction: column;
-                    padding: 8px 12px;
-                    border-radius: 8px;
+                    padding: 10px 12px;
+                    border-radius: 9px;
                     cursor: pointer;
-                    margin-bottom: 6px;
-                    transition: background 0.2s, transform 0.1s;
-                    border: 1px solid transparent;
+                    margin-bottom: 7px;
+                    background: rgba(255, 255, 255, 0.03);
+                    border: 1px solid rgba(255, 255, 255, 0.07);
+                    transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+                    user-select: none;
                 }
                 .find-inc-item:hover {
                     background: rgba(99, 179, 237, 0.1) !important;
-                    border-color: rgba(99, 179, 237, 0.2) !important;
+                    border-color: rgba(99, 179, 237, 0.35) !important;
                     transform: translateY(-1px);
                 }
                 .find-inc-item:active {
                     transform: translateY(0);
                 }
-                .find-inc-failed:hover {
-                    background: rgba(239, 68, 68, 0.08) !important;
-                    border-color: rgba(239, 68, 68, 0.25) !important;
-                }
                 .find-inc-title {
                     font-weight: 600;
-                    font-size: 13px;
-                    color: #e4e4e7;
+                    font-size: 13.5px;
+                    color: #f4f4f5;
+                    line-height: 1.35;
                 }
                 .find-inc-meta {
                     font-size: 11px;
                     color: #a1a1aa;
-                    margin-top: 2px;
+                    margin-top: 3px;
                     display: flex;
                     justify-content: space-between;
+                    overflow-wrap: break-word;
                 }
-                .find-inc-progress-bg {
-                    width: 100%;
-                    height: 6px;
-                    background: rgba(255, 255, 255, 0.08);
-                    border-radius: 3px;
-                    margin-top: 6px;
-                    overflow: hidden;
+                .api-ctrl-btn {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 4px;
+                    padding: 4px 8px;
+                    border-radius: 6px;
+                    font-family: 'VT323', monospace;
+                    font-size: 13px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    border: 1px solid transparent;
+                    transition: all 0.15s ease;
+                    user-select: none;
+                    background: rgba(255, 255, 255, 0.06);
+                    color: #e4e4e7;
+                    border-color: rgba(255, 255, 255, 0.12);
                 }
-                .find-inc-progress-bar {
-                    height: 100%;
-                    background: linear-gradient(90deg, #3182ce, #63b3ed);
+                .api-ctrl-btn:hover {
+                    background: rgba(99, 179, 237, 0.2);
+                    border-color: rgba(99, 179, 237, 0.4);
+                    color: #63b3ed;
+                }
+                .api-ctrl-btn:disabled, .api-ctrl-btn[disabled] {
+                    opacity: 0.32 !important;
+                    cursor: not-allowed !important;
+                    pointer-events: none !important;
+                    transform: none !important;
+                }
+                .api-btn-start {
+                    background: rgba(34, 197, 94, 0.2) !important;
+                    border-color: rgba(34, 197, 94, 0.4) !important;
+                    color: #4ade80 !important;
+                }
+                .api-btn-start:hover:not(:disabled) {
+                    background: rgba(34, 197, 94, 0.35) !important;
+                    color: #86efac !important;
+                }
+                .api-btn-pause {
+                    background: rgba(234, 179, 8, 0.18) !important;
+                    border-color: rgba(234, 179, 8, 0.35) !important;
+                    color: #facc15 !important;
+                }
+                .api-btn-pause:hover:not(:disabled) {
+                    background: rgba(234, 179, 8, 0.3) !important;
+                }
+                .api-btn-stop {
+                    background: rgba(239, 68, 68, 0.18) !important;
+                    border-color: rgba(239, 68, 68, 0.35) !important;
+                    color: #f87171 !important;
+                }
+                .api-btn-stop:hover:not(:disabled) {
+                    background: rgba(239, 68, 68, 0.3) !important;
+                }
+                .api-btn-icon {
+                    width: 28px;
+                    height: 28px;
+                    padding: 0;
+                    font-size: 13px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    border-radius: 6px;
+                }
+                .api-btn-close {
+                    width: 24px;
+                    height: 24px;
+                    padding: 0;
+                    font-size: 13px;
+                    border-radius: 5px;
+                }
+                .api-btn-close:hover:not(:disabled) {
+                    background: rgba(239, 68, 68, 0.25) !important;
+                    border-color: rgba(239, 68, 68, 0.4) !important;
+                    color: #f87171 !important;
+                }
+                #api-dropdown-body::-webkit-scrollbar {
+                    width: 6px;
+                }
+                #api-dropdown-body::-webkit-scrollbar-track {
+                    background: rgba(0, 0, 0, 0.2);
                     border-radius: 3px;
-                    transition: width 0.3s ease;
+                }
+                #api-dropdown-body::-webkit-scrollbar-thumb {
+                    background: rgba(255, 255, 255, 0.15);
+                    border-radius: 3px;
+                }
+                #api-dropdown-body::-webkit-scrollbar-thumb:hover {
+                    background: rgba(99, 179, 237, 0.4);
                 }
             `;
             document.head.appendChild(style);
@@ -11638,13 +12840,19 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             dropdown = document.createElement('div');
             dropdown.id = 'find-incomplete-dropdown';
             dropdown.style.cssText =
-                'position:absolute;z-index:100000;display:none;' +
-                'background:rgba(15,15,15,0.96);backdrop-filter:blur(20px);' +
-                '-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);' +
-                'border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,0.65);' +
-                'padding:14px;min-width:320px;max-width:380px;' +
+                'position:fixed;top:62px;right:24px;z-index:100002;display:none;' +
+                'width:430px;max-width:calc(100vw - 32px);max-height:82vh;' +
+                'flex-direction:column;overflow:hidden;' +
+                'background:rgba(13,16,23,0.97);backdrop-filter:blur(24px);' +
+                '-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,0.12);' +
+                'border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,0.85);' +
                 "color:#f4f4f5;font-family:'VT323',monospace;font-size:15px;" +
-                'transition:opacity 0.25s, transform 0.25s;opacity:0;transform:translateY(-8px);';
+                'transition:opacity 0.2s ease, transform 0.2s ease;opacity:0;transform:translateY(-6px);';
+
+            // Prevent any clicks or mousedowns inside dropdown from bubbling up and closing it
+            dropdown.addEventListener('click', (e) => e.stopPropagation());
+            dropdown.addEventListener('mousedown', (e) => e.stopPropagation());
+
             document.body.appendChild(dropdown);
         }
 
@@ -11652,11 +12860,14 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             ensureDropdown(btnEl);
             injectStyles();
 
-            const rect = btnEl.getBoundingClientRect();
-            dropdown.style.top = `${rect.bottom + window.scrollY + 8}px`;
-            dropdown.style.left = `${Math.max(10, rect.left + window.scrollX - 180)}px`;
+            if (btnEl) {
+                const rect = btnEl.getBoundingClientRect();
+                dropdown.style.top = `${rect.bottom + 8}px`;
+                dropdown.style.right = `${Math.max(16, window.innerWidth - rect.right)}px`;
+                dropdown.style.left = 'auto';
+            }
 
-            dropdown.style.display = 'block';
+            dropdown.style.display = 'flex';
             dropdown.offsetHeight; // trigger reflow
             dropdown.style.opacity = '1';
             dropdown.style.transform = 'translateY(0)';
@@ -11665,258 +12876,16 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
         function hideDropdown() {
             if (!dropdown) return;
             dropdown.style.opacity = '0';
-            dropdown.style.transform = 'translateY(-8px)';
-
-            if (currentState === STATE.SCANNING) {
-                if (activeController) activeController.abort();
-                setState(STATE.IDLE);
-                hideStatus();
-            }
-
+            dropdown.style.transform = 'translateY(-6px)';
             setTimeout(() => {
-                if (dropdown && dropdown.style.opacity === '0') {
-                    dropdown.style.display = 'none';
-                }
-            }, 250);
+                if (dropdown) dropdown.style.display = 'none';
+            }, 200);
         }
 
-        // ── Auto-Solver from Bridge Results ──────────────────────────────────────
-        async function startAutoSolverFromBridgeResults() {
-            if (!autoSolverEnabled) return;
-            if (currentScanMode !== SCAN_MODE.BRIDGE_API) return;
-            if (!langPackResults) return;
-
-            console.log('[Auto-Solver] Starting from Bridge API results...');
-            await startAutoSolverQueue();
-        }
-
-        function renderList(parts) {
-            if (!dropdown) return;
-            dropdown.innerHTML = '';
-
-            // Filter parts
-            const incompleteList = parts.filter(item => item.status === 'ok' && item.ratio < 1.0);
-            const failedList = parts.filter(item => item.status === 'unknown');
-
-            // Sort incomplete list by ratio ascending
-            incompleteList.sort((a, b) => a.ratio - b.ratio);
-
-            // Compute total solved and total questions across all successfully scanned parts
-            let totalSolved = 0;
-            let totalQuestions = 0;
-            parts.forEach(p => {
-                if (p.status === 'ok') {
-                    totalSolved += p.solvedCount || 0;
-                    totalQuestions += p.totalCount || 0;
-                }
-            });
-            const remainingQuestions = totalQuestions - totalSolved;
-
-            const header = document.createElement('div');
-            header.style.cssText = 'font-weight: 700; font-size: 15px; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;';
-
-            // Mode selector
-            const modeSelector = document.createElement('div');
-            modeSelector.style.cssText = 'display: flex; gap: 4px; flex-wrap: wrap;';
-            modeSelector.innerHTML = `
-                <button id="mode-tracks" class="mode-btn" data-mode="${SCAN_MODE.TRACKS}" style="padding: 4px 10px; border: 1px solid ${currentScanMode === SCAN_MODE.TRACKS ? '#63b3ed' : 'rgba(255,255,255,0.2)'}; background: ${currentScanMode === SCAN_MODE.TRACKS ? 'rgba(99,179,237,0.2)' : 'rgba(255,255,255,0.05)'}; color: ${currentScanMode === SCAN_MODE.TRACKS ? '#63b3ed' : '#a1a1aa'}; border-radius: 4px; font-size: 11px; cursor: pointer; font-family: inherit; white-space: nowrap;">🎯 Tracks</button>
-                <button id="mode-langpacks" class="mode-btn" data-mode="${SCAN_MODE.LANG_PACKS}" style="padding: 4px 10px; border: 1px solid ${currentScanMode === SCAN_MODE.LANG_PACKS ? '#48bb78' : 'rgba(255,255,255,0.2)'}; background: ${currentScanMode === SCAN_MODE.LANG_PACKS ? 'rgba(72,187,120,0.2)' : 'rgba(255,255,255,0.05)'}; color: ${currentScanMode === SCAN_MODE.LANG_PACKS ? '#48bb78' : '#a1a1aa'}; border-radius: 4px; font-size: 11px; cursor: pointer; font-family: inherit; white-space: nowrap;">📦 Language Packs</button>
-                <button id="mode-bridge" class="mode-btn" data-mode="${SCAN_MODE.BRIDGE_API}" style="padding: 4px 10px; border: 1px solid ${currentScanMode === SCAN_MODE.BRIDGE_API ? '#ed8936' : 'rgba(255,255,255,0.2)'}; background: ${currentScanMode === SCAN_MODE.BRIDGE_API ? 'rgba(237,137,54,0.2)' : 'rgba(255,255,255,0.05)'}; color: ${currentScanMode === SCAN_MODE.BRIDGE_API ? '#ed8936' : '#a1a1aa'}; border-radius: 4px; font-size: 11px; cursor: pointer; font-family: inherit; white-space: nowrap;">🔌 Bridge API</button>
-            `;
-
-            header.appendChild(modeSelector);
-
-            // Auto-solver toggle (show only for Bridge API mode)
-            const autoSolverContainer = document.createElement('div');
-            autoSolverContainer.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-left: 12px;';
-            autoSolverContainer.innerHTML = `
-                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11px; color: ${currentScanMode === SCAN_MODE.BRIDGE_API ? '#ed8936' : '#71717a'}; font-weight: 600; white-space: nowrap; ${currentScanMode !== SCAN_MODE.BRIDGE_API ? 'opacity: 0.5; pointer-events: none;' : ''};">
-                    <input type="checkbox" id="auto-solver-toggle" ${autoSolverEnabled ? 'checked' : ''} style="width: 14px; height: 14px; accent-color: #ed8936; cursor: pointer;" ${currentScanMode !== SCAN_MODE.BRIDGE_API ? 'disabled' : ''}>
-                    <span>🤖 Auto-Solve</span>
-                </label>
-            `;
-            header.appendChild(autoSolverContainer);
-
-            const titleAndCount = document.createElement('div');
-            titleAndCount.style.cssText = 'display: flex; justify-content: space-between; align-items: center; flex: 1;';
-            titleAndCount.innerHTML = '<span>Incomplete Tracks</span>' +
-                `<span style="font-size: 10px; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 2px 6px; border-radius: 4px; white-space: nowrap;">` +
-                `${incompleteList.length} Tracks | ${remainingQuestions} Qs Left</span>`;
-            header.appendChild(titleAndCount);
-            dropdown.appendChild(header);
-
-            // Add mode switch event listeners
-            dropdown.querySelectorAll('.mode-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const newMode = e.target.dataset.mode;
-                    if (newMode !== currentScanMode) {
-                        // Disable auto-solver when leaving Bridge API mode
-                        if (currentScanMode === SCAN_MODE.BRIDGE_API && autoSolverEnabled) {
-                            autoSolverEnabled = false;
-                            clearAutoSolverQueue();
-                            console.log('[Auto-Solver] Disabled due to mode change');
-                        }
-                        currentScanMode = newMode;
-                        // Re-render with new mode
-                        loadAndRenderTracks(true);
-                    }
-                });
-            });
-
-            // Add auto-solver toggle event listener
-            const autoSolverToggle = dropdown.querySelector('#auto-solver-toggle');
-            if (autoSolverToggle) {
-                autoSolverToggle.addEventListener('change', (e) => {
-                    e.stopPropagation();
-                    autoSolverEnabled = e.target.checked;
-                    console.log('[Auto-Solver]', autoSolverEnabled ? 'ENABLED' : 'DISABLED');
-
-                    // If enabled and in Bridge API mode with results, start auto-solving
-                    if (autoSolverEnabled && currentScanMode === SCAN_MODE.BRIDGE_API && langPackResults) {
-                        startAutoSolverFromBridgeResults();
-                    }
-                });
-            }
-
-            const listContainer = document.createElement('div');
-            listContainer.style.cssText = 'max-height: 280px; overflow-y: auto;';
-
-            if (incompleteList.length === 0 && failedList.length === 0) {
-                const msg = document.createElement('div');
-                msg.style.cssText = 'text-align: center; padding: 20px; color: #a1a1aa; font-style: italic;';
-                msg.innerHTML = 'All tracks completed! 🏆';
-                dropdown.appendChild(msg);
-            } else {
-                if (incompleteList.length > 0) {
-                    incompleteList.forEach(item => {
-                        const pct = Math.round(item.ratio * 100);
-                        const itemEl = document.createElement('div');
-                        itemEl.className = 'find-inc-item';
-                        itemEl.innerHTML = `
-                            <div class="find-inc-title">${item.partName}</div>
-                            <div class="find-inc-meta">
-                                <span>${item.levelName}</span>
-                                <span>${item.solvedCount} / ${item.totalCount} solved (${pct}%)</span>
-                            </div>
-                            <div class="find-inc-progress-bg">
-                                <div class="find-inc-progress-bar" style="width: ${pct}%"></div>
-                            </div>
-                        `;
-                        itemEl.addEventListener('click', () => {
-                            startNavigation(item);
-                        });
-                        listContainer.appendChild(itemEl);
-                    });
-                }
-
-                // VISIBLY SEPARATE "COULDN'T VERIFY" SECTION
-                if (failedList.length > 0) {
-                    const failHeader = document.createElement('div');
-                    failHeader.style.cssText = 'font-weight: 700; font-size: 13px; color: #f87171; margin: 14px 0 8px 0; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; display: flex; justify-content: space-between; align-items: center;';
-                    failHeader.innerHTML = '<span>⚠️ Couldn\'t Verify (Crawl Failed)</span>';
-                    listContainer.appendChild(failHeader);
-
-                    failedList.forEach(item => {
-                        const itemEl = document.createElement('div');
-                        itemEl.className = 'find-inc-item find-inc-failed';
-                        itemEl.style.cssText = 'border-color: rgba(239, 68, 68, 0.15) !important; background: rgba(239, 68, 68, 0.02);';
-                        itemEl.innerHTML = `
-                            <div class="find-inc-title" style="color: #d1d5db;">${item.partName}</div>
-                            <div class="find-inc-meta" style="color: #ef4444; font-size: 10px;">
-                                <span>${item.levelName}</span>
-                                <span>Crawl failed: ${item.error || 'Unknown Error'}</span>
-                            </div>
-                        `;
-                        itemEl.addEventListener('click', () => {
-                            startNavigation(item);
-                        });
-                        listContainer.appendChild(itemEl);
-                    });
-                }
-
-                dropdown.appendChild(listContainer);
-            }
-
-            const refreshBtn = document.createElement('div');
-            refreshBtn.id = 'find-inc-refresh-btn';
-            refreshBtn.style.cssText = 'text-align: center; padding: 10px 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); color: #63b3ed; cursor: pointer; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;';
-            refreshBtn.innerHTML = '🔄 Force Re-Crawl & Refresh';
-            refreshBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                loadAndRenderTracks(true);
-            });
-            dropdown.appendChild(refreshBtn);
-        }
-
-        function renderScanningState() {
-            if (!dropdown) return;
-            dropdown.innerHTML = `
-                <div style="text-align: center; padding: 30px 15px;">
-                    <div style="font-size: 24px; margin-bottom: 12px; animation: spin 2s linear infinite; display: inline-block;">🔄</div>
-                    <div id="find-inc-loading-msg" style="font-size: 13px; color: #a1a1aa;">Starting scan...</div>
-                    <div style="margin-top: 12px; font-size: 10px; color: #71717a;">Please wait, rate-limiting is active to ensure safety.</div>
-                </div>
-            `;
-        }
-
-        function updateLoadingMessage(msg) {
-            const el = document.getElementById('find-inc-loading-msg');
-            if (el) el.textContent = msg;
-        }
-
-        function renderErrorState(errStr) {
-            if (!dropdown) return;
-            dropdown.innerHTML = `
-                <div style="text-align: center; padding: 20px 15px;">
-                    <div style="font-size: 24px; margin-bottom: 12px;">❌</div>
-                    <div style="font-size: 13px; color: #f87171; font-weight: 600;">Scan Failed</div>
-                    <div style="font-size: 12px; color: #a1a1aa; margin-top: 4px; overflow-wrap: break-word;">${errStr}</div>
-                    <div id="find-inc-retry-btn" style="margin-top: 15px; display: inline-block; background: rgba(99,179,237,0.15); color: #63b3ed; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600;">
-                        Try Again
-                    </div>
-                </div>
-            `;
-            const btn = document.getElementById('find-inc-retry-btn');
-            if (btn) {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    loadAndRenderTracks(true);
-                });
-            }
-        }
-
-        // ── Status pill ──────────────────────────────────────────────────────
-        function ensureStatusPanel() {
-            if (statusPanel) return;
-            statusPanel = document.createElement('div');
-            statusPanel.id = 'find-incomplete-status';
-            statusPanel.style.cssText =
-                'position:fixed;bottom:92px;left:24px;z-index:99997;' +
-                'min-width:260px;max-width:380px;padding:12px 16px;' +
-                'background:rgba(15,15,15,0.95);backdrop-filter:blur(18px);' +
-                '-webkit-backdrop-filter:blur(18px);border-radius:14px;' +
-                'border:1px solid rgba(99,179,237,0.3);' +
-                'box-shadow:0 16px 48px rgba(0,0,0,0.65);' +
-                "font-family:'VT323',monospace;font-size:16px;color:#e4e4e7;" +
-                'display:none;transition:opacity 0.2s;';
-            statusText = document.createElement('span');
-            statusPanel.appendChild(statusText);
-            document.body.appendChild(statusPanel);
-        }
-
-        function showStatus(msg, icon) {
-            ensureStatusPanel();
-            statusText.textContent = (icon ? icon + '  ' : '') + msg;
-            statusPanel.style.display = 'block';
-            statusPanel.style.opacity = '1';
-        }
-
-        function hideStatus() {
-            if (!statusPanel) return;
-            statusPanel.style.opacity = '0';
-            setTimeout(() => { if (statusPanel) statusPanel.style.display = 'none'; }, 200);
-        }
+        // ── Status pill (disabled - progress shown in dropdown) ───────────────
+        function ensureStatusPanel() { }
+        function showStatus(msg, icon = 'ℹ️') { }
+        function hideStatus() { }
 
         function setState(s) { currentState = s; }
 
@@ -11938,18 +12907,18 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                 'style="cursor:pointer;white-space:nowrap;">' +
                 '<span class="ui-menuitem-icon ui-icon pi pi-fw pi-search ui-menuitem-icon-left" ' +
                 'aria-hidden="true"></span>' +
-                '<span class="ui-menuitem-text">Find Incomplete</span>' +
+                '<span class="ui-menuitem-text">Incomplete Questions</span>' +
                 '</a>';
 
             const anchor = li.querySelector('a');
             anchor.addEventListener('click', e => {
                 e.preventDefault();
                 e.stopPropagation();
-                if (dropdown && dropdown.style.display === 'block' && dropdown.style.opacity !== '0') {
+                if (dropdown && dropdown.style.display === 'flex' && dropdown.style.opacity !== '0') {
                     hideDropdown();
                 } else {
                     showDropdown(anchor);
-                    loadAndRenderTracks();
+                    apiFetchAndRender();
                 }
             });
 
@@ -11957,25 +12926,1233 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             menuList.insertBefore(li, lastItem);
         }
 
+        // ── FastAPI Questions (rendered inside #find-incomplete-dropdown) ────
+        let apiQuestions = [];
+        let apiLastFetch = null; // null | 'ok' | 'loading' | 'error'
+        let apiRenderedList = []; // rows currently visible
+        let apiScrapeProgress = { percent: 0, task: '', count: 0 };
+        let autoSolverPaused = false;
+
+        function apiBaseUrl() {
+            return (SETTINGS.fastAPIBaseUrl || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+        }
+
+        function apiExtractId(q) {
+            if (q && q.question_id) return String(q.question_id);
+            const link = (q && q.link) || '';
+            const idMatch = link.match(/[?&]id=(\d+)/);
+            if (idMatch) return idMatch[1];
+            const qm = (q && q.question || '').match(/[Ii]d-?(\d+)/);
+            return qm ? qm[1] : '';
+        }
+
+        function apiEscape(str) {
+            return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[c]);
+        }
+
+        function apiLevelRank(lv) {
+            const u = (lv || '').toUpperCase();
+            if (u.includes('STARTER')) return 0;
+            if (u.includes('VERY')) return 1;
+            if (u.includes('EASY')) return 2;
+            if (u.includes('AVERAGE')) return 3;
+            if (u.includes('COURSE')) return 4;
+            if (u.includes('PRIME') || u.includes('HARD')) return 5;
+            return 6;
+        }
+
+        function apiLevelBadgeColor(lv) {
+            const u = (lv || '').toUpperCase();
+            if (u.includes('PRIME') || u.includes('HARD')) return { bg: 'rgba(239,68,68,0.2)', color: '#f87171', border: 'rgba(239,68,68,0.35)' };
+            if (u.includes('AVERAGE')) return { bg: 'rgba(234,179,8,0.2)', color: '#facc15', border: 'rgba(234,179,8,0.35)' };
+            if (u.includes('EASY') || u.includes('STARTER') || u.includes('VERY')) return { bg: 'rgba(34,197,94,0.2)', color: '#4ade80', border: 'rgba(34,197,94,0.35)' };
+            return { bg: 'rgba(99,179,237,0.18)', color: '#63b3ed', border: 'rgba(99,179,237,0.35)' };
+        }
+
+        async function apiShowCookieModal() {
+            let cookieStatus = { has_cookie: false, cookie_preview: '' };
+            try {
+                const res = await gmFetch(apiBaseUrl() + '/cookie/status');
+                if (res.ok) cookieStatus = await res.json();
+            } catch (err) { }
+
+            const autoCookie = await gmGetCookies();
+            const savedCookie = storage.getValue('skillrack_custom_cookie', '');
+            const activeCookie = savedCookie || autoCookie;
+
+            const hasJsessionid = /JSESSIONID=/i.test(activeCookie);
+
+            const html = `
+                <div style="font-family:sans-serif;font-size:12px;line-height:1.5;max-width:540px;color:#e4e4e7;">
+                    <div style="font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:6px;">
+                        <span>🔑 SkillRack Session Cookie Setup</span>
+                    </div>
+                    <div style="margin-bottom:12px;padding:10px;background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                            <b>Current Status:</b>
+                            <span style="font-weight:700;color:${hasJsessionid ? '#4ade80' : '#f87171'}">${hasJsessionid ? '✅ JSESSIONID detected' : '❌ JSESSIONID MISSING'}</span>
+                        </div>
+                        <div style="font-size:11px;color:#a1a1aa;">
+                            Python server: <span style="color:${cookieStatus.has_cookie ? '#4ade80' : '#f59e0b'}">${cookieStatus.has_cookie ? 'Cookie registered' : 'No cookie on server'}</span>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:8px;font-size:11px;color:#a1a1aa;">
+                        <b>How to get Cookie:</b> Press <kbd style="background:#27272a;padding:1px 4px;border-radius:3px;">F12</kbd> &rarr; <b>Network</b> &rarr; reload page &rarr; click any SkillRack request &rarr; copy <b>Cookie:</b> from <i>Request Headers</i>.
+                    </div>
+
+                    <label style="display:block;margin-bottom:4px;font-weight:600;">Paste full Cookie header below:</label>
+                    <textarea id="cookie-input" placeholder="JSESSIONID=...; oam.Flash.RENDERMAP.TOKEN=...; AWSALB=..." style="width:100%;min-height:90px;padding:8px;background:#0d1117;border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:#e4e4e7;font-family:monospace;font-size:11px;resize:vertical;outline:none;box-sizing:border-box;">${apiEscape(activeCookie)}</textarea>
+
+                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+                        <button id="cookie-cancel" style="padding:6px 12px;background:transparent;border:1px solid rgba(255,255,255,0.2);color:#9ca3af;border-radius:6px;cursor:pointer;">Cancel</button>
+                        <button id="cookie-save-only" style="padding:6px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:#e4e4e7;border-radius:6px;cursor:pointer;">Save Cookie</button>
+                        <button id="cookie-save-rescrape" style="padding:6px 16px;background:#22c55e;border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">Save & Re-scrape</button>
+                    </div>
+                </div>
+            `;
+
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:1000010;display:flex;align-items:center;justify-content:center;';
+            modal.innerHTML = `<div style="background:#18181b;border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:20px;max-width:560px;width:90%;box-shadow:0 24px 60px rgba(0,0,0,0.85);">${html}</div>`;
+            document.body.appendChild(modal);
+
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) modal.remove();
+            });
+
+            modal.querySelector('#cookie-cancel').onclick = () => modal.remove();
+
+            const saveCookieHandler = async (triggerScrape) => {
+                const input = modal.querySelector('#cookie-input').value.trim();
+                if (!input) { alert('Cookie cannot be empty'); return; }
+                if (!/JSESSIONID=/i.test(input)) {
+                    if (!confirm('⚠️ No JSESSIONID detected. Cookie may not work. Save anyway?')) return;
+                }
+
+                storage.setValue('skillrack_custom_cookie', input);
+                modal.remove();
+                try {
+                    await gmFetch(apiBaseUrl() + '/cookie', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cookie: input })
+                    });
+                } catch (err) { }
+                if (triggerScrape) {
+                    apiReScrapeAndRender();
+                } else {
+                    alert('✅ Cookie saved successfully!');
+                }
+            };
+
+            modal.querySelector('#cookie-save-only').onclick = () => saveCookieHandler(false);
+            modal.querySelector('#cookie-save-rescrape').onclick = () => saveCookieHandler(true);
+            modal.querySelector('#cookie-input').focus();
+        }
+
+        function apiShowImportExportModal() {
+            const currentCount = apiQuestions ? apiQuestions.length : 0;
+            const html = `
+                <div style="font-family:sans-serif;font-size:12px;line-height:1.5;color:#e4e4e7;">
+                    <div style="font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:6px;">
+                        <span>📦 Import / Export Incomplete Questions</span>
+                    </div>
+
+                    <div style="margin-bottom:12px;padding:10px;background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+                        <div style="font-weight:600;margin-bottom:6px;">💻 Python Terminal Scrape (Direct JSON):</div>
+                        <div style="display:flex;align-items:center;background:#090d13;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:6px 10px;gap:8px;">
+                            <code id="cli-cmd-text" style="font-family:monospace;font-size:11px;color:#93c5fd;flex:1;overflow-x:auto;white-space:nowrap;user-select:all;">python -m skillrack_scraper.main scrape -o questions.json</code>
+                            <button id="cli-cmd-copy" style="padding:4px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#e4e4e7;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap;">📋 Copy</button>
+                        </div>
+                        <div style="font-size:10px;color:#a1a1aa;margin-top:4px;">
+                            Run this command in your project terminal to generate <code>questions.json</code>, then upload it below.
+                        </div>
+                    </div>
+
+                    <div style="display:flex;gap:10px;margin-bottom:12px;">
+                        <div style="flex:1;">
+                            <label style="display:block;margin-bottom:4px;font-weight:600;">📥 Import Questions File:</label>
+                            <input type="file" id="import-json-file" accept=".json,application/json" style="display:none;">
+                            <button id="import-choose-file-btn" style="width:100%;padding:8px 12px;background:#3b82f6;border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;">
+                                📁 Choose JSON File
+                            </button>
+                        </div>
+                        <div style="flex:1;">
+                            <label style="display:block;margin-bottom:4px;font-weight:600;">📤 Export Loaded Questions:</label>
+                            <button id="export-json-btn" style="width:100%;padding:8px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#e4e4e7;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;" ${currentCount === 0 ? 'disabled' : ''}>
+                                💾 Export (${currentCount})
+                            </button>
+                        </div>
+                    </div>
+
+                    <label style="display:block;margin-bottom:4px;font-weight:600;">Or Paste JSON Data directly:</label>
+                    <textarea id="import-json-textarea" placeholder='Paste JSON array [...] or {"questions": [...]}' style="width:100%;min-height:90px;padding:8px;background:#0d1117;border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:#e4e4e7;font-family:monospace;font-size:11px;resize:vertical;outline:none;box-sizing:border-box;"></textarea>
+
+                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                        <button id="import-cancel-btn" style="padding:6px 14px;background:transparent;border:1px solid rgba(255,255,255,0.2);color:#9ca3af;border-radius:6px;cursor:pointer;">Cancel</button>
+                        <button id="import-apply-btn" style="padding:6px 16px;background:#22c55e;border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">Import & Display</button>
+                    </div>
+                </div>
+            `;
+
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:1000010;display:flex;align-items:center;justify-content:center;';
+            modal.innerHTML = `<div style="background:#18181b;border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:20px;max-width:580px;width:90%;box-shadow:0 24px 60px rgba(0,0,0,0.85);">${html}</div>`;
+            document.body.appendChild(modal);
+
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) modal.remove();
+            });
+
+            const copyBtn = modal.querySelector('#cli-cmd-copy');
+            if (copyBtn) {
+                copyBtn.onclick = () => {
+                    navigator.clipboard.writeText('python -m skillrack_scraper.main scrape -o questions.json').then(() => {
+                        copyBtn.textContent = '✅ Copied!';
+                        setTimeout(() => { copyBtn.textContent = '📋 Copy'; }, 2000);
+                    });
+                };
+            }
+
+            const fileInput = modal.querySelector('#import-json-file');
+            const chooseFileBtn = modal.querySelector('#import-choose-file-btn');
+            const textarea = modal.querySelector('#import-json-textarea');
+            const cancelBtn = modal.querySelector('#import-cancel-btn');
+            const applyBtn = modal.querySelector('#import-apply-btn');
+            const exportBtn = modal.querySelector('#export-json-btn');
+
+            chooseFileBtn.onclick = () => fileInput.click();
+
+            fileInput.onchange = (e) => {
+                const file = e.target.files && e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    processImportJson(ev.target.result);
+                };
+                reader.readAsText(file);
+            };
+
+            function processImportJson(raw) {
+                try {
+                    const parsed = JSON.parse(raw);
+                    let list = [];
+                    if (Array.isArray(parsed)) {
+                        list = parsed;
+                    } else if (parsed && Array.isArray(parsed.questions)) {
+                        list = parsed.questions;
+                    } else if (parsed && Array.isArray(parsed.data)) {
+                        list = parsed.data;
+                    } else {
+                        throw new Error('JSON must be an array of questions or an object containing a "questions" array.');
+                    }
+                    if (list.length === 0) {
+                        alert('JSON was valid, but contained 0 questions.');
+                    }
+                    apiQuestions = list;
+                    apiLastFetch = 'ok';
+                    storage.setValue('skillrack_cached_questions', JSON.stringify(list));
+                    modal.remove();
+                    apiRenderIntoDropdown();
+                    alert(`✅ Loaded ${list.length} incomplete questions successfully!`);
+                } catch (err) {
+                    alert('Invalid JSON: ' + err.message);
+                }
+            }
+
+            applyBtn.onclick = () => {
+                const text = textarea.value.trim();
+                if (!text) { alert('Please select a JSON file or paste JSON content.'); return; }
+                processImportJson(text);
+            };
+
+            if (exportBtn) {
+                exportBtn.onclick = () => {
+                    const jsonStr = JSON.stringify(apiQuestions, null, 2);
+                    const blob = new Blob([jsonStr], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `skillrack_incomplete_questions_${new Date().toISOString().slice(0, 10)}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                };
+            }
+
+            cancelBtn.onclick = () => modal.remove();
+        }
+
+        // ── Render complete UI into the dropdown ─────────────────────────────
+        function apiRenderIntoDropdown() {
+            // Preserve user's filters across rebuilds (e.g. after re-scrape)
+            const prevSearch = (document.getElementById('api-search-input') || {}).value || '';
+            const prevLang = (document.getElementById('api-filter-lang') || {}).value || '';
+            const prevLevel = (document.getElementById('api-filter-level') || {}).value || '';
+            if (!dropdown) return;
+            dropdown.innerHTML = '';
+
+            // ── 1. Header Bar ───────────────────────────────────────────────
+            const header = document.createElement('div');
+            header.style.cssText =
+                'font-weight:700;font-size:15px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.08);' +
+                'display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:rgba(255,255,255,0.02);';
+
+            const title = document.createElement('span');
+            title.innerHTML = '⚡ Incomplete Questions';
+            title.style.cssText = 'font-size:15px;color:#f4f4f5;font-weight:700;letter-spacing:0.4px;';
+
+            const countBadge = document.createElement('span');
+            countBadge.id = 'api-count-badge';
+            countBadge.style.cssText =
+                'font-size:11px;color:#63b3ed;background:rgba(99,179,237,0.15);' +
+                'padding:1px 8px;border-radius:8px;white-space:nowrap;margin-left:4px;';
+            countBadge.textContent = '—';
+
+            const btnGroup = document.createElement('div');
+            btnGroup.style.cssText = 'margin-left:auto;display:flex;align-items:center;gap:6px;';
+
+            const cookieBtn = document.createElement('button');
+            cookieBtn.className = 'api-ctrl-btn api-btn-icon';
+            cookieBtn.title = 'Set / Paste Cookie override';
+            cookieBtn.innerHTML = '🔑';
+            cookieBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                apiShowCookieModal();
+            });
+
+            const importExportBtn = document.createElement('button');
+            importExportBtn.className = 'api-ctrl-btn api-btn-icon';
+            importExportBtn.title = 'Import JSON from Python scraper or Export questions';
+            importExportBtn.innerHTML = '📦';
+            importExportBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                apiShowImportExportModal();
+            });
+
+            const reScrapeBtn = document.createElement('button');
+            reScrapeBtn.className = 'api-ctrl-btn api-btn-icon';
+            reScrapeBtn.title = 'Re-scrape latest questions from SkillRack';
+            reScrapeBtn.innerHTML = '↻';
+            reScrapeBtn.addEventListener('click', (e) => { e.stopPropagation(); apiReScrapeAndRender(); });
+
+            const minBtn = document.createElement('button');
+            minBtn.className = 'api-ctrl-btn api-btn-close';
+            minBtn.title = 'Minimize to compact pill';
+            minBtn.innerHTML = '−';
+            minBtn.addEventListener('click', (e) => { e.stopPropagation(); minimizeFindIncomplete(); });
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'api-ctrl-btn api-btn-close';
+            closeBtn.title = 'Close Panel';
+            closeBtn.innerHTML = '✕';
+            closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeFindIncomplete(); });
+
+            btnGroup.appendChild(cookieBtn);
+            btnGroup.appendChild(importExportBtn);
+            btnGroup.appendChild(reScrapeBtn);
+            btnGroup.appendChild(minBtn);
+            btnGroup.appendChild(closeBtn);
+
+            header.appendChild(title);
+            header.appendChild(countBadge);
+            header.appendChild(btnGroup);
+            dropdown.appendChild(header);
+
+            // ── 2. Active Queue Banner (if queue is in progress) ────────────
+            const queueBanner = document.createElement('div');
+            queueBanner.id = 'api-queue-banner';
+            queueBanner.style.cssText =
+                'padding:8px 12px;background:rgba(237,137,54,0.08);border-bottom:1px solid rgba(237,137,54,0.25);' +
+                'display:none;flex-direction:column;gap:6px;';
+            dropdown.appendChild(queueBanner);
+
+            // ── 3. Queue Action Toolbar (Merged Toggle + Stop + Icon Clear) ──
+            const toolRow = document.createElement('div');
+            toolRow.style.cssText =
+                'display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.06);' +
+                'align-items:center;background:rgba(0,0,0,0.2);';
+
+            // Merged Start / Pause / Resume Toggle Button
+            const toggleBtn = document.createElement('button');
+            toggleBtn.id = 'api-queue-toggle-btn';
+            toggleBtn.className = 'api-ctrl-btn api-btn-start';
+            toggleBtn.style.cssText = 'flex:1;font-weight:700;';
+            toggleBtn.innerHTML = '▶ Start all';
+            toggleBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                apiHandleQueueToggle();
+            });
+
+            // Stop Button (enabled only when running / queued)
+            const stopBtn = document.createElement('button');
+            stopBtn.id = 'api-stop-btn';
+            stopBtn.className = 'api-ctrl-btn api-btn-stop';
+            stopBtn.style.cssText = 'padding:5px 12px;';
+            stopBtn.title = 'Stop Auto-Solver queue';
+            stopBtn.innerHTML = '⏹ Stop';
+            stopBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                apiStopQueue();
+            });
+
+            // Clear Button (icon-only, enabled only when paused/stopped)
+            const clearBtn = document.createElement('button');
+            clearBtn.id = 'api-clear-btn';
+            clearBtn.className = 'api-ctrl-btn api-btn-icon';
+            clearBtn.title = 'Clear queue';
+            clearBtn.innerHTML = '🗑';
+            clearBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                apiClearQueue();
+            });
+
+            toolRow.appendChild(toggleBtn);
+            toolRow.appendChild(stopBtn);
+            toolRow.appendChild(clearBtn);
+            dropdown.appendChild(toolRow);
+
+            // ── 4. Search & Filters ─────────────────────────────────────────
+            const filterRow = document.createElement('div');
+            filterRow.style.cssText =
+                'display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.06);' +
+                'align-items:center;background:rgba(255,255,255,0.01);flex-wrap:wrap;';
+
+            const searchInput = document.createElement('input');
+            searchInput.id = 'api-search-input';
+            searchInput.type = 'text';
+            searchInput.placeholder = '🔍 Search title, ID, section…';
+            searchInput.style.cssText =
+                'flex:1;min-width:130px;padding:5px 8px;background:#16181d;border:1px solid rgba(255,255,255,0.12);' +
+                "color:#e4e4e7;border-radius:7px;font-family:'VT323',monospace;font-size:13px;outline:none;";
+            searchInput.addEventListener('input', apiApplyFiltersAndRedraw);
+
+            const langSel = document.createElement('select');
+            langSel.id = 'api-filter-lang';
+            langSel.title = 'Filter by language';
+            langSel.style.cssText =
+                'flex:1;min-width:90px;padding:5px 7px;background:#16181d;border:1px solid rgba(255,255,255,0.12);' +
+                "color:#e4e4e7;border-radius:7px;font-family:'VT323',monospace;font-size:13px;cursor:pointer;outline:none;";
+
+            const levelSel = document.createElement('select');
+            levelSel.id = 'api-filter-level';
+            levelSel.title = 'Filter by level';
+            levelSel.style.cssText = langSel.style.cssText;
+
+            // Populate filter options from current data
+            const langs = [...new Set(apiQuestions.map(q => q.language).filter(Boolean))].sort();
+            langSel.innerHTML = '<option value="">All langs</option>' +
+                langs.map(l => `<option value="${apiEscape(l)}">${apiEscape(l)}</option>`).join('');
+
+            const levels = [...new Set(apiQuestions.map(q => q.level).filter(Boolean))]
+                .sort((a, b) => apiLevelRank(a) - apiLevelRank(b));
+            levelSel.innerHTML = '<option value="">All levels</option>' +
+                levels.map(l => `<option value="${apiEscape(l)}">${apiEscape(l)}</option>`).join('');
+
+            langSel.addEventListener('change', apiApplyFiltersAndRedraw);
+            levelSel.addEventListener('change', apiApplyFiltersAndRedraw);
+
+            // Restore previously selected filters (survives re-scrape rebuilds)
+            if (prevSearch) searchInput.value = prevSearch;
+            if (prevLang && [...langSel.options].some(o => o.value === prevLang)) langSel.value = prevLang;
+            if (prevLevel && [...levelSel.options].some(o => o.value === prevLevel)) levelSel.value = prevLevel;
+
+            filterRow.appendChild(searchInput);
+            filterRow.appendChild(langSel);
+            filterRow.appendChild(levelSel);
+            dropdown.appendChild(filterRow);
+
+            // ── 5. Question List Body ───────────────────────────────────────
+            const body = document.createElement('div');
+            body.id = 'api-dropdown-body';
+            body.style.cssText = 'max-height:360px;overflow-y:auto;padding:10px 12px;';
+            dropdown.appendChild(body);
+
+            apiApplyFiltersAndRedraw();
+            apiUpdateToolbarState();
+        }
+
+        // ── State Machine Synchronization ──────────────────────────────────
+        function apiUpdateToolbarState() {
+            loadAutoSolverQueue();
+            const isQueueActive = Boolean(autoSolverEnabled && autoSolverQueue.length > 0);
+            const isRunning = isQueueActive && !autoSolverPaused;
+            const isPaused = isQueueActive && autoSolverPaused;
+            const hasQuestions = Boolean(apiRenderedList && apiRenderedList.length > 0 && apiLastFetch === 'ok');
+
+            // 1. Dropdown toggle button
+            const toggleBtn = document.getElementById('api-queue-toggle-btn');
+            if (toggleBtn) {
+                if (isRunning) {
+                    toggleBtn.innerHTML = '⏸ Pause';
+                    toggleBtn.className = 'api-ctrl-btn api-btn-pause';
+                    toggleBtn.disabled = false;
+                    toggleBtn.style.flex = '1';
+                } else if (isPaused) {
+                    toggleBtn.innerHTML = '▶ Resume';
+                    toggleBtn.className = 'api-ctrl-btn api-btn-start';
+                    toggleBtn.disabled = false;
+                    toggleBtn.style.flex = '1';
+                } else {
+                    const count = (apiRenderedList && apiRenderedList.length) || 0;
+                    toggleBtn.innerHTML = `▶ Start all${count > 0 ? ' (' + count + ')' : ''}`;
+                    toggleBtn.className = 'api-ctrl-btn api-btn-start';
+                    toggleBtn.disabled = !hasQuestions || apiLastFetch !== 'ok';
+                    toggleBtn.style.flex = '1';
+                }
+            }
+
+            // 2. Dropdown stop button (enabled only when queue is running or paused)
+            const stopBtn = document.getElementById('api-stop-btn');
+            if (stopBtn) {
+                stopBtn.disabled = !isQueueActive;
+            }
+
+            // 3. Dropdown clear button (icon-only, enabled only when paused or finished)
+            const clearBtn = document.getElementById('api-clear-btn');
+            if (clearBtn) {
+                const canClear = isPaused || (autoSolverQueue.length > 0 && !autoSolverEnabled);
+                clearBtn.disabled = !canClear;
+            }
+
+            apiUpdateQueueBanner();
+            updateFloatingHUD();
+        }
+
+        function apiHandleQueueToggle() {
+            loadAutoSolverQueue();
+            const isQueueActive = Boolean(autoSolverEnabled && autoSolverQueue.length > 0);
+            if (isQueueActive) {
+                apiTogglePauseQueue();
+            } else {
+                apiStartQueueFromVisible();
+            }
+        }
+
+        function apiUpdateQueueBanner() {
+            const banner = document.getElementById('api-queue-banner');
+            if (!banner) return;
+
+            loadAutoSolverQueue();
+            if (autoSolverEnabled && autoSolverQueue.length > 0) {
+                banner.style.display = 'flex';
+                const total = autoSolverQueue.length;
+                const current = Math.min(autoSolverCurrentIndex + 1, total);
+                const pct = Math.round((autoSolverCurrentIndex / total) * 100);
+                const currentItem = autoSolverQueue[autoSolverCurrentIndex] || {};
+
+                banner.innerHTML = `
+                    <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;color:${autoSolverPaused ? '#facc15' : '#4ade80'};">
+                        <span>${autoSolverPaused ? '⏸ QUEUE PAUSED' : '🚀 AUTO-SOLVING QUEUE'}: ${current} / ${total} (${pct}%)</span>
+                        <span>${autoSolverPaused ? 'Paused' : 'Active'}</span>
+                    </div>
+                    <div style="width:100%;height:5px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden;">
+                        <div style="height:100%;width:${pct}%;background:${autoSolverPaused ? 'linear-gradient(90deg,#eab308,#fde047)' : 'linear-gradient(90deg,#22c55e,#4ade80)'};transition:width 0.3s ease;"></div>
+                    </div>
+                    <div style="font-size:11px;color:#d4d4d8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                        Target: ${apiEscape(currentItem.problemName || ('Problem ' + currentItem.problemId))}
+                    </div>
+                `;
+            } else {
+                banner.style.display = 'none';
+            }
+        }
+
+        function apiApplyFiltersAndRedraw() {
+            const body = document.getElementById('api-dropdown-body');
+            if (!body) return;
+
+            // ── Loading / error / null states ───────────────────────────────
+            if (apiLastFetch === 'loading') {
+                const pct = Math.max(0, Math.min(100, apiScrapeProgress.percent || 0));
+                const task = apiScrapeProgress.task || 'Syncing session & crawling packs…';
+                const found = apiScrapeProgress.count || 0;
+
+                // Define crawl stages for step indicator
+                const stages = [
+                    { key: 'init', label: 'Init', range: [0, 5], color: '#63b3ed' },
+                    { key: 'packs', label: 'Packs', range: [5, 25], color: '#3b82f6' },
+                    { key: 'levels', label: 'Levels', range: [25, 50], color: '#8b5cf6' },
+                    { key: 'subs', label: 'Subs', range: [50, 75], color: '#d946ef' },
+                    { key: 'parts', label: 'Parts', range: [75, 90], color: '#f59e0b' },
+                    { key: 'problems', label: 'Problems', range: [90, 100], color: '#4ade80' },
+                ];
+
+                // Determine current stage
+                let currentStageIdx = stages.findIndex(s => pct >= s.range[0] && pct <= s.range[1]);
+                if (currentStageIdx === -1) currentStageIdx = stages.length - 1;
+
+                // Estimate time remaining (rough heuristic: ~3-5 min for full crawl)
+                const elapsedMs = Date.now() - (window.__scrapeStartTime || Date.now());
+                const estimatedTotalMs = 4 * 60 * 1000; // ~4 minutes
+                const remainingMs = Math.max(0, estimatedTotalMs - elapsedMs);
+                const remainingMin = Math.ceil(remainingMs / 60000);
+                const remainingSec = Math.ceil((remainingMs % 60000) / 1000);
+                const eta = pct >= 100 ? 'Complete' : (remainingMin > 0 ? `${remainingMin}m ${remainingSec}s` : `${remainingSec}s`);
+
+                body.innerHTML = `
+                    <div style="text-align:center;padding:20px 16px;">
+                        <!-- Header with animated icon -->
+                        <div style="margin-bottom:16px;">
+                            <div style="font-size:32px;margin-bottom:8px;display:inline-block;animation:pulse 1.5s ease-in-out infinite;">
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#63b3ed;">
+                                    <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+                                    <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" style="animation:spin 1.5s linear infinite;transform-origin:12px 12px;">
+                                        <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1.5s" repeatCount="indefinite"/>
+                                    </path>
+                                </svg>
+                            </div>
+                            <div style="font-size:15px;color:#f4f4f5;font-weight:700;margin-bottom:2px;">Scanning SkillRack for Incomplete Questions</div>
+                            <div style="font-size:12px;color:#a1a1aa;margin-top:2px;">${apiEscape(task)}</div>
+                        </div>
+
+                        <!-- Stage indicator -->
+                        <div style="display:flex;gap:4px;justify-content:center;margin-bottom:14px;flex-wrap:wrap;">
+                            ${stages.map((s, i) => {
+                    const isActive = i === currentStageIdx;
+                    const isDone = i < currentStageIdx || (i === currentStageIdx && pct >= s.range[1]);
+                    const dotColor = isDone ? s.color : (isActive ? s.color : 'rgba(255,255,255,0.15)');
+                    const dotBorder = isActive ? `0 0 0 2px ${s.color}40` : 'none';
+                    const labelColor = isDone || isActive ? '#e4e4e7' : '#71717a';
+                    return `
+                                    <div style="display:flex;flex-direction:column;align-items:center;gap:3px;opacity:${isDone || isActive ? '1' : '0.5'};">
+                                        <div style="width:14px;height:14px;border-radius:50%;background:${dotColor};border:2px solid ${dotColor};box-shadow:${dotBorder};transition:all 0.3s ease;${isActive ? 'animation:pulse 1s ease-in-out infinite;' : ''}"></div>
+                                        <span style="font-size:9px;color:${labelColor};font-weight:${isActive ? '700' : '500'};white-space:nowrap;">${apiEscape(s.label)}</span>
+                                    </div>
+                                `;
+                }).join('')}
+                        </div>
+
+                        <!-- Main progress bar with glow effect -->
+                        <div style="width:100%;margin-bottom:10px;">
+                            <div style="width:100%;height:10px;background:rgba(255,255,255,0.06);border-radius:8px;overflow:hidden;position:relative;border:1px solid rgba(99,179,237,0.25);">
+                                <div style="height:100%;width:${Math.max(3, pct)}%;background:linear-gradient(90deg,#3b82f6,#60a5fa,#8b5cf6,#d946ef,#f59e0b,#4ade80);background-size:200% 100%;border-radius:8px;transition:width 0.4s cubic-bezier(0.4,0,0.2,1);position:relative;"
+                                     id="progress-bar-fill">
+                                    <div style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.3),transparent);animation:shimmer 1.5s infinite;"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Stats row -->
+                        <div style="display:flex;justify-content:space-between;font-size:11px;color:#a1a1aa;padding:0 4px;margin-bottom:8px;">
+                            <span>Progress: <b style="color:#e4e4e7;">${pct}%</b></span>
+                            <span>Found: <b style="color:#4ade80;">${found}</b> questions</span>
+                            <span>ETA: <b style="color:#f59e0b;">${eta}</b></span>
+                        </div>
+
+                        <!-- Live log / detail -->
+                        <div style="font-size:10px;color:#71717a;background:rgba(255,255,255,0.03);padding:8px 12px;border-radius:6px;border:1px solid rgba(255,255,255,0.05);text-align:left;">
+                            ${apiEscape(task)}
+                        </div>
+                    </div>
+
+                    <style>
+                        @keyframes spin {
+                            from { transform: rotate(0deg); }
+                            to { transform: rotate(360deg); }
+                        }
+                        @keyframes pulse {
+                            0%, 100% { opacity: 1; transform: scale(1); }
+                            50% { opacity: 0.6; transform: scale(1.05); }
+                        }
+                        @keyframes shimmer {
+                            0% { transform: translateX(-100%); }
+                            100% { transform: translateX(200%); }
+                        }
+                    </style>`;
+                return;
+            }
+            if (apiLastFetch === 'error') {
+                body.innerHTML = `
+                    <div style="text-align:center;padding:22px 14px;">
+                        <div style="font-size:24px;margin-bottom:8px;">⚠️</div>
+                        <div style="font-size:13px;color:#f87171;font-weight:600;">FastAPI server not ready or no questions scraped yet</div>
+                        <div style="font-size:11px;color:#a1a1aa;margin-top:4px;">Server: <code>${apiEscape(apiBaseUrl())}</code></div>
+                        <div style="display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap;">
+                            <button id="err-set-cookie-btn" style="padding:6px 12px;background:#3b82f6;color:white;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;">🔑 Set Cookie</button>
+                            <button id="err-import-json-btn" style="padding:6px 12px;background:#22c55e;color:white;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;">📦 Import JSON File</button>
+                            <button id="err-rescrape-btn" style="padding:6px 12px;background:rgba(255,255,255,0.1);color:#e4e4e7;border:1px solid rgba(255,255,255,0.2);border-radius:6px;font-size:11px;cursor:pointer;">↻ Re-scrape</button>
+                        </div>
+                    </div>`;
+                setTimeout(() => {
+                    const ckBtn = body.querySelector('#err-set-cookie-btn');
+                    if (ckBtn) ckBtn.onclick = (e) => { e.stopPropagation(); apiShowCookieModal(); };
+                    const impBtn = body.querySelector('#err-import-json-btn');
+                    if (impBtn) impBtn.onclick = (e) => { e.stopPropagation(); apiShowImportExportModal(); };
+                    const retryBtn = body.querySelector('#err-rescrape-btn');
+                    if (retryBtn) retryBtn.onclick = (e) => { e.stopPropagation(); apiReScrapeAndRender(); };
+                }, 0);
+                return;
+            }
+
+            // ── Filter and sort ─────────────────────────────────────────────
+            const searchVal = (document.getElementById('api-search-input') || {}).value || '';
+            const langFilter = (document.getElementById('api-filter-lang') || {}).value || '';
+            const levelFilter = (document.getElementById('api-filter-level') || {}).value || '';
+
+            let list = apiQuestions;
+            if (searchVal.trim()) {
+                const s = searchVal.trim().toLowerCase();
+                list = list.filter(q =>
+                    (q.question && q.question.toLowerCase().includes(s)) ||
+                    (q.section && q.section.toLowerCase().includes(s)) ||
+                    (q.problem_set && q.problem_set.toLowerCase().includes(s)) ||
+                    (apiExtractId(q) && apiExtractId(q).includes(s))
+                );
+            }
+            if (langFilter) list = list.filter(q => String(q.language || '').toUpperCase().includes(langFilter.toUpperCase()));
+            if (levelFilter) list = list.filter(q => String(q.level || '').toUpperCase().includes(levelFilter.toUpperCase()));
+
+            const sorted = [...list].sort((a, b) =>
+                (apiLevelRank(a.level) - apiLevelRank(b.level)) ||
+                String(a.language || '').localeCompare(String(b.language || '')) ||
+                String(a.section || '').localeCompare(String(b.section || '')) ||
+                String(a.question || '').localeCompare(String(b.question || ''))
+            );
+            apiRenderedList = sorted;
+
+            const badge = document.getElementById('api-count-badge');
+            if (badge) badge.textContent = sorted.length + ' Incomplete';
+
+            // ── Empty state ─────────────────────────────────────────────────
+            if (sorted.length === 0) {
+                body.innerHTML = `
+                    <div style="text-align:center;padding:28px 14px;">
+                        <div style="font-size:24px;margin-bottom:8px;">✅</div>
+                        <div style="font-size:13px;color:#e4e4e7;font-weight:600;">No incomplete questions found</div>
+                        <div style="font-size:11px;color:#71717a;margin-top:5px;">Try <b>↻</b> in header or clear your search filters.</div>
+                    </div>`;
+                return;
+            }
+
+            // ── Question rows ───────────────────────────────────────────────
+            body.innerHTML = sorted.map((q, idx) => {
+                const qId = apiExtractId(q);
+                const lvlStyle = apiLevelBadgeColor(q.level);
+                return `
+                <div class="find-inc-item api-q-row" data-idx="${idx}" data-id="${apiEscape(qId)}">
+                    <div style="display:flex;gap:5px;align-items:center;margin-bottom:4px;">
+                        <span style="font-size:10px;padding:1px 6px;border-radius:6px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;background:${lvlStyle.bg};color:${lvlStyle.color};border:1px solid ${lvlStyle.border};">${apiEscape(q.level)}</span>
+                        <span style="font-size:10px;padding:1px 6px;border-radius:6px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;background:rgba(99,179,237,0.14);color:#63b3ed;border:1px solid rgba(99,179,237,0.25);">${apiEscape(q.language)}</span>
+                        ${qId ? `<span style="font-size:10px;color:#71717a;margin-left:auto;font-family:monospace;">#${apiEscape(qId)}</span>` : ''}
+                    </div>
+                    <div class="find-inc-title">${apiEscape(q.question)}</div>
+                    <div class="find-inc-meta">
+                        <span>${apiEscape(q.section)}${q.problem_set ? ' · ' + apiEscape(q.problem_set) : ''}</span>
+                        <span style="color:#4ade80;font-weight:600;font-size:11px;">Solve →</span>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function apiSyncCookieToBackend() {
+            // Build a full request-header style cookie string (JSESSIONID=...; oam...; AWSALB=...)
+            // GM_cookie.list reads HttpOnly cookies (JSESSIONID) that document.cookie cannot see.
+            const mergeCookies = (a, b) => {
+                const map = new Map();
+                String(a || '').split(';').concat(String(b || '').split(';')).forEach(part => {
+                    const eq = part.indexOf('=');
+                    if (eq > 0) map.set(part.slice(0, eq).trim(), part.slice(eq + 1).trim());
+                });
+                return [...map.entries()].filter(([k, v]) => k && v).map(([k, v]) => `${k}=${v}`).join('; ');
+            };
+
+            let cookie = '';
+            try {
+                cookie = await gmGetCookies();
+            } catch (e) {
+                console.warn('[FastAPI] gmGetCookies failed:', e);
+            }
+            // Safety net: union with document.cookie (non-HttpOnly cookies)
+            cookie = mergeCookies(cookie, document.cookie);
+
+            let hasSid = /JSESSIONID=/i.test(cookie);
+
+            // Recovery: GM_cookie may be unavailable (grant not applied / manager
+            // restriction). Ask SkillRack for a fresh session id via Set-Cookie.
+            if (!hasSid) {
+                try {
+                    const r = await gmFetch('https://www.skillrack.com/faces/candidate/codeprogram.xhtml');
+                    const raw = r.responseHeadersRaw || '';
+                    const matches = raw.match(/^set-cookie:\s*(JSESSIONID=[^;\r\n]+)/gim) || [];
+                    if (matches.length) {
+                        const sid = matches[matches.length - 1].replace(/^set-cookie:\s*/i, '').trim();
+                        cookie = mergeCookies(cookie, sid);
+                        hasSid = true;
+                        console.info('[FastAPI] Recovered JSESSIONID from Set-Cookie header');
+                    }
+                } catch (e) {
+                    console.warn('[FastAPI] Set-Cookie recovery fetch failed:', e);
+                }
+            }
+
+            if (!hasSid) {
+                // Do NOT clobber a possibly-good cookie.txt with AWSALB-only junk.
+                console.warn('[FastAPI] No JSESSIONID in collected cookies — skipping cookie sync');
+                showStatus('No JSESSIONID found — log into SkillRack first', '⚠️');
+                setTimeout(hideStatus, 5000);
+                return '';
+            }
+
+            try {
+                const res = await gmFetch(apiBaseUrl() + '/cookie', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookie: cookie.trim() })
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return cookie.trim();
+            } catch (e) {
+                console.warn('[FastAPI] Cookie sync note:', e);
+                return '';
+            }
+        }
+
+        async function apiFetchQuestions() {
+            apiLastFetch = 'loading';
+            apiApplyFiltersAndRedraw();
+            apiUpdateToolbarState();
+            try {
+                // Proactively sync current browser cookie to the Python server first
+                await apiSyncCookieToBackend();
+
+                const res = await gmFetch(apiBaseUrl() + '/questions');
+                if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + (res.statusText || 'request failed'));
+                const data = await res.json();
+                const list = Array.isArray(data) ? data : (data && Array.isArray(data.questions) ? data.questions : []);
+                apiQuestions = list;
+                storage.setValue('skillrack_cached_questions', JSON.stringify(list));
+                apiLastFetch = 'ok';
+            } catch (err) {
+                console.warn('[FastAPI] Failed to fetch questions:', err);
+                const cachedRaw = storage.getValue('skillrack_cached_questions', '');
+                if (cachedRaw) {
+                    try {
+                        const parsed = JSON.parse(cachedRaw);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                            apiQuestions = parsed;
+                            apiLastFetch = 'ok';
+                            apiRenderIntoDropdown();
+                            return;
+                        }
+                    } catch (_) { }
+                }
+                apiQuestions = [];
+                apiLastFetch = 'error';
+            }
+            apiRenderIntoDropdown();
+        }
+
+        function apiFetchAndRender() {
+            ensureDropdown();
+            injectStyles();
+            if (apiLastFetch === null || apiLastFetch === 'error') {
+                apiRenderIntoDropdown();
+                apiFetchQuestions();
+            } else {
+                apiRenderIntoDropdown();
+            }
+        }
+
+        async function apiReScrapeAndRender() {
+            apiLastFetch = 'loading';
+            // Set start time for ETA calculation
+            window.__scrapeStartTime = Date.now();
+            apiScrapeProgress = { percent: 5, task: 'Starting background scraper…', count: 0 };
+            apiApplyFiltersAndRedraw();
+            apiUpdateToolbarState();
+
+            const countBadge = document.getElementById('api-count-badge');
+            if (countBadge) {
+                countBadge.textContent = '⏳ Scraping…';
+                countBadge.style.color = '#ed8936';
+                countBadge.style.background = 'rgba(237,137,54,0.15)';
+                // Animate the badge
+                countBadge.style.animation = 'pulse 1s ease-in-out infinite';
+            }
+            showStatus('Scraping SkillRack for incomplete questions…', '⏳');
+
+            try {
+                const currentCookie = await gmGetCookies();
+                // 1. Launch async scrape job
+                const startRes = await gmFetch(apiBaseUrl() + '/scrape', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookie: currentCookie || undefined, force_refresh: true })
+                });
+                if (!startRes.ok) throw new Error('HTTP ' + startRes.status);
+                const startData = await startRes.json();
+                const jobId = startData?.job_id;
+
+                if (jobId) {
+                    // 2. Poll job status until complete
+                    let attempts = 0;
+                    while (attempts < 180) {
+                        await new Promise(r => setTimeout(r, 600));
+                        attempts++;
+                        try {
+                            const statusRes = await gmFetch(apiBaseUrl() + '/scrape/' + encodeURIComponent(jobId));
+                            if (statusRes.ok) {
+                                const job = await statusRes.json();
+                                apiScrapeProgress = {
+                                    percent: job.progress_percent || 0,
+                                    task: job.current_task || 'Scanning tracks…',
+                                    count: job.questions_found || 0
+                                };
+                                apiApplyFiltersAndRedraw();
+
+                                // Update count badge with live progress
+                                if (countBadge) {
+                                    countBadge.textContent = `${job.questions_found || 0} found · ${job.progress_percent || 0}%`;
+                                    countBadge.style.color = '#63b3ed';
+                                    countBadge.style.background = 'rgba(99,179,237,0.15)';
+                                }
+
+                                if (job.status === 'completed') {
+                                    break;
+                                } else if (job.status === 'failed') {
+                                    throw new Error(job.error || 'Scrape job failed');
+                                }
+                            }
+                        } catch (pollErr) {
+                            console.warn('[FastAPI] Poll error:', pollErr);
+                        }
+                    }
+                }
+
+                // 3. Fetch completed results
+                await apiFetchQuestions();
+
+                if (countBadge) {
+                    countBadge.textContent = `${apiQuestions.length} questions`;
+                    countBadge.style.color = '#4ade80';
+                    countBadge.style.background = 'rgba(34,197,94,0.15)';
+                    countBadge.style.animation = 'none';
+                }
+                showStatus(`Re-scrape complete — ${apiQuestions.length} questions found`, '✅');
+                setTimeout(hideStatus, 4000);
+            } catch (err) {
+                console.warn('[FastAPI] Re-scrape failed:', err);
+                apiQuestions = [];
+                apiLastFetch = 'error';
+                apiRenderIntoDropdown();
+
+                if (countBadge) {
+                    countBadge.textContent = 'Error';
+                    countBadge.style.color = '#f87171';
+                    countBadge.style.background = 'rgba(239,68,68,0.15)';
+                }
+                showStatus('Re-scrape failed: ' + (err.message || 'Server error'), '❌');
+                setTimeout(hideStatus, 5000);
+            }
+        }
+
+        // ── Floating Queue HUD & Minimized Pill (persistent overlay) ────────
+        let floatingHud = null;
+        let hudMinimized = (storage.getValue('killcode_hud_minimized') === 'true');
+        let dropdownMinimized = false;
+
+        function minimizeFindIncomplete() {
+            dropdownMinimized = true;
+            hideDropdown();
+            updateFloatingHUD();
+        }
+
+        function closeFindIncomplete() {
+            dropdownMinimized = false;
+            hideDropdown();
+            if (floatingHud && (!autoSolverEnabled || autoSolverQueue.length === 0)) {
+                floatingHud.style.display = 'none';
+            }
+        }
+
+        function ensureFloatingHUD() {
+            if (floatingHud) return floatingHud;
+            floatingHud = document.createElement('div');
+            floatingHud.id = 'killcode-autosolver-hud';
+            floatingHud.style.cssText =
+                'position:fixed;bottom:24px;left:24px;z-index:99999;display:none;' +
+                'max-width:calc(100vw - 32px);' +
+                'background:rgba(13,16,23,0.96);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);' +
+                'border:1px solid rgba(99,179,237,0.35);border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,0.8);' +
+                "color:#f4f4f5;font-family:'VT323',monospace;font-size:14px;overflow:hidden;user-select:none;" +
+                'transition:opacity 0.2s ease, transform 0.2s ease;';
+
+            floatingHud.addEventListener('click', (e) => e.stopPropagation());
+            floatingHud.addEventListener('mousedown', (e) => e.stopPropagation());
+
+            // Dragging logic
+            let isDragging = false;
+            let startX, startY, initLeft, initTop;
+
+            floatingHud.addEventListener('mousedown', (e) => {
+                const handle = e.target.closest('#hud-drag-handle') || (hudMinimized || dropdownMinimized ? floatingHud : null);
+                if (!handle || e.target.closest('button')) return;
+                isDragging = true;
+                const rect = floatingHud.getBoundingClientRect();
+                startX = e.clientX;
+                startY = e.clientY;
+                initLeft = rect.left;
+                initTop = rect.top;
+
+                floatingHud.style.right = 'auto';
+                floatingHud.style.bottom = 'auto';
+                floatingHud.style.left = `${initLeft}px`;
+                floatingHud.style.top = `${initTop}px`;
+
+                const onMouseMove = (ev) => {
+                    if (!isDragging) return;
+                    const deltaX = ev.clientX - startX;
+                    const deltaY = ev.clientY - startY;
+                    const maxLeft = Math.max(10, window.innerWidth - floatingHud.offsetWidth - 10);
+                    const maxTop = Math.max(10, window.innerHeight - floatingHud.offsetHeight - 10);
+                    const newLeft = Math.min(Math.max(10, initLeft + deltaX), maxLeft);
+                    const newTop = Math.min(Math.max(10, initTop + deltaY), maxTop);
+                    floatingHud.style.left = `${newLeft}px`;
+                    floatingHud.style.top = `${newTop}px`;
+                };
+
+                const onMouseUp = () => {
+                    isDragging = false;
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                };
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+
+            document.body.appendChild(floatingHud);
+            return floatingHud;
+        }
+
+        function updateFloatingHUD() {
+            loadAutoSolverQueue();
+            const isQueueActive = Boolean(autoSolverEnabled && autoSolverQueue.length > 0);
+
+            // If dropdown is open, hide redundant floating pill
+            if (dropdown && dropdown.style.display === 'flex' && dropdown.style.opacity !== '0') {
+                if (floatingHud) floatingHud.style.display = 'none';
+                return;
+            }
+
+            // If no queue and not minimized, hide
+            if (!isQueueActive && !dropdownMinimized) {
+                if (floatingHud) floatingHud.style.display = 'none';
+                return;
+            }
+
+            const hud = ensureFloatingHUD();
+            hud.style.display = 'block';
+            hud.style.opacity = '1';
+
+            if (isQueueActive) {
+                const total = autoSolverQueue.length;
+                const current = Math.min(autoSolverCurrentIndex + 1, total);
+                const pct = Math.round((autoSolverCurrentIndex / total) * 100);
+                const currentItem = autoSolverQueue[autoSolverCurrentIndex] || {};
+                const cleanTitle = apiEscape(currentItem.problemName || ('Problem #' + (currentItem.problemId || '')));
+
+                // Minimized pill state
+                hud.style.width = 'auto';
+                hud.style.borderRadius = '24px';
+                hud.innerHTML = `
+                    <div id="hud-drag-handle" style="display:flex;align-items:center;gap:7px;padding:6px 12px;cursor:pointer;background:rgba(255,255,255,0.03);">
+                        <span style="font-size:13px;font-weight:700;color:${autoSolverPaused ? '#facc15' : '#4ade80'};display:flex;align-items:center;gap:4px;">
+                            ${autoSolverPaused ? '⏸ PAUSED' : '● 🤖'} ${current}/${total} (${pct}%)
+                        </span>
+                        <span style="font-size:11px;color:#a1a1aa;margin-left:2px;">↗</span>
+                        <button id="hud-pill-close-btn" class="api-ctrl-btn api-btn-close" style="width:18px;height:18px;font-size:9px;margin-left:4px;" title="Close">✕</button>
+                    </div>`;
+
+                hud.onclick = (e) => {
+                    if (e.target.closest('#hud-pill-close-btn')) {
+                        e.stopPropagation();
+                        closeFindIncomplete();
+                        return;
+                    }
+                    dropdownMinimized = false;
+                    const btn = document.getElementById('find-incomplete-btn');
+                    showDropdown(btn);
+                    apiFetchAndRender();
+                };
+            } else {
+                // Idle state minimized pill (e.g. "⚡ 14 Incomplete ↗ ✕")
+                const count = (apiRenderedList && apiRenderedList.length) || apiQuestions.length || 0;
+                hud.style.width = 'auto';
+                hud.style.borderRadius = '24px';
+                hud.innerHTML = `
+                    <div id="hud-drag-handle" style="display:flex;align-items:center;gap:7px;padding:6px 12px;cursor:pointer;background:rgba(255,255,255,0.03);">
+                        <span style="font-size:13px;font-weight:700;color:#63b3ed;display:flex;align-items:center;gap:4px;">
+                            ⚡ ${count} Incomplete
+                        </span>
+                        <span style="font-size:11px;color:#a1a1aa;margin-left:2px;">↗</span>
+                        <button id="hud-pill-close-btn" class="api-ctrl-btn api-btn-close" style="width:18px;height:18px;font-size:9px;margin-left:4px;" title="Close">✕</button>
+                    </div>`;
+
+                hud.onclick = (e) => {
+                    if (e.target.closest('#hud-pill-close-btn')) {
+                        e.stopPropagation();
+                        closeFindIncomplete();
+                        return;
+                    }
+                    dropdownMinimized = false;
+                    const btn = document.getElementById('find-incomplete-btn');
+                    showDropdown(btn);
+                    apiFetchAndRender();
+                };
+            }
+        }
+
+        // ── Queue Controls: Start / Pause / Stop / Clear ─────────────────────
+        function apiStartQueueFromVisible() {
+            if (!apiRenderedList || apiRenderedList.length === 0) {
+                showStatus('No questions in current filter', '⚠️');
+                setTimeout(hideStatus, 3000);
+                return;
+            }
+
+            enableAutoSolverSettings();
+            autoSolverQueue = apiRenderedList.map(q => {
+                const problemId = apiExtractId(q);
+                return {
+                    problemId,
+                    problemName: q.question || q.link || ('Problem ' + (problemId || '')),
+                    link: q.link || '',
+                    packName: q.language || '',
+                    subName: q.section || '',
+                    partName: q.problem_set || ''
+                };
+            }).filter(item => Boolean(item.problemId || item.link));
+
+            autoSolverCurrentIndex = 0;
+            autoSolverEnabled = true;
+            autoSolverPaused = false;
+            dropdownMinimized = true;
+            saveAutoSolverQueue();
+            apiUpdateToolbarState();
+
+            showStatus(`Auto-Solver: Starting queue (${autoSolverQueue.length} questions)…`, '🚀');
+            hideDropdown();
+            navigateToNextProblem();
+        }
+
+        function apiTogglePauseQueue() {
+            autoSolverPaused = !autoSolverPaused;
+            saveAutoSolverQueue();
+            apiUpdateToolbarState();
+            showStatus(autoSolverPaused ? 'Auto-Solver paused' : 'Auto-Solver resumed', autoSolverPaused ? '⏸' : '▶');
+            setTimeout(hideStatus, 3000);
+        }
+
+        function apiStopQueue() {
+            autoSolverEnabled = false;
+            autoSolverPaused = false;
+            saveAutoSolverQueue();
+            apiUpdateToolbarState();
+            showStatus('Auto-Solver stopped', '⏹');
+            setTimeout(hideStatus, 3000);
+        }
+
+        function apiClearQueue() {
+            clearAutoSolverQueue();
+            autoSolverPaused = false;
+            apiUpdateToolbarState();
+            showStatus('Queue cleared', '🗑');
+            setTimeout(hideStatus, 3000);
+        }
+
+        async function apiSolveQuestion(q) {
+            if (!q) return;
+            let problemId = apiExtractId(q);
+            if (!problemId || !/^\d+$/.test(String(problemId))) {
+                showStatus('Invalid problem ID for this question', '⚠️');
+                setTimeout(hideStatus, 4000);
+                return;
+            }
+
+            autoSolverQueue = [{
+                problemId,
+                problemName: q.question || q.link || ('Problem ' + problemId),
+                packName: q.language || '',
+                subName: (q.section || ''),
+                partName: (q.problem_set || '')
+            }];
+            autoSolverCurrentIndex = 0;
+            autoSolverEnabled = true;
+            autoSolverPaused = false;
+            dropdownMinimized = true;
+            enableAutoSolverSettings();
+            saveAutoSolverQueue();
+            apiUpdateToolbarState();
+
+            hideDropdown();
+            showStatus(`Navigating to ${autoSolverQueue[0].problemName}…`, '🚀');
+            try {
+                await navigateToNextProblem();
+            } catch (err) {
+                console.warn('[FastAPI] Navigation failed:', err);
+                showStatus('Navigation failed: ' + err.message, '❌');
+                setTimeout(hideStatus, 5000);
+            }
+            setTimeout(hideStatus, 1500);
+        }
+
+        function initFastAPIQuestionsPanel() {
+            if (!SETTINGS.enableFastAPIQuestions) return;
+            if (!window.location.hostname.includes('skillrack.com')) return;
+
+            // Delegate clicks on question rows inside the dropdown to the auto-solve flow.
+            document.addEventListener('click', (e) => {
+                const row = e.target.closest('.api-q-row');
+                if (!row) return;
+                if (!dropdown || !dropdown.contains(row)) return;
+                const rows = [...dropdown.querySelectorAll('.api-q-row')];
+                const idx = rows.indexOf(row);
+                const q = apiRenderedList[idx];
+                if (q) apiSolveQuestion(q);
+            });
+
+            // Edge case: Escape closes/minimizes the panel instead of leaving it stuck open.
+            // If a solve queue is running, minimize to HUD rather than fully hiding it.
+            document.addEventListener('keydown', (e) => {
+                if (e.key !== 'Escape') return;
+                if (!dropdown || dropdown.style.display === 'none' || dropdown.style.opacity === '0') return;
+                if (autoSolverEnabled && autoSolverQueue.length > 0) {
+                    dropdownMinimized = true;
+                }
+                hideDropdown();
+                updateFloatingHUD();
+            });
+        }
+
         function init() {
+            initFastAPIQuestionsPanel();
             if (!SETTINGS.enableFindIncomplete) return;
             injectMenuButton();
 
-            // Check for pending auto-solver queue on page load
+            // Check for pending auto-solver queue on page load & show persistent HUD if active
             checkPendingAutoSolverQueue();
+            updateFloatingHUD();
 
             const obs = new MutationObserver(() => {
                 if (!document.getElementById('find-incomplete-btn')) injectMenuButton();
             });
             if (document.body) obs.observe(document.body, { childList: true, subtree: true });
 
-            document.addEventListener('click', e => {
-                if (dropdown && dropdown.style.display === 'block' &&
-                    !dropdown.contains(e.target) &&
-                    e.target.id !== 'find-incomplete-btn' &&
-                    !e.target.closest('#find-incomplete-btn')) {
-                    hideDropdown();
-                }
+            // Auto-minimize Find Incomplete dropdown on outside click/touch (collapses into compact pill badge)
+            document.addEventListener('click', (e) => {
+                if (!dropdown || dropdown.style.display === 'none' || dropdown.style.opacity === '0') return;
+
+                // If click is inside dropdown or on trigger button or on HUD pill, do not minimize
+                if (dropdown.contains(e.target) || (e.composedPath && e.composedPath().includes(dropdown))) return;
+                if (e.target.id === 'find-incomplete-btn' || e.target.closest('#find-incomplete-btn')) return;
+                if (floatingHud && (floatingHud.contains(e.target) || (e.composedPath && e.composedPath().includes(floatingHud)))) return;
+
+                // Minimize to compact pill badge on outside click!
+                minimizeFindIncomplete();
             });
         }
 
@@ -11983,6 +14160,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             init,
             loadAndRenderTracks,
             getState: () => currentState,
+            updateHUD: updateFloatingHUD,
             cancel: () => {
                 if (activeController) activeController.abort();
                 setState(STATE.IDLE);
@@ -12047,7 +14225,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             try {
                 if (ghosted) localStorage.setItem(STORAGE_KEY_GHOST, 'true');
                 else localStorage.removeItem(STORAGE_KEY_GHOST);
-            } catch (_) {}
+            } catch (_) { }
         }
 
         function saveRunningState(running) {
@@ -12059,7 +14237,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                     localStorage.removeItem(STORAGE_KEY_STOPPED);
                     localStorage.removeItem('autosolver_stopped');
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
 
         // ── Zero-Flicker Global Ghost Stylesheet ───────────────────────────────
@@ -12069,7 +14247,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                 if (!tag) {
                     tag = document.createElement('style');
                     tag.id = 'kc-ghost-active-style';
-                    document.head.appendChild(tag);
+                    (document.head || document.documentElement).appendChild(tag);
                 }
                 tag.textContent = `
                     #bypass-settings-panel,
@@ -12107,7 +14285,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                     transition: opacity ${TRANSITION_MS}ms ease !important;
                 }
             `;
-            document.head.appendChild(style);
+            (document.head || document.documentElement).appendChild(style);
         }
 
         // ── Ghost target selectors ────────────────────────────────────────────
@@ -12251,7 +14429,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
                         if (typeof getAiButtonMarkup === 'function') {
                             aiBtn.innerHTML = getAiButtonMarkup('AI Solution');
                         }
-                    } catch (_) {}
+                    } catch (_) { }
                     aiBtn.style.opacity = '1';
                 }
 
@@ -12328,7 +14506,436 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
         }
 
 
-        // ── Input guard ───────────────────────────────────────────────────────
+        // ── E — Solutions Vault (Save & Share correct solutions) ──────────────
+        const VAULT_STORAGE_KEY = 'killcode_solutions_vault';
+
+        function vaultLoad() {
+            try {
+                const raw = localStorage.getItem(VAULT_STORAGE_KEY);
+                return raw ? JSON.parse(raw) : [];
+            } catch (_) { return []; }
+        }
+
+        function vaultSave(entries) {
+            try {
+                localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(entries));
+            } catch (_) { }
+        }
+
+        function getCurrentCode() {
+            if (typeof getEditor === 'function') {
+                const ed = getEditor();
+                if (ed && typeof ed.getSession === 'function') return ed.getSession().getValue();
+                if (ed && 'value' in ed) return ed.value;
+            }
+            const ta = document.getElementById('txtCode');
+            if (ta) return ta.value;
+            return '';
+        }
+
+        function getCurrentProblemTitle() {
+            if (typeof getProblemDescription === 'function') {
+                try {
+                    const p = getProblemDescription();
+                    if (p && p.title) return p.title;
+                } catch (_) { }
+            }
+            // fallback: first .ui.label text that isn't a tag
+            const labels = document.querySelectorAll('.ui.label');
+            for (const l of labels) {
+                const t = l.textContent.trim();
+                if (t && !l.classList.contains('ribbon') && !l.classList.contains('circular')
+                    && !t.includes('Max Execution') && !t.includes('ProgramID')) {
+                    return t;
+                }
+            }
+            return document.title || 'Unknown Problem';
+        }
+
+        function formatVaultEntryAsText(entry) {
+            const sep = '─'.repeat(60);
+            return [
+                `📌 ${entry.title}`,
+                `🔗 ${entry.url}`,
+                `🕐 ${new Date(entry.ts).toLocaleString()}`,
+                sep,
+                entry.code,
+                sep
+            ].join('\n');
+        }
+
+        // ── Auto-save current code to vault (used on successful submission) ──
+        function vaultAutoSave() {
+            try {
+                const code = getCurrentCode().trim();
+                const title = getCurrentProblemTitle().trim();
+
+                if (!code) {
+                    console.debug('[Vault] No code in editor to auto-save');
+                    return false;
+                }
+
+                // Detect language
+                let lang = 'Unknown';
+                try { if (typeof getSelectedLanguage === 'function') lang = getSelectedLanguage(); } catch (_) { }
+
+                const entries = vaultLoad();
+
+                // Check duplicate (same title + same code)
+                const isDup = entries.some(en => en.title === title && en.code === code);
+                if (isDup) {
+                    console.debug('[Vault] Already saved (identical code + title) — skipping auto-save');
+                    return false;
+                }
+
+                const entry = {
+                    id: Date.now() + Math.random().toString(36).slice(2),
+                    title,
+                    lang,
+                    url: window.location.href,
+                    code,
+                    ts: Date.now()
+                };
+
+                entries.unshift(entry);  // newest first
+                vaultSave(entries);
+                console.log(`[Vault] ✅ Auto-saved correct solution: ${title.slice(0, 50)}`);
+                showToastPill(`💾 Correct solution saved: ${title.slice(0, 40)}`, 'success', 2500);
+                return true;
+            } catch (e) {
+                console.warn('[Vault] Auto-save error:', e);
+                return false;
+            }
+        }
+
+        function doVault() {
+            // If vault panel already open → close it
+            const existing = document.getElementById('kc-vault-panel');
+            if (existing) { existing.remove(); return; }
+
+            // Build panel
+            const panel = document.createElement('div');
+            panel.id = 'kc-vault-panel';
+            panel.style.cssText = [
+                'position:fixed', 'top:50%', 'left:50%',
+                'transform:translate(-50%,-50%)',
+                'z-index:1000020',
+                'width:min(820px,94vw)', 'max-height:88vh',
+                'display:flex', 'flex-direction:column',
+                'background:rgba(13,16,23,0.98)',
+                'backdrop-filter:blur(24px)', '-webkit-backdrop-filter:blur(24px)',
+                'border:1px solid rgba(99,179,237,0.4)',
+                'border-radius:16px',
+                'box-shadow:0 32px 80px rgba(0,0,0,0.9)',
+                "font-family:'VT323',monospace",
+                'color:#f4f4f5',
+                'overflow:hidden'
+            ].join(';');
+
+            // Prevent clicks inside from bubbling and closing
+            panel.addEventListener('click', e => e.stopPropagation());
+            panel.addEventListener('mousedown', e => e.stopPropagation());
+            panel.addEventListener('keydown', e => e.stopPropagation());
+
+            // ── Header ──
+            const header = document.createElement('div');
+            header.style.cssText = 'display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);flex-shrink:0;';
+            header.innerHTML = `
+                <span style="font-size:20px;">⚡</span>
+                <span style="font-size:18px;font-weight:700;color:#f4f4f5;letter-spacing:.4px;">Solutions Vault</span>
+                <span id="kc-vault-count" style="font-size:12px;color:#63b3ed;background:rgba(99,179,237,0.15);padding:2px 10px;border-radius:8px;margin-left:4px;">0 saved</span>
+                <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+                    <button id="kc-vault-save-btn" title="Save current code + question" style="
+                        padding:6px 14px;border:none;border-radius:8px;
+                        background:linear-gradient(135deg,#22c55e,#16a34a);
+                        color:#fff;font-weight:700;cursor:pointer;font-size:14px;
+                        font-family:'VT323',monospace;
+                        box-shadow:0 4px 14px rgba(34,197,94,0.4);
+                        transition:transform .15s,box-shadow .15s;
+                    ">💾 Save Current</button>
+                    <button id="kc-vault-export-btn" title="Export all as text" style="
+                        padding:6px 14px;border:1px solid rgba(255,255,255,0.15);border-radius:8px;
+                        background:rgba(255,255,255,0.06);color:#e4e4e7;
+                        cursor:pointer;font-size:14px;font-family:'VT323',monospace;
+                        transition:background .15s;
+                    ">📤 Export All</button>
+                    <button id="kc-vault-clear-btn" title="Delete all saved solutions" style="
+                        padding:6px 14px;border:1px solid rgba(239,68,68,0.3);border-radius:8px;
+                        background:rgba(239,68,68,0.1);color:#f87171;
+                        cursor:pointer;font-size:14px;font-family:'VT323',monospace;
+                        transition:background .15s;
+                    ">🗑 Clear All</button>
+                    <button id="kc-vault-close-btn" title="Close (E)" style="
+                        width:28px;height:28px;border:1px solid rgba(255,255,255,0.15);border-radius:6px;
+                        background:rgba(255,255,255,0.06);color:#a1a1aa;
+                        cursor:pointer;font-size:15px;font-family:'VT323',monospace;
+                        transition:background .15s;
+                    ">✕</button>
+                </div>
+            `;
+            panel.appendChild(header);
+
+            // ── Search bar ──
+            const searchBar = document.createElement('div');
+            searchBar.style.cssText = 'padding:10px 18px;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0;background:rgba(0,0,0,0.2);';
+            searchBar.innerHTML = `
+                <input id="kc-vault-search" type="text" placeholder="🔍  Search by title…" style="
+                    width:100%;padding:8px 12px;box-sizing:border-box;
+                    background:#16181d;border:1px solid rgba(255,255,255,0.12);
+                    border-radius:8px;color:#e4e4e7;font-size:15px;outline:none;
+                    font-family:'VT323',monospace;
+                ">`;
+            panel.appendChild(searchBar);
+
+            // ── Body: split list + detail ──
+            const body = document.createElement('div');
+            body.style.cssText = 'display:flex;flex:1;overflow:hidden;min-height:0;';
+
+            // left list
+            const listPane = document.createElement('div');
+            listPane.id = 'kc-vault-list';
+            listPane.style.cssText = 'width:270px;flex-shrink:0;overflow-y:auto;border-right:1px solid rgba(255,255,255,0.07);padding:8px 6px;';
+
+            // right detail
+            const detailPane = document.createElement('div');
+            detailPane.id = 'kc-vault-detail';
+            detailPane.style.cssText = 'flex:1;overflow:hidden;display:flex;flex-direction:column;padding:16px 18px;min-width:0;';
+            detailPane.innerHTML = `<div style="color:#555;font-size:15px;margin:auto;text-align:center;">← Select an entry to view &amp; copy</div>`;
+
+            body.appendChild(listPane);
+            body.appendChild(detailPane);
+            panel.appendChild(body);
+
+            document.body.appendChild(panel);
+
+            // ── State ──
+            let entries = vaultLoad();
+            let selectedIdx = -1;
+
+            // ── Render helpers ──
+            const renderCount = () => {
+                const badge = document.getElementById('kc-vault-count');
+                if (badge) badge.textContent = `${entries.length} saved`;
+            };
+
+            const renderList = (filter = '') => {
+                const fl = filter.toLowerCase().trim();
+                listPane.innerHTML = '';
+                const filtered = entries
+                    .map((e, i) => ({ ...e, _origIdx: i }))
+                    .filter(e => !fl || e.title.toLowerCase().includes(fl));
+
+                if (filtered.length === 0) {
+                    listPane.innerHTML = `<div style="color:#555;font-size:14px;padding:20px 10px;text-align:center;">${fl ? 'No matches' : 'Nothing saved yet.<br><br>Press <b style="color:#63b3ed">💾 Save Current</b> to store the solution for this problem.'}</div>`;
+                    return;
+                }
+
+                filtered.forEach(({ title, ts, lang, _origIdx }) => {
+                    const item = document.createElement('div');
+                    item.dataset.origIdx = _origIdx;
+                    item.style.cssText = [
+                        'padding:9px 10px', 'border-radius:8px', 'cursor:pointer',
+                        'margin-bottom:4px',
+                        'background:' + (_origIdx === selectedIdx ? 'rgba(99,179,237,0.15)' : 'rgba(255,255,255,0.03)'),
+                        'border:1px solid ' + (_origIdx === selectedIdx ? 'rgba(99,179,237,0.4)' : 'rgba(255,255,255,0.06)'),
+                        'transition:background .12s,border-color .12s'
+                    ].join(';');
+
+                    const shortTitle = title.length > 34 ? title.slice(0, 34) + '…' : title;
+                    const date = new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                    item.innerHTML = `
+                        <div style="font-size:14px;font-weight:600;color:#f4f4f5;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${title.replace(/"/g, '&quot;')}">${shortTitle}</div>
+                        <div style="font-size:11px;color:#71717a;margin-top:3px;display:flex;gap:8px;">
+                            <span>${lang || '?'}</span>
+                            <span>${date}</span>
+                        </div>`;
+
+                    item.addEventListener('mouseenter', () => {
+                        if (_origIdx !== selectedIdx) item.style.background = 'rgba(99,179,237,0.08)';
+                    });
+                    item.addEventListener('mouseleave', () => {
+                        if (_origIdx !== selectedIdx) item.style.background = 'rgba(255,255,255,0.03)';
+                    });
+                    item.addEventListener('click', () => {
+                        selectedIdx = _origIdx;
+                        renderList(document.getElementById('kc-vault-search')?.value || '');
+                        renderDetail(_origIdx);
+                    });
+                    listPane.appendChild(item);
+                });
+            };
+
+            const renderDetail = (idx) => {
+                const e = entries[idx];
+                if (!e) { detailPane.innerHTML = `<div style="color:#555;font-size:15px;margin:auto;">Entry not found</div>`; return; }
+
+                detailPane.innerHTML = `
+                    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;flex-shrink:0;">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:17px;font-weight:700;color:#f4f4f5;line-height:1.3;word-break:break-word;">${e.title}</div>
+                            <div style="font-size:12px;color:#71717a;margin-top:4px;">
+                                <a href="${e.url}" target="_blank" style="color:#63b3ed;text-decoration:none;">🔗 Open problem</a>
+                                &nbsp;·&nbsp; ${e.lang || 'Unknown lang'}
+                                &nbsp;·&nbsp; ${new Date(e.ts).toLocaleString()}
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:6px;flex-shrink:0;">
+                            <button id="kc-vault-copy-btn" style="
+                                padding:5px 12px;border:1px solid rgba(99,179,237,0.4);border-radius:7px;
+                                background:rgba(99,179,237,0.15);color:#63b3ed;
+                                cursor:pointer;font-size:13px;font-family:'VT323',monospace;
+                                transition:background .15s;
+                            ">📋 Copy Code</button>
+                            <button id="kc-vault-share-btn" style="
+                                padding:5px 12px;border:1px solid rgba(34,197,94,0.4);border-radius:7px;
+                                background:rgba(34,197,94,0.12);color:#4ade80;
+                                cursor:pointer;font-size:13px;font-family:'VT323',monospace;
+                                transition:background .15s;
+                            ">🔗 Copy Share Text</button>
+                            <button id="kc-vault-del-btn" style="
+                                padding:5px 10px;border:1px solid rgba(239,68,68,0.3);border-radius:7px;
+                                background:rgba(239,68,68,0.1);color:#f87171;
+                                cursor:pointer;font-size:13px;font-family:'VT323',monospace;
+                                transition:background .15s;
+                            ">🗑</button>
+                        </div>
+                    </div>
+                    <div style="flex:1;overflow:auto;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:#0d1117;">
+                        <pre id="kc-vault-code-pre" style="
+                            margin:0;padding:16px;font-size:13px;line-height:1.6;
+                            color:#e4e4e7;white-space:pre;overflow:auto;
+                            font-family:'Courier New',Courier,monospace;
+                        ">${e.code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+                    </div>`;
+
+                // copy code
+                document.getElementById('kc-vault-copy-btn').onclick = () => {
+                    navigator.clipboard.writeText(e.code).then(() => {
+                        const b = document.getElementById('kc-vault-copy-btn');
+                        if (b) { b.textContent = '✅ Copied!'; setTimeout(() => { b.textContent = '📋 Copy Code'; }, 2000); }
+                    }).catch(() => {
+                        const ta = document.createElement('textarea');
+                        ta.value = e.code; ta.style.position = 'fixed'; ta.style.top = '-9999px';
+                        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+                        const b = document.getElementById('kc-vault-copy-btn');
+                        if (b) { b.textContent = '✅ Copied!'; setTimeout(() => { b.textContent = '📋 Copy Code'; }, 2000); }
+                    });
+                };
+
+                // share text
+                document.getElementById('kc-vault-share-btn').onclick = () => {
+                    const shareText = formatVaultEntryAsText(e);
+                    navigator.clipboard.writeText(shareText).catch(() => {
+                        const ta = document.createElement('textarea');
+                        ta.value = shareText; ta.style.position = 'fixed'; ta.style.top = '-9999px';
+                        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+                    });
+                    const b = document.getElementById('kc-vault-share-btn');
+                    if (b) { b.textContent = '✅ Copied!'; setTimeout(() => { b.textContent = '🔗 Copy Share Text'; }, 2000); }
+                };
+
+                // delete entry
+                document.getElementById('kc-vault-del-btn').onclick = () => {
+                    entries.splice(idx, 1);
+                    vaultSave(entries);
+                    selectedIdx = -1;
+                    renderCount();
+                    renderList(document.getElementById('kc-vault-search')?.value || '');
+                    detailPane.innerHTML = `<div style="color:#555;font-size:15px;margin:auto;text-align:center;">Entry deleted</div>`;
+                };
+            };
+
+            // ── Save current solution ──
+            const handleSave = () => {
+                const code = getCurrentCode().trim();
+                const title = getCurrentProblemTitle().trim();
+
+                if (!code) {
+                    showToastPill('No code in editor to save', 'error', 2500);
+                    return;
+                }
+
+                // Detect language
+                let lang = 'Unknown';
+                try { if (typeof getSelectedLanguage === 'function') lang = getSelectedLanguage(); } catch (_) { }
+
+                // Check duplicate (same title + same code)
+                const isDup = entries.some(en => en.title === title && en.code === code);
+                if (isDup) {
+                    showToastPill('Already saved (identical code + title)', 'info', 2500);
+                    return;
+                }
+
+                const entry = {
+                    id: Date.now() + Math.random().toString(36).slice(2),
+                    title,
+                    lang,
+                    url: window.location.href,
+                    code,
+                    ts: Date.now()
+                };
+
+                entries.unshift(entry);  // newest first
+                vaultSave(entries);
+                selectedIdx = 0;
+                renderCount();
+                renderList(document.getElementById('kc-vault-search')?.value || '');
+                renderDetail(0);
+                showToastPill(`💾 Saved: ${title.slice(0, 40)}`, 'success', 2500);
+            };
+
+            document.getElementById('kc-vault-save-btn').onclick = handleSave;
+
+            // Export all as plain text
+            document.getElementById('kc-vault-export-btn').onclick = () => {
+                if (entries.length === 0) { showToastPill('Nothing to export', 'info', 2500); return; }
+                const text = entries.map(formatVaultEntryAsText).join('\n\n');
+                const blob = new Blob([text], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `killcode_solutions_${new Date().toISOString().slice(0, 10)}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+                showToastPill(`Exported ${entries.length} solution(s)`, 'success', 2500);
+            };
+
+            // Clear all
+            document.getElementById('kc-vault-clear-btn').onclick = () => {
+                if (!entries.length) { showToastPill('Nothing to clear', 'info', 2000); return; }
+                if (confirm(`Delete all ${entries.length} saved solution(s)? This cannot be undone.`)) {
+                    entries = [];
+                    vaultSave(entries);
+                    selectedIdx = -1;
+                    renderCount();
+                    renderList();
+                    detailPane.innerHTML = `<div style="color:#555;font-size:15px;margin:auto;text-align:center;">Cleared</div>`;
+                    showToastPill('Vault cleared', 'info', 2000);
+                }
+            };
+
+            // Close
+            document.getElementById('kc-vault-close-btn').onclick = () => panel.remove();
+
+            // Search
+            document.getElementById('kc-vault-search').addEventListener('input', (e) => {
+                renderList(e.target.value);
+            });
+
+            // Escape key to close panel (captured inside panel)
+            document.getElementById('kc-vault-search').addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') { e.stopPropagation(); panel.remove(); }
+            });
+
+            // Initial render
+            renderCount();
+            renderList();
+
+            // Auto-focus search
+            setTimeout(() => document.getElementById('kc-vault-search')?.focus(), 60);
+        }
+
+        // ── Input guard ────────────────────────────────────────────────────────
         function isTypingTarget(el) {
             if (!el) return false;
             const tag = (el.tagName || '').toUpperCase();
@@ -12343,7 +14950,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             let p = el.parentElement;
             for (let i = 0; i < 4 && p; i++) {
                 if (p.classList && (p.classList.contains('ace_editor') ||
-                                    p.classList.contains('CodeMirror'))) return true;
+                    p.classList.contains('CodeMirror'))) return true;
                 p = p.parentElement;
             }
             return false;
@@ -12351,14 +14958,27 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
 
         // ── Global keydown listener ───────────────────────────────────────────
         function onKeyDown(e) {
-            if (isTypingTarget(document.activeElement)) return;
+            const key = e.key.toLowerCase();
+            const activeElement = document.activeElement;
+            // 'e' always toggles the Solutions Vault even when focus is inside the vault panel
+            // (e.g. the search box), so pressing 'e' again reliably closes the panel.
+            const inVaultPanel = activeElement && activeElement.closest && activeElement.closest('#kc-vault-panel');
+            if (key === 'e' && inVaultPanel) {
+                e.preventDefault();
+                doVault();
+                return;
+            }
+            const aceTarget = activeElement?.closest?.('.ace_editor') ||
+                activeElement?.classList?.contains('ace_text-input');
+            if (isTypingTarget(activeElement) && !(aceTarget && (key === 'w' || key === 's'))) return;
             if (e.ctrlKey || e.altKey || e.metaKey) return;
 
-            switch (e.key.toLowerCase()) {
-                case 'w': e.preventDefault(); doGhostToggle();  break;
+            switch (key) {
+                case 'w': e.preventDefault(); doGhostToggle(); break;
                 case 'a': e.preventDefault(); doFindIncomplete(); break;
-                case 's': e.preventDefault(); doStop();          break;
-                case 'd': e.preventDefault(); doAISolve();       break;
+                case 's': e.preventDefault(); doStop(); break;
+                case 'd': e.preventDefault(); doAISolve(); break;
+                case 'e': e.preventDefault(); doVault(); break;
             }
         }
 
@@ -12404,6 +15024,70 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             observer.observe(document.body, { childList: true, subtree: true });
         }
 
+        // ── Auto-save on manual successful submission ─────────────────────────
+        // Watches for #successmsg "passed" text or growl success messages
+        // and saves the current code to the vault automatically.
+        function setupAutoSaveObserver() {
+            let lastSavedKey = '';
+
+            const checkForSuccess = () => {
+                try {
+                    // Check error panel FIRST to avoid "9 Passed 3 Failed" matching "passed"
+                    const errText = ((document.getElementById('errormsg')?.innerText || '') + ' ' + (document.getElementById('errormsg_content')?.innerText || '')).toLowerCase();
+                    if (errText.includes('private') || errText.includes('hidden') ||
+                        errText.includes('did not pass') || errText.includes('failed') ||
+                        errText.includes('wrong') || errText.includes('compilation') ||
+                        (errText.includes('passed') && errText.includes('failed'))) {
+                        return; // Not a genuine success — do not save
+                    }
+
+                    // Check success message panel
+                    const successEl = document.getElementById('successmsg');
+                    if (successEl) {
+                        const text = (successEl.innerText || '').toLowerCase();
+                        if ((text.includes('passed') || text.includes('success') || text.includes('correct')) &&
+                            !text.includes('fail') && !text.includes('wrong') && !text.includes('error')) {
+                            const code = getCurrentCode().trim();
+                            const title = getCurrentProblemTitle().trim();
+                            const key = title + '|' + code;
+                            if (key !== lastSavedKey && code) {
+                                lastSavedKey = key;
+                                vaultAutoSave();
+                            }
+                        }
+                    }
+
+                    // Check growl messages as fallback
+                    const growlItems = document.querySelectorAll('.ui-growl-item-container, .ui-growl-item');
+                    for (const g of growlItems) {
+                        const gt = (g.innerText || '').toLowerCase();
+                        if ((gt.includes('pass') || gt.includes('success') || gt.includes('correct')) &&
+                            !gt.includes('fail') && !gt.includes('error') && !gt.includes('wrong')) {
+                            const code = getCurrentCode().trim();
+                            const title = getCurrentProblemTitle().trim();
+                            const key = title + '|' + code;
+                            if (key !== lastSavedKey && code) {
+                                lastSavedKey = key;
+                                vaultAutoSave();
+                            }
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    console.debug('[Vault] Auto-save observer error (non-fatal):', e);
+                }
+            };
+
+            // Observe DOM changes for success messages
+            const observer = new MutationObserver(() => {
+                checkForSuccess();
+            });
+            observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+            // Also check periodically as a fallback
+            setInterval(checkForSuccess, 3000);
+        }
+
         // ── Init ──────────────────────────────────────────────────────────────
         function init() {
             loadSavedState();
@@ -12416,6 +15100,7 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             const attach = () => {
                 captureUIRefs();
                 setupSPAGuard();
+                setupAutoSaveObserver();
                 if (state.ghosted) {
                     getGhostTargets().forEach(el => el.classList.add('kc-ghost-target'));
                 }
@@ -12430,19 +15115,31 @@ CRITICAL RULES FOR PASSING ALL HIDDEN TEST CASES:
             console.log(`[WASD] Hotkey layer ready — Mode: ${state.ghosted ? 'INVISIBLE' : 'VISIBLE'} | State: ${state.running ? 'RUNNING' : 'STOPPED'}`);
         }
 
-        return { init, state, doGhostToggle, doFindIncomplete, doStop, doAISolve };
+        return { init, state, doGhostToggle, doFindIncomplete, doStop, doAISolve, doVault, vaultAutoSave };
     })();
 
     // Initialize WASDBridge when script is enabled and DOM is ready
     onScriptEnabled(() => {
+        const startWASD = () => {
+            try {
+                if (WASDBridge && typeof WASDBridge.init === 'function') {
+                    WASDBridge.init();
+                }
+            } catch (e) {
+                console.warn('[WASDBridge] Init error:', e);
+            }
+        };
+
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => setTimeout(WASDBridge.init, 450));
+            document.addEventListener('DOMContentLoaded', () => setTimeout(startWASD, 450));
         } else {
-            setTimeout(WASDBridge.init, 450);
+            setTimeout(startWASD, 450);
         }
-        // Expose on window for console-level manual control
+        // Expose on window & unsafeWindow for console-level manual control
         window.WASDBridge = WASDBridge;
+        if (typeof unsafeWindow !== 'undefined') {
+            unsafeWindow.WASDBridge = WASDBridge;
+        }
     });
 
 }
-

@@ -54,13 +54,12 @@ PATTERNS = {
     "viewstate": r'name="jakarta\.faces\.ViewState"[^>]*value="([^"]*)"',
     "sub_challenge_button": r'id="pkglistform:j_id_49:(\d+):j_id_4h"',
     "sub_challenge_name": r'<div class="ui header black">([^<]+)</div>',
-    # New HTML structure: parts are cards with outputpanel, not buttons
-    "part_card": r'id="cttbl:(\d+):j_id_4s"',
+    # Support both outputpanel cards (j_id_4s) and button cards (j_id_4u)
+    "part_card": r'(?:id="cttbl:(\d+):j_id_4[a-z0-9_]+"|<button id="cttbl:(\d+):j_id_4u")',
     "part_name": r'<b>([^<]+)</b>',
     "part_completed": r'<span class="ui label green tag tag-pill">Completed</span>',
-    # Problem list page: cards with id="pctbl:N:j_id_5p", name in <b> as "Name (Id-1234)"
-    # Note: actual HTML has <br /> before </b>, so pattern must allow content between ) and </b>
-    "problem_card": r'id="pctbl:(\d+):j_id_5p"',
+    # Support both problem cards (j_id_5p) and solve buttons (j_id_5w)
+    "problem_card": r'id="pctbl:(\d+):j_id_5[a-z0-9_]+"',
     "problem_name_id": r'<b>\s*([^<]+?)\s*\(Id-(\d+)\)[^<]*</b>',
     "problem_solve_button": r'id="pctbl:(\d+):j_id_5w"',
     # Breadcrumb trail: specifically targets the ui-breadcrumb component

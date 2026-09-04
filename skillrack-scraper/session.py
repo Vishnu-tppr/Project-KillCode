@@ -29,35 +29,63 @@ class SkillRackSession:
 
     def __init__(
         self,
+        cookie: Optional[str] = None,
         cookie_file: Optional[str] = None,
         cookie_env_var: str = "SKILLRACK_COOKIE",
         base_delay: float = DEFAULT_DELAY_SECONDS,
     ):
         self.cookie_file = cookie_file or str(Path(__file__).parent.parent / "tools" / "cookie.txt")
+        self.root_cookie_file = str(Path(__file__).parent.parent / "cookie.txt")
         self.cookie_env_var = cookie_env_var
         self.base_delay = base_delay
         self._client: Optional[AsyncClient] = None
-        self._cookie_value: Optional[str] = None
+        self._cookie_value: Optional[str] = cookie.strip() if cookie and cookie.strip() else None
         self._last_request_time: float = 0.0
 
+    def update_cookie(self, new_cookie: str):
+        """Dynamically update cookie and reset client headers."""
+        clean = new_cookie.strip() if new_cookie else ""
+        if clean:
+            self._cookie_value = clean
+            if self._client and not self._client.is_closed:
+                self._client.headers["Cookie"] = clean
+
     def _load_cookie(self) -> str:
-        """Load cookie from file or environment variable."""
+        """Load cookie from file or environment variable.
+
+        Priority:
+        1. Environment variable ($SKILLRACK_COOKIE)
+        2. tools/cookie.txt
+        3. root cookie.txt
+        """
+        if self._cookie_value:
+            return self._cookie_value
+
         # Priority 1: Environment variable
         env_cookie = os.environ.get(self.cookie_env_var, "").strip()
         if env_cookie:
             logger.debug("Loaded cookie from environment variable")
             return env_cookie
 
-        # Priority 2: Cookie file
-        cookie_path = Path(self.cookie_file)
-        if cookie_path.exists():
-            cookie = cookie_path.read_text().strip()
+        # Priority 2: tools/cookie.txt
+        tools_cookie_path = Path(self.cookie_file)
+        if tools_cookie_path.exists():
+            cookie = tools_cookie_path.read_text().strip()
             if cookie:
-                logger.debug(f"Loaded cookie from {cookie_path}")
+                logger.debug(f"Loaded cookie from {tools_cookie_path}")
+                return cookie
+
+        # Priority 3: root cookie.txt (for backward compatibility)
+        root_cookie_path = Path(self.root_cookie_file)
+        if root_cookie_path.exists():
+            cookie = root_cookie_path.read_text().strip()
+            if cookie:
+                logger.debug(f"Loaded cookie from {root_cookie_path}")
                 return cookie
 
         raise RuntimeError(
-            f"No cookie found. Set ${self.cookie_env_var} or put cookie in {self.cookie_file}. "
+            f"No cookie found. Set ${self.cookie_env_var} or put cookie in {self.cookie_file} "
+            f"or {self.root_cookie_file}. "
             "Format: JSESSIONID=...; oam.Flash.RENDERMAP.TOKEN=..."
         )
 
