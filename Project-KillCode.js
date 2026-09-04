@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      5.1a
 // @description  Bypass tab switching, copy/paste restrictions, full-screen enforcement, auto-solve captcha, and AI-powered solution generator
-// @author       ToonTamilIndia & Vishnu-tppr (Captcha solver by adithyagenie)
+// @author       ToonTamilIndia & Vishnu-tppr & Aron-2005 (Captcha solver by adithyagenie)
 // @match        https://*.skillrack.com/*
 // @match        https://skillrack.com/*
 // @require      https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js
